@@ -1,21 +1,26 @@
 package com.splinch.junction.chat
 
 interface ConversationStore {
-    fun loadSession(): ChatSession?
-    fun saveSession(session: ChatSession)
-    fun clear()
+    suspend fun loadSession(): ChatSession?
+    suspend fun saveSession(session: ChatSession)
+    suspend fun appendMessage(sessionId: String, message: ChatMessage)
+    suspend fun clear()
 }
 
 class InMemoryConversationStore : ConversationStore {
     private var session: ChatSession? = null
 
-    override fun loadSession(): ChatSession? = session
+    override suspend fun loadSession(): ChatSession? = session
 
-    override fun saveSession(session: ChatSession) {
+    override suspend fun saveSession(session: ChatSession) {
         this.session = session
     }
 
-    override fun clear() {
+    override suspend fun appendMessage(sessionId: String, message: ChatMessage) {
+        session = session?.copy(messages = session?.messages.orEmpty() + message)
+    }
+
+    override suspend fun clear() {
         session = null
     }
 }

@@ -31,11 +31,23 @@ object NotificationHelper {
     }
 
     fun showDigest(context: Context, summary: String) {
-        val intent = Intent(context, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_OPEN_CHAT, true)
+        }
+        val openPendingIntent = PendingIntent.getActivity(
             context,
             0,
-            intent,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val voiceIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra(MainActivity.EXTRA_OPEN_VOICE, true)
+        }
+        val voicePendingIntent = PendingIntent.getActivity(
+            context,
+            1,
+            voiceIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -44,7 +56,9 @@ object NotificationHelper {
             .setContentTitle("Junction digest")
             .setContentText(summary)
             .setStyle(NotificationCompat.BigTextStyle().bigText(summary))
-            .setContentIntent(pendingIntent)
+            .setContentIntent(openPendingIntent)
+            .addAction(R.drawable.ic_junction, "Open", openPendingIntent)
+            .addAction(R.drawable.ic_junction, "Voice", voicePendingIntent)
             .setAutoCancel(true)
             .build()
 

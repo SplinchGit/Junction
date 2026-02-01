@@ -9,13 +9,19 @@ import java.util.UUID
 
 class ChatManager(
     private val store: ConversationStore = InMemoryConversationStore(),
-    private val backend: ChatBackend = BackendFactory.create(),
+    private val backendProvider: BackendProvider,
     private val messageHandler: MessageHandler = MessageHandler(),
     private val now: () -> Instant = { Instant.now() }
 ) {
-    private var session: ChatSession = store.loadSession() ?: newSession()
-    private val _messages = MutableStateFlow(session.messages)
+    private var session: ChatSession = newSession()
+    private val _messages = MutableStateFlow(emptyList<ChatMessage>())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    suspend fun initialize() {
+        val loaded = store.loadSession()
+        session = loaded ?: newSession().also { store.saveSession(it) }
+        _messages.value = session.messages
+    }
 
     suspend fun sendUserMessage(raw: String) {
         val processed = messageHandler.processMessage(raw, Sender.USER)
@@ -37,11 +43,12 @@ class ChatManager(
         )
         appendMessage(userMessage)
 
+        val backend = backendProvider.getBackend()
         val response = backend.generateResponse(session, userMessage)
         appendMessage(response)
     }
 
-    fun clearSession() {
+    suspend fun clearSession() {
         session = newSession()
         store.clear()
         store.saveSession(session)
@@ -49,7 +56,7 @@ class ChatManager(
         appendSystemMessage("Session cleared")
     }
 
-    private fun handleCommand(command: CommandResult) {
+    private suspend fun handleCommand(command: CommandResult) {
         when (command) {
             is CommandResult.Help -> appendSystemMessage(command.text)
             is CommandResult.Clear -> clearSession()
@@ -62,13 +69,14 @@ class ChatManager(
         }
     }
 
-    private fun appendMessage(message: ChatMessage) {
+    private suspend fun appendMessage(message: ChatMessage) {
         session = session.copy(messages = session.messages + message)
         store.saveSession(session)
+        store.appendMessage(session.sessionId, message)
         _messages.value = session.messages
     }
 
-    private fun appendSystemMessage(content: String) {
+    private suspend fun appendSystemMessage(content: String) {
         appendMessage(ChatMessage(sender = Sender.SYSTEM, content = content))
     }
 
