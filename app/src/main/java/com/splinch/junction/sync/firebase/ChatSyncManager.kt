@@ -44,7 +44,8 @@ class ChatSyncManager(
 
     suspend fun onLocalMessageAppended(conversationId: String, message: ChatMessageEntity) {
         val uid = currentUserId ?: return
-        val conversationRef = FirebaseProvider.firestore
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
+        val conversationRef = firestore
             .collection("users")
             .document(uid)
             .collection("conversations")
@@ -72,10 +73,11 @@ class ChatSyncManager(
     private fun attachListenerIfReady() {
         val uid = currentUserId ?: return
         val conversationId = activeConversationId ?: return
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
 
         stopListening()
 
-        messageListener = FirebaseProvider.firestore
+        messageListener = firestore
             .collection("users")
             .document(uid)
             .collection("conversations")

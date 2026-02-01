@@ -8,7 +8,6 @@ import androidx.credentials.GetCredentialResponse
 import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.splinch.junction.BuildConfig
@@ -18,24 +17,37 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 
 class AuthManager(private val context: Context) {
-    private val auth: FirebaseAuth = FirebaseProvider.auth
-    private val _userFlow = MutableStateFlow(auth.currentUser)
+    private val _userFlow = MutableStateFlow<FirebaseUser?>(null)
     val userFlow: StateFlow<FirebaseUser?> = _userFlow.asStateFlow()
 
-    private val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-        _userFlow.value = firebaseAuth.currentUser
-    }
+    private var authListener: com.google.firebase.auth.FirebaseAuth.AuthStateListener? = null
 
     fun start() {
-        auth.addAuthStateListener(authListener)
+        if (!FirebaseProvider.initialize(context)) {
+            _userFlow.value = null
+            return
+        }
+        val auth = FirebaseProvider.authOrNull() ?: return
+        val listener = com.google.firebase.auth.FirebaseAuth.AuthStateListener { firebaseAuth ->
+            _userFlow.value = firebaseAuth.currentUser
+        }
+        authListener = listener
+        auth.addAuthStateListener(listener)
         _userFlow.value = auth.currentUser
     }
 
     fun stop() {
-        auth.removeAuthStateListener(authListener)
+        val auth = FirebaseProvider.authOrNull()
+        val listener = authListener
+        if (auth != null && listener != null) {
+            auth.removeAuthStateListener(listener)
+        }
     }
 
     suspend fun signInWithGoogle(activity: Activity): Result<Unit> {
+        if (!FirebaseProvider.initialize(context)) {
+            return Result.failure(IllegalStateException("Firebase is not configured yet"))
+        }
         val webClientId = BuildConfig.JUNCTION_WEB_CLIENT_ID
         if (webClientId.isBlank()) {
             return Result.failure(IllegalStateException("Missing JUNCTION_WEB_CLIENT_ID"))
@@ -56,6 +68,8 @@ class AuthManager(private val context: Context) {
             val result = credentialManager.getCredential(activity, request)
             val token = extractIdToken(result)
                 ?: return Result.failure(IllegalStateException("No Google ID token"))
+            val auth = FirebaseProvider.authOrNull()
+                ?: return Result.failure(IllegalStateException("FirebaseAuth unavailable"))
             val credential = GoogleAuthProvider.getCredential(token, null)
             auth.signInWithCredential(credential).await()
             Result.success(Unit)
@@ -67,7 +81,7 @@ class AuthManager(private val context: Context) {
     }
 
     suspend fun signOut() {
-        auth.signOut()
+        FirebaseProvider.authOrNull()?.signOut()
     }
 
     private fun extractIdToken(result: GetCredentialResponse): String? {

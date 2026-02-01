@@ -44,7 +44,8 @@ class PrefsSyncManager(
                 val hash = snapshot.hashCode()
                 if (hash == lastSnapshotHash) return@collectLatest
                 lastSnapshotHash = hash
-                val docRef = FirebaseProvider.firestore
+                val firestore = FirebaseProvider.firestoreOrNull() ?: return@collectLatest
+                val docRef = firestore
                     .collection("users")
                     .document(uid)
                     .collection("preferences")
@@ -56,8 +57,9 @@ class PrefsSyncManager(
 
     private fun attachListener() {
         val uid = currentUserId ?: return
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
         stopListening()
-        prefsListener = FirebaseProvider.firestore
+        prefsListener = firestore
             .collection("users")
             .document(uid)
             .collection("preferences")

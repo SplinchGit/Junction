@@ -38,7 +38,8 @@ class FeedSyncManager(
 
     override suspend fun onLocalUpsert(item: FeedItemEntity) {
         val uid = currentUserId ?: return
-        val docRef = FirebaseProvider.firestore
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
+        val docRef = firestore
             .collection("users")
             .document(uid)
             .collection("feed_items")
@@ -48,8 +49,9 @@ class FeedSyncManager(
 
     private fun attachListener() {
         val uid = currentUserId ?: return
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
         stopListening()
-        feedListener = FirebaseProvider.firestore
+        feedListener = firestore
             .collection("users")
             .document(uid)
             .collection("feed_items")
