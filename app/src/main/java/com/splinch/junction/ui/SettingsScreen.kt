@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -31,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.launch
 
@@ -120,6 +120,7 @@ fun SettingsScreen(
                 val safe = parsed.coerceAtLeast(15)
                 scope.launch {
                     userPrefs.setDigestIntervalMinutes(safe)
+                    Scheduler.scheduleFeedDigest(context, safe.toLong())
                 }
             }) {
                 Text("Apply digest interval")

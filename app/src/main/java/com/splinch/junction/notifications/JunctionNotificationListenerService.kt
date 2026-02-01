@@ -12,6 +12,7 @@ import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 class JunctionNotificationListenerService : NotificationListenerService() {
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -29,6 +30,8 @@ class JunctionNotificationListenerService : NotificationListenerService() {
 
         scope.launch {
             val prefs = UserPrefsRepository(applicationContext)
+            val acknowledged = prefs.notificationAccessAcknowledgedFlow.first()
+            if (!acknowledged) return@launch
             if (!prefs.isPackageEnabled(packageName)) return@launch
 
             val repository = FeedRepository(JunctionDatabase.getInstance(applicationContext).feedDao())

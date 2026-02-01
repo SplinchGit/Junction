@@ -1,6 +1,9 @@
 package com.splinch.junction.ui
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,60 +15,210 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.DismissDirection
+import androidx.compose.material.DismissValue
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.SwipeToDismiss
+import androidx.compose.material.rememberDismissState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.splinch.junction.feed.FeedPriority
-import com.splinch.junction.feed.FeedSource
-import com.splinch.junction.feed.SocialEvent
-import java.time.Duration
+import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.feed.model.FeedCategory
+import com.splinch.junction.feed.model.FeedItem
+import com.splinch.junction.feed.model.FeedStatus
+import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
-fun FeedScreen(events: List<SocialEvent>, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Text(
-            text = "Your Junction",
-            style = MaterialTheme.typography.titleLarge
-        )
-        Text(
-            text = "A calm pulse of what matters next",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+@OptIn(ExperimentalMaterialApi::class, ExperimentalMaterial3Api::class)
+fun FeedScreen(
+    items: List<FeedItem>,
+    lastOpenedAt: Long,
+    feedRepository: FeedRepository,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    var selectedItem by remember { mutableStateOf<FeedItem?>(null) }
 
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    val activeItems = items.filter { it.status != FeedStatus.ARCHIVED }
+    val grouped = activeItems.groupBy { it.category }
+    val newSinceOpen = activeItems.count { it.timestamp > lastOpenedAt }
+    val topCategories = activeItems
+        .filter { it.timestamp > lastOpenedAt }
+        .groupBy { it.category }
+        .mapValues { (_, list) -> list.size }
+        .entries
+        .sortedByDescending { it.value }
+        .take(3)
+
+    Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp)
         ) {
-            items(events) { event ->
-                FeedCard(event)
+            Text(text = "Your Junction", style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = "New since last open: $newSinceOpen",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (topCategories.isNotEmpty()) {
+                Text(
+                    text = "Top categories: " + topCategories.joinToString { "${it.key.label()} (${it.value})" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
+
+            if (activeItems.isEmpty()) {
+                Text(
+                    text = "All clear. No new items right now.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    grouped.forEach { (category, categoryItems) ->
+                        item {
+                            CategoryHeader(category, categoryItems)
+                        }
+                        items(categoryItems, key = { it.id }) { item ->
+                            val dismissState = rememberDismissState(confirmStateChange = { value ->
+                                if (value == DismissValue.DismissedToEnd || value == DismissValue.DismissedToStart) {
+                                    val previousStatus = item.status
+                                    scope.launch {
+                                        feedRepository.archive(item.id)
+                                        val result = snackbarHostState.showSnackbar(
+                                            message = "Archived",
+                                            actionLabel = "Undo"
+                                        )
+                                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                            feedRepository.updateStatus(item.id, previousStatus)
+                                        }
+                                    }
+                                }
+                                false
+                            })
+
+                            SwipeToDismiss(
+                                state = dismissState,
+                                directions = setOf(DismissDirection.EndToStart, DismissDirection.StartToEnd),
+                                background = { SwipeBackground() },
+                                dismissContent = {
+                                    FeedCard(
+                                        item = item,
+                                        onClick = {
+                                            scope.launch { feedRepository.markSeen(item.id) }
+                                            selectedItem = item
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (selectedItem != null) {
+        ModalBottomSheet(onDismissRequest = { selectedItem = null }) {
+            FeedActionSheet(
+                item = selectedItem!!,
+                onDismiss = { selectedItem = null },
+                onArchive = {
+                    scope.launch { feedRepository.archive(selectedItem!!.id) }
+                    selectedItem = null
+                },
+                onMarkSeen = {
+                    scope.launch { feedRepository.markSeen(selectedItem!!.id) }
+                    selectedItem = null
+                },
+                onOpen = {
+                    val packageName = selectedItem!!.packageName
+                    if (!packageName.isNullOrBlank()) {
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+                        if (launchIntent != null) {
+                            context.startActivity(launchIntent)
+                        } else {
+                            Toast.makeText(context, "Unable to open app", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    selectedItem = null
+                }
+            )
         }
     }
 }
 
 @Composable
-private fun FeedCard(event: SocialEvent) {
-    val cardColor = when (event.priority) {
-        FeedPriority.HIGH -> MaterialTheme.colorScheme.errorContainer
-        FeedPriority.MEDIUM -> MaterialTheme.colorScheme.secondaryContainer
-        FeedPriority.LOW -> MaterialTheme.colorScheme.surfaceVariant
+private fun CategoryHeader(category: FeedCategory, items: List<FeedItem>) {
+    val unreadCount = items.count { it.status == FeedStatus.NEW }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = category.label(),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (unreadCount > 0) {
+            Text(
+                text = "$unreadCount new",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeedCard(item: FeedItem, onClick: () -> Unit) {
+    val cardColor = when (item.status) {
+        FeedStatus.NEW -> MaterialTheme.colorScheme.secondaryContainer
+        FeedStatus.SEEN -> MaterialTheme.colorScheme.surfaceVariant
+        FeedStatus.ARCHIVED -> MaterialTheme.colorScheme.surfaceVariant
     }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = cardColor),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -73,31 +226,37 @@ private fun FeedCard(event: SocialEvent) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                SourcePill(event.source)
                 Text(
-                    text = formatTime(event.timestamp),
+                    text = item.source,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = formatTime(item.timestamp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
-                text = event.title,
+                text = item.title,
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 8.dp)
+                modifier = Modifier.padding(top = 6.dp)
             )
-            Text(
-                text = event.summary,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-            if (!event.actionLabel.isNullOrBlank()) {
+            if (!item.body.isNullOrBlank()) {
                 Text(
-                    text = event.actionLabel.uppercase(),
-                    style = MaterialTheme.typography.labelMedium,
+                    text = item.body!!,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+            if (item.status == FeedStatus.NEW) {
+                Text(
+                    text = "NEW",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 10.dp)
+                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
         }
@@ -105,37 +264,88 @@ private fun FeedCard(event: SocialEvent) {
 }
 
 @Composable
-private fun SourcePill(source: FeedSource) {
-    val label = when (source) {
-        FeedSource.DISCORD -> "Discord"
-        FeedSource.TWITCH -> "Twitch"
-        FeedSource.YOUTUBE -> "YouTube"
-        FeedSource.CALENDAR -> "Calendar"
-        FeedSource.SOCIAL -> "Social"
-        FeedSource.EMAIL -> "Email"
-    }
-
+private fun SwipeBackground() {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .fillMaxSize()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(16.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
         Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = "Archive",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer
         )
     }
 }
 
-private fun formatTime(timestamp: Instant, now: Instant = Instant.now()): String {
-    val duration = Duration.between(now, timestamp)
-    val minutes = duration.toMinutes()
-    return when {
-        minutes >= 0 && minutes < 60 -> "in ${minutes}m"
-        minutes >= 60 -> "in ${minutes / 60}h"
-        minutes <= -60 -> "${kotlin.math.abs(minutes) / 60}h ago"
-        else -> "${kotlin.math.abs(minutes)}m ago"
+@Composable
+private fun FeedActionSheet(
+    item: FeedItem,
+    onDismiss: () -> Unit,
+    onArchive: () -> Unit,
+    onMarkSeen: () -> Unit,
+    onOpen: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(text = item.title, style = MaterialTheme.typography.titleMedium)
+        when (item.category) {
+            FeedCategory.FRIENDS_FAMILY -> {
+                ActionRow("Open", onOpen)
+                ActionRow("Mark seen", onMarkSeen)
+                ActionRow("Dismiss", onArchive)
+            }
+            FeedCategory.PROJECTS -> {
+                ActionRow("Open", onOpen)
+                ActionRow("Mark done", onMarkSeen)
+                ActionRow("Snooze", onDismiss)
+            }
+            FeedCategory.NEWS -> {
+                ActionRow("Read", onOpen)
+                ActionRow("Save", onDismiss)
+                ActionRow("Dismiss", onArchive)
+            }
+            FeedCategory.SYSTEM -> {
+                ActionRow("Open app", onOpen)
+                ActionRow("Dismiss", onArchive)
+            }
+            else -> {
+                ActionRow("Open", onOpen)
+                ActionRow("Mark seen", onMarkSeen)
+                ActionRow("Dismiss", onArchive)
+            }
+        }
     }
+}
+
+@Composable
+private fun ActionRow(label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onClick() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+private fun FeedCategory.label(): String {
+    return name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
+}
+
+private fun formatTime(timestamp: Long): String {
+    val instant = Instant.ofEpochMilli(timestamp)
+    val formatter = DateTimeFormatter.ofPattern("h:mm a")
+    return formatter.format(instant.atZone(ZoneId.systemDefault()))
 }
