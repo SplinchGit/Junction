@@ -51,8 +51,8 @@ import java.util.Locale
 @Composable
 fun ChatScreen(
     chatManager: ChatManager,
-    voiceRequestToken: Int = 0,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    voiceRequestToken: Int = 0
 ) {
     val messages by chatManager.messages.collectAsState()
     var input by remember { mutableStateOf("") }

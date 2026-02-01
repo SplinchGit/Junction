@@ -3,10 +3,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".core.JunctionApp"
         android:allowBackup="true"
         android:label="Junction"
+        android:icon="@drawable/ic_junction"
+        android:roundIcon="@drawable/ic_junction"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
