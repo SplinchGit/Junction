@@ -8,6 +8,9 @@ Android MVP scaffold for Junction: a calm social operations hub with a feed + AI
 - Feed UI with mock events (`app/src/main/java/com/splinch/junction/ui/FeedScreen.kt`)
 - Background digest scheduler (WorkManager + notifications)
 - HTTP backend hook (`HttpBackend`) ready for your API
+- Room persistence for chat + feed
+- DataStore settings screen (backend toggle, base URL, digest interval)
+- Voice input (push-to-talk via system speech recognition)
 
 ## Quick start
 1. Open in Android Studio.

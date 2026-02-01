@@ -12,17 +12,18 @@ object Scheduler {
     private const val FEED_DIGEST_WORK = "junction_feed_digest"
 
     fun scheduleFeedDigest(context: Context, intervalMinutes: Long = 30) {
+        val safeInterval = intervalMinutes.coerceAtLeast(15)
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
 
-        val request = PeriodicWorkRequestBuilder<FeedDigestWorker>(intervalMinutes, TimeUnit.MINUTES)
+        val request = PeriodicWorkRequestBuilder<FeedDigestWorker>(safeInterval, TimeUnit.MINUTES)
             .setConstraints(constraints)
             .build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             FEED_DIGEST_WORK,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
