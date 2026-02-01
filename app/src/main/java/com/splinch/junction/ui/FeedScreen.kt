@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +50,7 @@ import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.feed.model.FeedStatus
 import com.splinch.junction.update.UpdateInfo
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -66,6 +68,15 @@ fun FeedScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedItem by remember { mutableStateOf<FeedItem?>(null) }
+    var showUpdateBanner by remember { mutableStateOf(updateInfo != null) }
+
+    LaunchedEffect(updateInfo) {
+        showUpdateBanner = updateInfo != null
+        if (updateInfo != null) {
+            delay(6000)
+            showUpdateBanner = false
+        }
+    }
 
     val activeItems = items.filter { it.status != FeedStatus.ARCHIVED }
     val grouped = activeItems.groupBy { it.category }
@@ -85,9 +96,18 @@ fun FeedScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            Text(text = "Your Junction", style = MaterialTheme.typography.titleLarge)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = "Your Junction", style = MaterialTheme.typography.titleLarge)
+                if (updateInfo != null) {
+                    UpdateDot()
+                }
+            }
 
-            if (updateInfo != null) {
+            if (updateInfo != null && showUpdateBanner) {
                 UpdateBanner(updateInfo = updateInfo, onOpen = {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url))
                     context.startActivity(intent)
@@ -193,6 +213,16 @@ fun FeedScreen(
             )
         }
     }
+}
+
+@Composable
+private fun UpdateDot() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary)
+            .sizeIn(minWidth = 10.dp, minHeight = 10.dp)
+    )
 }
 
 @Composable

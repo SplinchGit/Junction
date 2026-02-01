@@ -12,6 +12,7 @@ A calm, local-first social operations hub with a native Android client and a lig
 - Google sign-in + Firebase sync scaffolding (chat, feed, prefs)
 - PC companion web client scaffold (Vite + React + Firebase)
 - GitHub Releases update banner (checks latest release)
+- Update indicator dot appears in the Feed header when a new release is available (banner auto-hides).
 
 ## Android setup
 
@@ -44,6 +45,14 @@ A calm, local-first social operations hub with a native Android client and a lig
 
 - GitHub Actions builds debug APK on push/tag.
 - App checks GitHub Releases and shows a calm update banner if newer.
+
+## Local repo update helper
+
+Run:
+```
+.\scripts\update.ps1
+```
+This does a `git pull` and refreshes web dependencies if present.
 
 ---
 
