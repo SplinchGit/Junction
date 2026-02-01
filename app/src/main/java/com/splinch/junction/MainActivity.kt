@@ -1,6 +1,8 @@
 package com.splinch.junction
 
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.NavigationBar
@@ -13,6 +15,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.ui.ChatScreen
 import com.splinch.junction.ui.FeedScreen
@@ -23,6 +28,7 @@ import com.splinch.junction.feed.SocialEvent
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermissionIfNeeded()
         setContent {
             JunctionTheme {
                 val chatManager = remember { ChatManager() }
@@ -36,6 +42,16 @@ class MainActivity : ComponentActivity() {
 private enum class JunctionTab {
     FEED,
     CHAT
+}
+
+private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val permission = Manifest.permission.POST_NOTIFICATIONS
+        val granted = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            ActivityCompat.requestPermissions(this, arrayOf(permission), 2001)
+        }
+    }
 }
 
 @Composable

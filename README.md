@@ -1,16 +1,33 @@
 # Junction
 
-Minimal Android scaffold for the Junction chat layer, with a Kotlin port of the AGI chat handler.
+Android MVP scaffold for Junction: a calm social operations hub with a feed + AI triage chat.
 
 ## What is included
 - Kotlin chat core (`app/src/main/java/com/splinch/junction/chat`)
 - Compose chat UI (`app/src/main/java/com/splinch/junction/ui/ChatScreen.kt`)
-- Stub backend (`StubBackend`) ready to be replaced by a real API client
+- Feed UI with mock events (`app/src/main/java/com/splinch/junction/ui/FeedScreen.kt`)
+- Background digest scheduler (WorkManager + notifications)
+- HTTP backend hook (`HttpBackend`) ready for your API
 
-## Next steps
-- Replace `StubBackend` with your OpenAI-backed implementation.
-- Swap `InMemoryConversationStore` for a persistent store (Room, DataStore, etc.).
-- Add notification ingestion and timeline UI for Junction feeds.
+## Quick start
+1. Open in Android Studio.
+2. Sync Gradle.
+3. Run on device/emulator.
+
+## Backend hook
+`HttpBackend` posts to `/chat` with:
+```
+{
+  "sessionId": "...",
+  "message": "...",
+  "messages": [{ "role": "user|assistant|system", "content": "..." }]
+}
+```
+It expects a response like:
+```
+{ "reply": "..." }
+```
 
 ## Notes
-This repo does not include the Gradle wrapper. If Android Studio prompts, let it generate the wrapper or run `gradle wrapper`.
+- Notifications on Android 13+ require user permission (prompt shown on launch).
+- Background work uses WorkManager (default 30-minute interval).
