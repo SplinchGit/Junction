@@ -13,22 +13,28 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.splinch.junction.chat.BackendFactory
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
-import com.splinch.junction.settings.SettingsRepository
+import com.splinch.junction.notifications.NotificationAccessHelper
+import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.ui.ChatScreen
 import com.splinch.junction.ui.FeedScreen
 import com.splinch.junction.ui.SettingsScreen
@@ -47,9 +53,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             JunctionTheme {
                 val context = LocalContext.current
+                val lifecycleOwner = LocalLifecycleOwner.current
+                val scope = rememberCoroutineScope()
                 val database = remember { JunctionDatabase.getInstance(context) }
-                val settingsRepository = remember { SettingsRepository(context) }
-                val backendProvider = remember { BackendFactory.provider(settingsRepository) }
+                val prefs = remember { UserPrefsRepository(context) }
+                val backendProvider = remember { BackendFactory.provider(prefs) }
                 val chatManager = remember {
                     ChatManager(
                         store = RoomConversationStore(database.chatDao()),
@@ -60,8 +68,38 @@ class MainActivity : ComponentActivity() {
 
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
+                var lastOpenedAt by remember { mutableStateOf(0L) }
 
-                JunctionApp(chatManager, feedRepository, settingsRepository, voiceToken, chatToken)
+                LaunchedEffect(Unit) {
+                    chatManager.initialize()
+                    feedRepository.seedIfEmpty()
+                    lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
+                    prefs.setNotificationListenerEnabled(
+                        NotificationAccessHelper.isNotificationListenerEnabled(context)
+                    )
+                }
+
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            val enabled = NotificationAccessHelper.isNotificationListenerEnabled(context)
+                            scope.launch {
+                                prefs.setNotificationListenerEnabled(enabled)
+                            }
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                }
+
+                JunctionApp(
+                    chatManager = chatManager,
+                    feedRepository = feedRepository,
+                    prefs = prefs,
+                    lastOpenedAt = lastOpenedAt,
+                    voiceToken = voiceToken,
+                    chatToken = chatToken
+                )
             }
         }
     }
@@ -105,17 +143,13 @@ private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
 private fun JunctionApp(
     chatManager: ChatManager,
     feedRepository: FeedRepository,
-    settingsRepository: SettingsRepository,
+    prefs: UserPrefsRepository,
+    lastOpenedAt: Long,
     voiceToken: Int,
     chatToken: Int
 ) {
     var selectedTab by remember { mutableStateOf(JunctionTab.FEED) }
-    val feed by feedRepository.eventsFlow.collectAsState(initial = emptyList())
-
-    LaunchedEffect(Unit) {
-        chatManager.initialize()
-        feedRepository.seedIfEmpty()
-    }
+    val feedItems by feedRepository.feedFlow.collectAsState(initial = emptyList())
 
     LaunchedEffect(chatToken) {
         if (chatToken > 0) {
@@ -154,14 +188,20 @@ private fun JunctionApp(
         }
     ) { padding ->
         when (selectedTab) {
-            JunctionTab.FEED -> FeedScreen(feed, modifier = Modifier.padding(padding))
-            JunctionTab.CHAT -> ChatScreen(
-                chatManager,
-                voiceRequestToken = voiceToken,
+            JunctionTab.FEED -> FeedScreen(
+                items = feedItems,
+                lastOpenedAt = lastOpenedAt,
+                feedRepository = feedRepository,
                 modifier = Modifier.padding(padding)
             )
+            JunctionTab.CHAT -> ChatScreen(
+                chatManager = chatManager,
+                modifier = Modifier.padding(padding),
+                voiceRequestToken = voiceToken
+            )
             JunctionTab.SETTINGS -> SettingsScreen(
-                settingsRepository,
+                userPrefs = prefs,
+                feedRepository = feedRepository,
                 modifier = Modifier.padding(padding)
             )
         }

@@ -5,7 +5,7 @@ import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.scheduler.NotificationHelper
 import com.splinch.junction.scheduler.Scheduler
-import com.splinch.junction.settings.SettingsRepository
+import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -18,11 +18,11 @@ class JunctionApp : Application() {
 
         val database = JunctionDatabase.getInstance(this)
         val feedRepository = FeedRepository(database.feedDao())
-        val settingsRepository = SettingsRepository(this)
+        val prefsRepository = UserPrefsRepository(this)
 
         CoroutineScope(Dispatchers.Default).launch {
             feedRepository.seedIfEmpty()
-            val interval = settingsRepository.digestIntervalMinutesFlow.first().coerceAtLeast(15)
+            val interval = prefsRepository.digestIntervalMinutesFlow.first().coerceAtLeast(15)
             Scheduler.scheduleFeedDigest(this@JunctionApp, interval.toLong())
         }
     }
