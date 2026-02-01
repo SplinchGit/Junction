@@ -19,14 +19,17 @@ interface FeedDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<FeedItemEntity>)
 
-    @Query("UPDATE feed_items SET status = :status WHERE id = :id")
-    suspend fun updateStatus(id: String, status: FeedStatus)
+    @Query("UPDATE feed_items SET status = :status, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateStatus(id: String, status: FeedStatus, updatedAt: Long)
 
-    @Query("UPDATE feed_items SET status = 'ARCHIVED' WHERE id = :id")
-    suspend fun archive(id: String)
+    @Query("UPDATE feed_items SET status = 'ARCHIVED', updatedAt = :updatedAt WHERE id = :id")
+    suspend fun archive(id: String, updatedAt: Long)
 
-    @Query("UPDATE feed_items SET status = 'SEEN' WHERE id = :id")
-    suspend fun markSeen(id: String)
+    @Query("UPDATE feed_items SET status = 'SEEN', updatedAt = :updatedAt WHERE id = :id")
+    suspend fun markSeen(id: String, updatedAt: Long)
+
+    @Query("SELECT * FROM feed_items WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): FeedItemEntity?
 
     @Query("SELECT COUNT(*) FROM feed_items")
     suspend fun countAll(): Int

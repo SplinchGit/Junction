@@ -1,4 +1,4 @@
-package com.splinch.junction.ui
+ï»¿package com.splinch.junction.ui
 
 import android.content.Intent
 import android.provider.Settings
@@ -32,16 +32,19 @@ import androidx.compose.ui.unit.dp
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
+import com.splinch.junction.sync.firebase.AuthManager
 import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
     userPrefs: UserPrefsRepository,
     feedRepository: FeedRepository,
+    authManager: AuthManager,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val activity = context as? android.app.Activity
 
     val useBackend by userPrefs.useHttpBackendFlow.collectAsState(initial = false)
     val apiBaseUrl by userPrefs.apiBaseUrlFlow.collectAsState(initial = "")
@@ -49,11 +52,13 @@ fun SettingsScreen(
     val notificationAck by userPrefs.notificationAccessAcknowledgedFlow.collectAsState(initial = false)
     val listenerEnabled by userPrefs.notificationListenerEnabledFlow.collectAsState(initial = false)
     val disabledPackages by userPrefs.disabledPackagesFlow.collectAsState(initial = emptySet())
+    val user by authManager.userFlow.collectAsState()
 
     var apiBaseUrlInput by remember { mutableStateOf(apiBaseUrl) }
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
     var understandChecked by remember { mutableStateOf(false) }
     var packages by remember { mutableStateOf(emptyList<String>()) }
+    var authError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(apiBaseUrl) {
         apiBaseUrlInput = apiBaseUrl
@@ -75,6 +80,55 @@ fun SettingsScreen(
     ) {
         item {
             Text(text = "Settings", style = MaterialTheme.typography.titleLarge)
+        }
+
+        item {
+            Text(text = "Account", style = MaterialTheme.typography.titleMedium)
+            if (user == null) {
+                Text(
+                    text = "Sign in to sync conversations and feed metadata.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Button(
+                    onClick = {
+                        authError = null
+                        if (activity != null) {
+                            scope.launch {
+                                val result = authManager.signInWithGoogle(activity)
+                                if (result.isFailure) {
+                                    authError = result.exceptionOrNull()?.message ?: "Sign-in failed"
+                                }
+                            }
+                        } else {
+                            authError = "Sign-in requires an Activity context"
+                        }
+                    }
+                ) {
+                    Text("Sign in with Google")
+                }
+            } else {
+                Text(
+                    text = "Signed in as ${user?.email ?: "Google user"}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Sync is active for this account.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(
+                    onClick = { scope.launch { authManager.signOut() } }
+                ) {
+                    Text("Sign out")
+                }
+            }
+            if (!authError.isNullOrBlank()) {
+                Text(
+                    text = authError.orEmpty(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
 
         item {
@@ -187,7 +241,7 @@ fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Disable apps you don’t want in your Junction feed.",
+                    text = "Disable apps you don't want in your Junction feed.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

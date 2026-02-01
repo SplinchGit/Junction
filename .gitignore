@@ -5,3 +5,9 @@
 /local.properties
 *.iml
 .DS_Store
+app/google-services.json
+web/.env
+web/.env.local
+web/.env.*.local
+
+.vscode/

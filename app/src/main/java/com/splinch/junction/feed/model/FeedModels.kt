@@ -32,7 +32,8 @@ data class FeedItemEntity(
     val priority: Int = 5,
     val status: FeedStatus = FeedStatus.NEW,
     val threadKey: String?,
-    val actionHint: String?
+    val actionHint: String?,
+    val updatedAt: Long = timestamp
 )
 
 data class FeedItem(
@@ -46,5 +47,6 @@ data class FeedItem(
     val priority: Int,
     val status: FeedStatus,
     val threadKey: String?,
-    val actionHint: String?
+    val actionHint: String?,
+    val updatedAt: Long
 )

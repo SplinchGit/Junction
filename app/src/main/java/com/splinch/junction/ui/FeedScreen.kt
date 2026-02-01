@@ -1,6 +1,7 @@
-package com.splinch.junction.ui
+﻿package com.splinch.junction.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,10 +31,10 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,7 @@ import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.feed.model.FeedCategory
 import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.feed.model.FeedStatus
+import com.splinch.junction.update.UpdateInfo
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -57,6 +59,7 @@ fun FeedScreen(
     items: List<FeedItem>,
     lastOpenedAt: Long,
     feedRepository: FeedRepository,
+    updateInfo: UpdateInfo?,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -83,6 +86,14 @@ fun FeedScreen(
                 .padding(16.dp)
         ) {
             Text(text = "Your Junction", style = MaterialTheme.typography.titleLarge)
+
+            if (updateInfo != null) {
+                UpdateBanner(updateInfo = updateInfo, onOpen = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url))
+                    context.startActivity(intent)
+                })
+            }
+
             Text(
                 text = "New since last open: $newSinceOpen",
                 style = MaterialTheme.typography.bodyMedium,
@@ -179,6 +190,31 @@ fun FeedScreen(
                     }
                     selectedItem = null
                 }
+            )
+        }
+    }
+}
+
+@Composable
+private fun UpdateBanner(updateInfo: UpdateInfo, onOpen: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 10.dp)
+            .clickable { onOpen() }
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "Update available",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                text = "Version ${updateInfo.version} is ready. Tap to view release.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
     }

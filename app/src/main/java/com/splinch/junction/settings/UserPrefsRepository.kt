@@ -1,4 +1,4 @@
-package com.splinch.junction.settings
+﻿package com.splinch.junction.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -22,6 +22,7 @@ class UserPrefsRepository(private val context: Context) {
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
 
     private val lastOpenedAtKey = longPreferencesKey("last_opened_at")
+    private val lastUpdateCheckAtKey = longPreferencesKey("last_update_check_at")
     private val notificationAccessAckKey = booleanPreferencesKey("notification_access_ack")
     private val notificationListenerEnabledKey = booleanPreferencesKey("notification_listener_enabled")
     private val appWeightsKey = stringPreferencesKey("app_weights_json")
@@ -43,6 +44,10 @@ class UserPrefsRepository(private val context: Context) {
         prefs[lastOpenedAtKey] ?: 0L
     }
 
+    val lastUpdateCheckAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[lastUpdateCheckAtKey] ?: 0L
+    }
+
     val notificationAccessAcknowledgedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[notificationAccessAckKey] ?: false
     }
@@ -60,6 +65,18 @@ class UserPrefsRepository(private val context: Context) {
         prefs[disabledPackagesKey] ?: emptySet()
     }
 
+    val snapshotFlow: Flow<PrefsSnapshot> = context.dataStore.data.map { prefs ->
+        PrefsSnapshot(
+            lastOpenedAt = prefs[lastOpenedAtKey] ?: 0L,
+            digestIntervalMinutes = prefs[digestIntervalKey] ?: 30,
+            notificationAccessAcknowledged = prefs[notificationAccessAckKey] ?: false,
+            notificationListenerEnabled = prefs[notificationListenerEnabledKey] ?: false,
+            appWeights = parseWeights(prefs[appWeightsKey].orEmpty()),
+            disabledPackages = prefs[disabledPackagesKey] ?: emptySet(),
+            lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L
+        )
+    }
+
     suspend fun setUseHttpBackend(enabled: Boolean) {
         context.dataStore.edit { it[useHttpBackendKey] = enabled }
     }
@@ -74,6 +91,10 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun updateLastOpenedAt(timestamp: Long) {
         context.dataStore.edit { it[lastOpenedAtKey] = timestamp }
+    }
+
+    suspend fun updateLastUpdateCheckAt(timestamp: Long) {
+        context.dataStore.edit { it[lastUpdateCheckAtKey] = timestamp }
     }
 
     suspend fun markOpenedAndGetPrevious(now: Long): Long {
@@ -111,6 +132,18 @@ class UserPrefsRepository(private val context: Context) {
         return !disabled.contains(packageName)
     }
 
+    suspend fun applySnapshot(snapshot: PrefsSnapshot) {
+        context.dataStore.edit { prefs ->
+            prefs[lastOpenedAtKey] = snapshot.lastOpenedAt
+            prefs[digestIntervalKey] = snapshot.digestIntervalMinutes
+            prefs[notificationAccessAckKey] = snapshot.notificationAccessAcknowledged
+            prefs[notificationListenerEnabledKey] = snapshot.notificationListenerEnabled
+            prefs[appWeightsKey] = toWeightsJson(snapshot.appWeights)
+            prefs[disabledPackagesKey] = snapshot.disabledPackages
+            prefs[lastUpdateCheckAtKey] = snapshot.lastUpdateCheckAt
+        }
+    }
+
     private fun parseWeights(json: String): Map<String, Int> {
         if (json.isBlank()) return emptyMap()
         return try {
@@ -127,3 +160,13 @@ class UserPrefsRepository(private val context: Context) {
         return obj.toString()
     }
 }
+
+data class PrefsSnapshot(
+    val lastOpenedAt: Long,
+    val digestIntervalMinutes: Int,
+    val notificationAccessAcknowledged: Boolean,
+    val notificationListenerEnabled: Boolean,
+    val appWeights: Map<String, Int>,
+    val disabledPackages: Set<String>,
+    val lastUpdateCheckAt: Long
+)

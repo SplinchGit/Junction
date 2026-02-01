@@ -16,11 +16,14 @@ class ChatManager(
     private var session: ChatSession = newSession()
     private val _messages = MutableStateFlow(emptyList<ChatMessage>())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+    private val _sessionId = MutableStateFlow(session.sessionId)
+    val sessionId: StateFlow<String> = _sessionId.asStateFlow()
 
     suspend fun initialize() {
         val loaded = store.loadSession()
         session = loaded ?: newSession().also { store.saveSession(it) }
         _messages.value = session.messages
+        _sessionId.value = session.sessionId
     }
 
     suspend fun sendUserMessage(raw: String) {
@@ -53,6 +56,7 @@ class ChatManager(
         store.clear()
         store.saveSession(session)
         _messages.value = session.messages
+        _sessionId.value = session.sessionId
         appendSystemMessage("Session cleared")
     }
 
@@ -74,6 +78,7 @@ class ChatManager(
         store.saveSession(session)
         store.appendMessage(session.sessionId, message)
         _messages.value = session.messages
+        _sessionId.value = session.sessionId
     }
 
     private suspend fun appendSystemMessage(content: String) {

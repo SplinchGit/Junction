@@ -1,43 +1,50 @@
-# Junction
+﻿# Junction
 
-Android MVP scaffold for Junction: a calm social operations hub with a feed + AI triage chat.
+A calm, local-first social operations hub with a native Android client and a lightweight PC companion.
 
-## What is included
-- Kotlin chat core (`app/src/main/java/com/splinch/junction/chat`)
-- Compose chat UI (`app/src/main/java/com/splinch/junction/ui/ChatScreen.kt`)
-- Persistent feed (Room) with calm triage UI
-- Background digest scheduler (WorkManager + notifications)
-- HTTP backend hook (`HttpBackend`) ready for your API
-- Room persistence for chat + feed
-- DataStore preferences (last opened, notification consent, backend settings)
-- Voice input (push-to-talk via system speech recognition)
-- NotificationListener ingestion (read-only, local-first)
+## What works now
 
-## Quick start
-1. Open in Android Studio.
-2. Sync Gradle.
-3. Run on device/emulator.
+- Android app with Feed + Chat + Settings
+- Local-first feed stored in Room, swipe to archive, tap to mark seen
+- Notification ingestion via NotificationListenerService (with consent flow)
+- Voice input for chat (Android speech recognizer)
+- Optional HTTP backend for chat (keeps `/chat` contract)
+- Google sign-in + Firebase sync scaffolding (chat, feed, prefs)
+- PC companion web client scaffold (Vite + React + Firebase)
+- GitHub Releases update banner (checks latest release)
 
-## Backend hook
-`HttpBackend` posts to `/chat` with:
-```
-{
-  "sessionId": "...",
-  "message": "...",
-  "messages": [{ "role": "user|assistant|system", "content": "..." }]
-}
-```
-It expects a response like:
-```
-{ "reply": "..." }
-```
+## Android setup
 
-## Notes
-- Notifications on Android 13+ require user permission (prompt shown on launch).
-- Background work uses WorkManager (default 30-minute interval).
- - Notification Listener is **read-only** and stores minimal metadata locally.
- - You must explicitly enable Notification Access in system settings.
+1. Open the project in Android Studio.
+2. Add Firebase config:
+   - Place `google-services.json` in `app/` (not committed).
+   - Add your OAuth Web Client ID to `local.properties`:
+     ```
+     JUNCTION_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID
+     ```
+3. Sync Gradle and run `app`.
 
-## Privacy
-Junction stores feed data **on-device**. Notification metadata is only ingested after
-explicit consent and can be disabled at any time in Android settings.
+## Web (PC companion)
+
+1. Copy `web/.env.example` to `web/.env` and fill Firebase values.
+2. Run:
+   ```
+   cd web
+   npm install
+   npm run dev
+   ```
+
+## Privacy posture
+
+- Notification ingestion is local-only by default.
+- Sync requires explicit Google sign-in.
+- No data is sent externally unless you enable sync or the backend.
+
+## Update pipeline
+
+- GitHub Actions builds debug APK on push/tag.
+- App checks GitHub Releases and shows a calm update banner if newer.
+
+---
+
+If build errors appear, share them and we will patch fast.

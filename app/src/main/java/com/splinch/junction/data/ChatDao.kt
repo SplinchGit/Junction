@@ -16,6 +16,9 @@ interface ChatDao {
     @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessages(sessionId: String): List<ChatMessageEntity>
 
+    @Query("SELECT * FROM chat_messages WHERE id = :id LIMIT 1")
+    suspend fun getMessageById(id: String): ChatMessageEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: ChatMessageEntity)
 

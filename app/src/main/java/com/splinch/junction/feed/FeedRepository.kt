@@ -8,7 +8,14 @@ import com.splinch.junction.feed.model.FeedStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-class FeedRepository(private val feedDao: FeedDao) {
+interface FeedRemoteSync {
+    suspend fun onLocalUpsert(item: FeedItemEntity)
+}
+
+class FeedRepository(
+    private val feedDao: FeedDao,
+    private val remoteSync: FeedRemoteSync? = null
+) {
     val feedFlow: Flow<List<FeedItem>> = feedDao.feedStream().map { entities ->
         entities.map { it.toModel() }
     }
@@ -28,7 +35,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 6,
                 status = FeedStatus.NEW,
                 threadKey = null,
-                actionHint = "review"
+                actionHint = "review",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "GitHub",
@@ -40,19 +48,21 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 7,
                 status = FeedStatus.NEW,
                 threadKey = "github_pr_128",
-                actionHint = "open"
+                actionHint = "open",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "Messages",
                 packageName = "com.google.android.apps.messaging",
                 category = FeedCategory.FRIENDS_FAMILY,
                 title = "Friends/Family: new message",
-                body = "" + "Hey, are we still on for tonight?",
+                body = "Hey, are we still on for tonight?",
                 timestamp = now - 30 * 60 * 1000L,
                 priority = 8,
                 status = FeedStatus.NEW,
                 threadKey = "sms_thread",
-                actionHint = "reply"
+                actionHint = "reply",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "Calendar",
@@ -64,7 +74,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 7,
                 status = FeedStatus.NEW,
                 threadKey = "calendar_standup",
-                actionHint = "open"
+                actionHint = "open",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "Discord",
@@ -76,7 +87,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 5,
                 status = FeedStatus.NEW,
                 threadKey = "discord_junction",
-                actionHint = "open"
+                actionHint = "open",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "YouTube",
@@ -88,7 +100,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 4,
                 status = FeedStatus.NEW,
                 threadKey = "youtube_upload",
-                actionHint = "read"
+                actionHint = "read",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "System",
@@ -100,7 +113,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 3,
                 status = FeedStatus.NEW,
                 threadKey = "system_muted",
-                actionHint = "review"
+                actionHint = "review",
+                updatedAt = now
             ),
             FeedItemEntity(
                 source = "Email",
@@ -112,7 +126,8 @@ class FeedRepository(private val feedDao: FeedDao) {
                 priority = 6,
                 status = FeedStatus.NEW,
                 threadKey = "email_partner",
-                actionHint = "open"
+                actionHint = "open",
+                updatedAt = now
             )
         )
 
@@ -120,19 +135,27 @@ class FeedRepository(private val feedDao: FeedDao) {
     }
 
     suspend fun markSeen(id: String) {
-        feedDao.markSeen(id)
+        val updatedAt = System.currentTimeMillis()
+        feedDao.markSeen(id, updatedAt)
+        feedDao.getById(id)?.let { remoteSync?.onLocalUpsert(it.copy(updatedAt = updatedAt)) }
     }
 
     suspend fun archive(id: String) {
-        feedDao.archive(id)
+        val updatedAt = System.currentTimeMillis()
+        feedDao.archive(id, updatedAt)
+        feedDao.getById(id)?.let { remoteSync?.onLocalUpsert(it.copy(updatedAt = updatedAt)) }
     }
 
     suspend fun updateStatus(id: String, status: FeedStatus) {
-        feedDao.updateStatus(id, status)
+        val updatedAt = System.currentTimeMillis()
+        feedDao.updateStatus(id, status, updatedAt)
+        feedDao.getById(id)?.let { remoteSync?.onLocalUpsert(it.copy(updatedAt = updatedAt)) }
     }
 
     suspend fun add(item: FeedItemEntity) {
-        feedDao.insert(item)
+        val updated = item.copy(updatedAt = System.currentTimeMillis())
+        feedDao.insert(updated)
+        remoteSync?.onLocalUpsert(updated)
     }
 
     suspend fun getAll(): List<FeedItem> {
@@ -155,7 +178,8 @@ class FeedRepository(private val feedDao: FeedDao) {
             priority = priority,
             status = status,
             threadKey = threadKey,
-            actionHint = actionHint
+            actionHint = actionHint,
+            updatedAt = updatedAt
         )
     }
 }

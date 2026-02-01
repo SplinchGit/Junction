@@ -27,19 +27,27 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.splinch.junction.chat.BackendFactory
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.RoomConversationStore
+import com.splinch.junction.chat.SyncingConversationStore
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
 import com.splinch.junction.settings.UserPrefsRepository
+import com.splinch.junction.sync.firebase.AuthManager
+import com.splinch.junction.sync.firebase.ChatSyncManager
+import com.splinch.junction.sync.firebase.FeedSyncManager
+import com.splinch.junction.sync.firebase.PrefsSyncManager
 import com.splinch.junction.ui.ChatScreen
 import com.splinch.junction.ui.FeedScreen
 import com.splinch.junction.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
+import com.splinch.junction.update.UpdateChecker
+import com.splinch.junction.update.UpdateInfo
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val voiceOpenRequests = MutableStateFlow(0)
@@ -53,33 +61,61 @@ class MainActivity : ComponentActivity() {
         setContent {
             JunctionTheme {
                 val context = LocalContext.current
-                val lifecycleOwner = LocalLifecycleOwner.current
+                val lifecycle = (context as? androidx.activity.ComponentActivity)?.lifecycle
                 val scope = rememberCoroutineScope()
                 val database = remember { JunctionDatabase.getInstance(context) }
                 val prefs = remember { UserPrefsRepository(context) }
+                val authManager = remember { AuthManager(context) }
+                val chatSyncManager = remember { ChatSyncManager(database.chatDao(), authManager) }
+                val feedSyncManager = remember { FeedSyncManager(database.feedDao(), authManager) }
+                val prefsSyncManager = remember { PrefsSyncManager(prefs, authManager) }
                 val backendProvider = remember { BackendFactory.provider(prefs) }
+                val roomStore = remember { RoomConversationStore(database.chatDao()) }
+                val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
                 val chatManager = remember {
                     ChatManager(
-                        store = RoomConversationStore(database.chatDao()),
+                        store = conversationStore,
                         backendProvider = backendProvider
                     )
                 }
-                val feedRepository = remember { FeedRepository(database.feedDao()) }
+                val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
+                val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
 
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
+                val sessionId by chatManager.sessionId.collectAsState()
                 var lastOpenedAt by remember { mutableStateOf(0L) }
 
                 LaunchedEffect(Unit) {
+                    authManager.start()
+                    chatSyncManager.start()
+                    feedSyncManager.start()
+                    prefsSyncManager.start()
                     chatManager.initialize()
                     feedRepository.seedIfEmpty()
                     lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
                     prefs.setNotificationListenerEnabled(
                         NotificationAccessHelper.isNotificationListenerEnabled(context)
                     )
+
+                    val lastChecked = prefs.lastUpdateCheckAtFlow.first()
+                    val now = System.currentTimeMillis()
+                    if (now - lastChecked > 86_400_000L) {
+                        scope.launch {
+                            val update = UpdateChecker().checkForUpdate(BuildConfig.VERSION_NAME)
+                            updateState.value = update
+                            prefs.updateLastUpdateCheckAt(now)
+                        }
+                    }
                 }
 
-                DisposableEffect(lifecycleOwner) {
+                LaunchedEffect(sessionId) {
+                    if (sessionId.isNotBlank()) {
+                        chatSyncManager.setActiveConversation(sessionId)
+                    }
+                }
+
+                DisposableEffect(lifecycle) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
                             val enabled = NotificationAccessHelper.isNotificationListenerEnabled(context)
@@ -88,14 +124,16 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    lifecycleOwner.lifecycle.addObserver(observer)
-                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    lifecycle?.addObserver(observer)
+                    onDispose { lifecycle?.removeObserver(observer) }
                 }
 
                 JunctionApp(
                     chatManager = chatManager,
                     feedRepository = feedRepository,
                     prefs = prefs,
+                    authManager = authManager,
+                    updateState = updateState,
                     lastOpenedAt = lastOpenedAt,
                     voiceToken = voiceToken,
                     chatToken = chatToken
@@ -144,6 +182,8 @@ private fun JunctionApp(
     chatManager: ChatManager,
     feedRepository: FeedRepository,
     prefs: UserPrefsRepository,
+    authManager: AuthManager,
+    updateState: kotlinx.coroutines.flow.MutableStateFlow<UpdateInfo?>,
     lastOpenedAt: Long,
     voiceToken: Int,
     chatToken: Int
@@ -188,12 +228,13 @@ private fun JunctionApp(
         }
     ) { padding ->
         when (selectedTab) {
-            JunctionTab.FEED -> FeedScreen(
-                items = feedItems,
-                lastOpenedAt = lastOpenedAt,
-                feedRepository = feedRepository,
-                modifier = Modifier.padding(padding)
-            )
+                    JunctionTab.FEED -> FeedScreen(
+                        items = feedItems,
+                        lastOpenedAt = lastOpenedAt,
+                        feedRepository = feedRepository,
+                        updateInfo = updateState.collectAsState().value,
+                        modifier = Modifier.padding(padding)
+                    )
             JunctionTab.CHAT -> ChatScreen(
                 chatManager = chatManager,
                 modifier = Modifier.padding(padding),
@@ -202,6 +243,7 @@ private fun JunctionApp(
             JunctionTab.SETTINGS -> SettingsScreen(
                 userPrefs = prefs,
                 feedRepository = feedRepository,
+                authManager = authManager,
                 modifier = Modifier.padding(padding)
             )
         }
