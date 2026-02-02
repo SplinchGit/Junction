@@ -228,7 +228,7 @@ fun ChatScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Google sign-in is required for Realtime voice. Text chat uses your HTTP backend.",
+                    text = "Sign in to sync and use Realtime. Text can use the HTTP backend if enabled.",
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
                 )

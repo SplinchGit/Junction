@@ -75,7 +75,16 @@ type RealtimeSession = {
   keepAlive: boolean;
 };
 
+type RealtimeError = {
+  message: string;
+  status?: number;
+  detail?: string;
+  canRetry?: boolean;
+};
+
 const realtimeEndpoint = import.meta.env.VITE_REALTIME_ENDPOINT;
+const maxMessageLength = 4000;
+const warnAtLength = 3500;
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -91,12 +100,20 @@ export default function App() {
   const [streamingText, setStreamingText] = useState("");
   const [pendingToolCalls, setPendingToolCalls] = useState<PendingToolCall[]>([]);
   const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
+  const [realtimeError, setRealtimeError] = useState<RealtimeError | null>(null);
 
   const rtcRef = useRef<RealtimeSession | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const streamingRef = useRef("");
   const disconnectAfterResponse = useRef(false);
   const speechMode = activeConversation ? !!speechModes[activeConversation] : false;
+  const inputLength = input.length;
+  const overLimit = inputLength > maxMessageLength;
+  const showCounter = inputLength >= warnAtLength;
+  const canSend =
+    !!user && !!realtimeEndpoint && !overLimit && input.trim().length > 0;
+  const showRealtimeMissing = tab === "chat" && !realtimeEndpoint;
+  const isDev = import.meta.env.DEV;
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -110,6 +127,7 @@ export default function App() {
       setMicMuted(true);
       setPendingToolCalls([]);
       setLastUndo(null);
+      setRealtimeError(null);
       disconnectRealtime();
       return;
     }
@@ -299,14 +317,29 @@ export default function App() {
 
   async function sendMessage() {
     if (!user || !input.trim()) return;
+    if (!realtimeEndpoint) {
+      setRealtimeError({
+        message: "Realtime not configured. Set VITE_REALTIME_ENDPOINT to continue.",
+        canRetry: false,
+      });
+      return;
+    }
+    if (overLimit) {
+      setRealtimeError({
+        message: `Message too long (max ${maxMessageLength} characters).`,
+        canRetry: false,
+      });
+      return;
+    }
     const text = input.trim();
-    await appendMessage("user", text);
-    setInput("");
-
+    setRealtimeError(null);
     const keepAlive = speechMode;
     disconnectAfterResponse.current = !keepAlive;
-    await ensureRealtime(keepAlive);
-    sendEvent({
+    const ready = await ensureRealtime(keepAlive, true);
+    if (!ready) return;
+    await appendMessage("user", text);
+    setInput("");
+    const sent = sendEvent({
       type: "conversation.item.create",
       item: {
         type: "message",
@@ -314,6 +347,13 @@ export default function App() {
         content: [{ type: "input_text", text }],
       },
     });
+    if (!sent) {
+      setRealtimeError({
+        message: "Realtime connection not ready. Please retry.",
+        canRetry: true,
+      });
+      return;
+    }
     sendEvent({ type: "response.create" });
     setTab("chat");
   }
@@ -336,13 +376,58 @@ export default function App() {
     );
   }
 
-  async function ensureRealtime(keepAlive: boolean) {
-    if (!user) return;
+  function mapRealtimeError(status?: number) {
+    if (status === 401 || status === 403) {
+      return "Signed in, but Realtime rejected the token. Check Firebase project or endpoint config.";
+    }
+    if (status === 404) {
+      return "Realtime endpoint not found. Check the endpoint URL.";
+    }
+    if (status && status >= 500) {
+      return "Realtime server error. Try again shortly.";
+    }
+    return "Realtime connection failed.";
+  }
+
+  function waitForChannelOpen(channel: RTCDataChannel, timeoutMs = 6000) {
+    return new Promise<boolean>((resolve) => {
+      if (channel.readyState === "open") {
+        resolve(true);
+        return;
+      }
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        resolve(ok);
+      };
+      const timer = window.setTimeout(() => finish(false), timeoutMs);
+      const handleOpen = () => {
+        window.clearTimeout(timer);
+        finish(true);
+      };
+      const handleClose = () => {
+        window.clearTimeout(timer);
+        finish(false);
+      };
+      channel.addEventListener("open", handleOpen, { once: true });
+      channel.addEventListener("close", handleClose, { once: true });
+      channel.addEventListener("error", handleClose, { once: true });
+    });
+  }
+
+  async function ensureRealtime(keepAlive: boolean, waitForOpen = false) {
+    if (!user) return false;
     if (!realtimeEndpoint) {
       setConnectionState("error");
-      return;
+      return false;
     }
-    if (rtcRef.current?.pc) return;
+    if (rtcRef.current?.pc) {
+      if (!waitForOpen) return true;
+      const channel = rtcRef.current.dataChannel;
+      if (!channel) return false;
+      return waitForChannelOpen(channel);
+    }
 
     try {
       setConnectionState("connecting");
@@ -370,6 +455,7 @@ export default function App() {
       const dataChannel = pc.createDataChannel("oai-events");
       dataChannel.onopen = async () => {
         setConnectionState("connected");
+        setRealtimeError(null);
         await seedConversation();
       };
       dataChannel.onmessage = (event) => {
@@ -400,15 +486,32 @@ export default function App() {
         body: pc.localDescription?.sdp || "",
       });
       if (!response.ok) {
+        const detail = await response.text().catch(() => "");
         setConnectionState("error");
-        return;
+        setRealtimeError({
+          message: mapRealtimeError(response.status),
+          status: response.status,
+          detail,
+          canRetry: true,
+        });
+        return false;
       }
       const answer = await response.text();
       await pc.setRemoteDescription({ type: "answer", sdp: answer });
 
       rtcRef.current = { pc, dataChannel, localStream, keepAlive };
-    } catch (err) {
+      if (waitForOpen) {
+        return waitForChannelOpen(dataChannel);
+      }
+      return true;
+    } catch (err: any) {
       setConnectionState("error");
+      setRealtimeError({
+        message: "Realtime connection failed.",
+        detail: err?.message || String(err),
+        canRetry: true,
+      });
+      return false;
     }
   }
 
@@ -422,8 +525,9 @@ export default function App() {
 
   function sendEvent(event: any) {
     const channel = rtcRef.current?.dataChannel;
-    if (!channel || channel.readyState !== "open") return;
+    if (!channel || channel.readyState !== "open") return false;
     channel.send(JSON.stringify(event));
+    return true;
   }
 
   async function seedConversation() {
@@ -495,6 +599,11 @@ export default function App() {
     }
     if (type === "error") {
       setConnectionState("error");
+      setRealtimeError({
+        message: "Realtime returned an error.",
+        detail: JSON.stringify(json),
+        canRetry: true,
+      });
     }
   }
 
@@ -842,16 +951,62 @@ export default function App() {
                       {lastUndo.label}
                     </button>
                   )}
+                  {showRealtimeMissing && (
+                    <div className="banner warn">
+                      Realtime not configured. Set VITE_REALTIME_ENDPOINT to enable chat.
+                    </div>
+                  )}
+                  {realtimeError && (
+                    <div className="banner error">
+                      <div className="banner-title">Realtime error</div>
+                      <div className="banner-message">{realtimeError.message}</div>
+                      {realtimeError.status && (
+                        <div className="banner-meta">Status {realtimeError.status}</div>
+                      )}
+                      {isDev && realtimeError.detail && (
+                        <details>
+                          <summary>Details</summary>
+                          <pre>{realtimeError.detail}</pre>
+                        </details>
+                      )}
+                      {realtimeError.canRetry && (
+                        <div className="banner-actions">
+                          <button
+                            className="ghost"
+                            onClick={sendMessage}
+                            disabled={!input.trim() || overLimit}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="composer">
-                    <input
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      placeholder="Type a message"
-                      disabled={!user}
-                    />
-                    <button onClick={sendMessage} disabled={!user}>
-                      Send
-                    </button>
+                    <div className="composer-row">
+                      <input
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder="Type a message"
+                        disabled={!user}
+                        className={overLimit ? "over-limit" : ""}
+                      />
+                      <button onClick={sendMessage} disabled={!canSend}>
+                        Send
+                      </button>
+                    </div>
+                    <div className="composer-meta">
+                      {showCounter && (
+                        <span className={`composer-counter ${overLimit ? "over" : ""}`}>
+                          {inputLength}/{maxMessageLength}
+                        </span>
+                      )}
+                      {overLimit && (
+                        <span className="composer-hint">
+                          Message too long. Trim to {maxMessageLength} characters.
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

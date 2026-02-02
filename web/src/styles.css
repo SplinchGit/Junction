@@ -310,6 +310,12 @@ body {
 }
 .composer {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-row {
+  display: flex;
   gap: 10px;
 }
 
@@ -322,6 +328,10 @@ body {
   border-radius: 10px;
 }
 
+.composer input.over-limit {
+  border-color: #b64c4c;
+}
+
 .composer button {
   background: var(--accent-2);
   color: #081424;
@@ -332,9 +342,68 @@ body {
   cursor: pointer;
 }
 
+.composer-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #9aa4b2;
+  font-size: 0.85rem;
+}
+
+.composer-counter.over {
+  color: #f0a36b;
+}
+
+.composer-hint {
+  color: #f08f8f;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.banner {
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 0.9rem;
+  display: grid;
+  gap: 6px;
+}
+
+.banner.warn {
+  background: rgba(240, 173, 78, 0.15);
+  border: 1px solid rgba(240, 173, 78, 0.4);
+  color: #f0c37b;
+}
+
+.banner.error {
+  background: rgba(240, 120, 120, 0.12);
+  border: 1px solid rgba(240, 120, 120, 0.4);
+  color: #f3b0b0;
+}
+
+.banner-title {
+  font-weight: 700;
+}
+
+.banner-meta {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.banner details {
+  background: rgba(8, 12, 18, 0.4);
+  padding: 8px;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+  color: #d7dde5;
 }
 
 .empty {
