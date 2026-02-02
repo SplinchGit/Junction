@@ -11,7 +11,6 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.splinch.junction.BuildConfig
-import com.splinch.junction.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,7 +57,17 @@ class AuthManager(private val context: Context) {
             return Result.failure(IllegalStateException("Firebase is not configured yet"))
         }
         val webClientId = BuildConfig.JUNCTION_WEB_CLIENT_ID.ifBlank {
-            runCatching { context.getString(R.string.default_web_client_id) }.getOrDefault("")
+            // Only present if google-services.json includes an OAuth client; avoid hard reference to R.string.
+            val resId = context.resources.getIdentifier(
+                "default_web_client_id",
+                "string",
+                context.packageName
+            )
+            if (resId != 0) {
+                runCatching { context.getString(resId) }.getOrDefault("")
+            } else {
+                ""
+            }
         }
         if (webClientId.isBlank()) {
             return Result.failure(IllegalStateException("Missing JUNCTION_WEB_CLIENT_ID"))

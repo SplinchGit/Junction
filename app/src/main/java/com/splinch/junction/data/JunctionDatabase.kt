@@ -10,16 +10,31 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.splinch.junction.feed.data.FeedDao
 import com.splinch.junction.feed.model.FeedConverters
 import com.splinch.junction.feed.model.FeedItemEntity
+import com.splinch.junction.follow.FollowConverters
+import com.splinch.junction.follow.FollowTargetEntity
+import com.splinch.junction.follow.InterestRuleEntity
+import com.splinch.junction.follow.RejectedSuggestionEntity
+import com.splinch.junction.follow.SuggestionEntity
+import com.splinch.junction.follow.data.FollowDao
 
 @Database(
-    entities = [ChatSessionEntity::class, ChatMessageEntity::class, FeedItemEntity::class],
-    version = 4,
+    entities = [
+        ChatSessionEntity::class,
+        ChatMessageEntity::class,
+        FeedItemEntity::class,
+        FollowTargetEntity::class,
+        InterestRuleEntity::class,
+        SuggestionEntity::class,
+        RejectedSuggestionEntity::class
+    ],
+    version = 5,
     exportSchema = false
 )
-@TypeConverters(FeedConverters::class)
+@TypeConverters(FeedConverters::class, FollowConverters::class)
 abstract class JunctionDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun feedDao(): FeedDao
+    abstract fun followDao(): FollowDao
 
     companion object {
         @Volatile
@@ -31,7 +46,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -300,6 +315,76 @@ abstract class JunctionDatabase : RoomDatabase() {
                     )
                 }
                 rebuildFeedItems(db)
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Follow targets (Favorites / explicit interests)
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `follow_targets` (
+                        `id` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `sourceApp` TEXT NOT NULL,
+                        `label` TEXT NOT NULL,
+                        `match` TEXT NOT NULL,
+                        `importance` INTEGER NOT NULL,
+                        `isEnabled` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+
+                // Interest rules (learned adjustments; never auto-applied without consent in UI layer)
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `interest_rules` (
+                        `id` TEXT NOT NULL,
+                        `sourceApp` TEXT NOT NULL,
+                        `matchType` TEXT NOT NULL,
+                        `pattern` TEXT NOT NULL,
+                        `scoreDelta` INTEGER NOT NULL,
+                        `isEnabled` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+
+                // Suggestions (consent prompts; user decides)
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `suggestions` (
+                        `id` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `sourceApp` TEXT NOT NULL,
+                        `key` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `reason` TEXT,
+                        `status` TEXT NOT NULL,
+                        `snoozedUntil` INTEGER,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+
+                // Never-suggest-again keys
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `rejected_suggestions` (
+                        `key` TEXT NOT NULL,
+                        `sourceApp` TEXT NOT NULL,
+                        `rejectedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`key`)
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }

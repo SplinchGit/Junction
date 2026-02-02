@@ -43,10 +43,14 @@ configure<ApplicationExtension> {
             ?: System.getenv("JUNCTION_WEB_CLIENT_ID")
             ?: ""
         buildConfigField("String", "JUNCTION_WEB_CLIENT_ID", "\"$webClientId\"")
-        val realtimeEndpoint = project.findProperty("JUNCTION_REALTIME_ENDPOINT")?.toString() ?: ""
+        val realtimeEndpoint = project.findProperty("JUNCTION_REALTIME_ENDPOINT")?.toString()
+            ?: localProps.getProperty("JUNCTION_REALTIME_ENDPOINT")
+            ?: ""
         buildConfigField("String", "JUNCTION_REALTIME_ENDPOINT", "\"$realtimeEndpoint\"")
         val realtimeClientSecretEndpoint =
-            project.findProperty("JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT")?.toString() ?: ""
+            project.findProperty("JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT")?.toString()
+            ?: localProps.getProperty("JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT")
+            ?: ""
         buildConfigField(
             "String",
             "JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT",
