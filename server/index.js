@@ -6,6 +6,11 @@ const crypto = require("crypto");
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const CHAT_API_KEY = process.env.JUNCTION_CHAT_API_KEY || "";
+const OPENAI_ALLOWED_MODELS = (process.env.OPENAI_ALLOWED_MODELS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
 
 function initFirebase() {
@@ -447,12 +452,36 @@ async function verifyAuth(req, res, next) {
   }
 }
 
+async function verifyAuthOrChatKey(req, res, next) {
+  if (CHAT_API_KEY) {
+    const key = req.get("X-Junction-Chat-Key") || "";
+    if (key && key === CHAT_API_KEY) {
+      req.user = { uid: "chat-key", isAdmin: false };
+      return next();
+    }
+  }
+  return verifyAuth(req, res, next);
+}
+
 function requireOpenAiKey(res) {
   if (!OPENAI_API_KEY) {
     res.status(500).json({ error: "Missing OPENAI_API_KEY" });
     return false;
   }
   return true;
+}
+
+function pickChatModel(requested) {
+  if (requested && OPENAI_ALLOWED_MODELS.length > 0) {
+    return OPENAI_ALLOWED_MODELS.includes(requested)
+      ? requested
+      : OPENAI_ALLOWED_MODELS[0];
+  }
+  if (!requested && OPENAI_ALLOWED_MODELS.length > 0) {
+    return OPENAI_ALLOWED_MODELS[0];
+  }
+  if (requested) return requested;
+  return process.env.OPENAI_CHAT_MODEL || "gpt-5.2";
 }
 
 function normalizeRole(role) {
@@ -478,6 +507,25 @@ function buildChatMessages(body) {
     messages.push({ role: "user", content: finalMessage });
   }
   return messages;
+}
+
+function extractResponseText(data) {
+  if (!data) return "";
+  if (typeof data.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+  const output = Array.isArray(data.output) ? data.output : [];
+  const chunks = [];
+  output.forEach((item) => {
+    if (!item || item.type !== "message") return;
+    const content = Array.isArray(item.content) ? item.content : [];
+    content.forEach((part) => {
+      if (part && part.type === "output_text" && part.text) {
+        chunks.push(String(part.text));
+      }
+    });
+  });
+  return chunks.join("").trim();
 }
 
 function parseAnswer(payload) {
@@ -886,23 +934,30 @@ app.post(
   }
 );
 
-app.post("/chat", verifyAuth, express.json({ limit: "1mb" }), async (req, res) => {
+app.post(
+  "/chat",
+  verifyAuthOrChatKey,
+  express.json({ limit: "1mb" }),
+  async (req, res) => {
   if (!requireOpenAiKey(res)) return;
 
-  const messages = buildChatMessages(req.body || {});
-  if (messages.length < 2) {
-    res.status(400).json({ error: "Missing chat messages" });
+  const input = buildChatMessages(req.body || {});
+  if (input.length < 2) {
+    res.status(400).json({ error: "Missing chat input" });
     return;
   }
 
+  const requestedModel =
+    typeof req.body?.model === "string" ? req.body.model.trim() : "";
+  const model = pickChatModel(requestedModel);
   const payload = {
-    model: process.env.OPENAI_CHAT_MODEL || "gpt-5.2",
-    messages,
+    model,
+    input,
     temperature: 0.7
   };
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -918,7 +973,7 @@ app.post("/chat", verifyAuth, express.json({ limit: "1mb" }), async (req, res) =
     }
 
     const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content?.trim();
+    const reply = extractResponseText(data);
     if (!reply) {
       res.status(502).json({ error: "Missing reply" });
       return;
@@ -927,7 +982,8 @@ app.post("/chat", verifyAuth, express.json({ limit: "1mb" }), async (req, res) =
   } catch (_err) {
     res.status(500).json({ error: "Chat request failed" });
   }
-});
+  }
+);
 
 app.listen(PORT, () => {
   console.log(`Junction server listening on ${PORT}`);

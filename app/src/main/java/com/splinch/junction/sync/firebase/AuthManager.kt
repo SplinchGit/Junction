@@ -56,7 +56,7 @@ class AuthManager(private val context: Context) {
         if (!FirebaseProvider.initialize(context)) {
             return Result.failure(IllegalStateException("Firebase is not configured yet"))
         }
-        val webClientId = BuildConfig.JUNCTION_WEB_CLIENT_ID.ifBlank {
+        val webClientId = sanitizeWebClientId(BuildConfig.JUNCTION_WEB_CLIENT_ID).ifBlank {
             // Only present if google-services.json includes an OAuth client; avoid hard reference to R.string.
             val resId = context.resources.getIdentifier(
                 "default_web_client_id",
@@ -70,7 +70,12 @@ class AuthManager(private val context: Context) {
             }
         }
         if (webClientId.isBlank()) {
-            return Result.failure(IllegalStateException("Missing JUNCTION_WEB_CLIENT_ID"))
+            return Result.failure(
+                IllegalStateException(
+                    "Missing JUNCTION_WEB_CLIENT_ID. Add it to local.properties or ensure google-services.json " +
+                        "includes a Web client ID."
+                )
+            )
         }
 
         return try {
@@ -111,5 +116,14 @@ class AuthManager(private val context: Context) {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun sanitizeWebClientId(value: String?): String {
+        val trimmed = value?.trim().orEmpty()
+        if (trimmed.isBlank()) return ""
+        if (trimmed.equals("missing_junction_web_client_id", ignoreCase = true)) return ""
+        if (trimmed.startsWith("missing_", ignoreCase = true)) return ""
+        if (trimmed.equals("null", ignoreCase = true)) return ""
+        return trimmed
     }
 }

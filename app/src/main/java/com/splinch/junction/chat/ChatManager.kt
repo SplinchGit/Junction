@@ -92,12 +92,6 @@ class ChatManager(
     }
 
     suspend fun sendUserMessage(raw: String) {
-        val user = authManager.currentUser()
-        if (user == null) {
-            appendSystemMessage("Sign in required to chat.")
-            return
-        }
-
         val processed = messageHandler.processMessage(raw, Sender.USER)
         val commandResult = processed.commandResult
         if (commandResult != null) {
@@ -119,6 +113,13 @@ class ChatManager(
             appendSystemMessage("No backend configured. Add a realtime endpoint or enable the HTTP backend.")
             return
         }
+        val user = authManager.currentUser()
+        val canUseRealtime = realtimeConfigured && user != null
+        val canUseBackend = backendEnabled
+        if (!canUseRealtime && !canUseBackend) {
+            appendSystemMessage("Sign in required to chat.")
+            return
+        }
 
         val userMessage = ChatMessage(
             sender = Sender.USER,
@@ -128,7 +129,7 @@ class ChatManager(
 
         val history = _messages.value
         val keepAlive = _speechModeEnabled.value && chatVisible
-        if (realtimeConfigured) {
+        if (canUseRealtime) {
             val connected = ensureConnected(keepAlive, history)
             if (connected) realtime.setMicEnabled(_micEnabled.value)
         }
@@ -139,7 +140,7 @@ class ChatManager(
             return
         }
 
-        val sent = sendViaBackend(userMessage)
+        val sent = if (canUseBackend) sendViaBackend(userMessage) else false
         if (!sent) {
             val message = if (!realtimeConfigured) {
                 "Realtime is not configured. Set a realtime endpoint or enable the HTTP backend."
@@ -154,17 +155,17 @@ class ChatManager(
         val useBackend = prefs.useHttpBackendFlow.first()
         val baseUrl = prefs.apiBaseUrlFlow.first()
         if (!useBackend || baseUrl.isBlank()) return false
+        val chatKey = prefs.chatApiKeyFlow.first()
+        val model = prefs.chatModelFlow.first()
         val token = authManager.currentUser()
             ?.getIdToken(true)
             ?.await()
             ?.token
-        if (token.isNullOrBlank()) {
-            appendSystemMessage("Sign in required to use the HTTP backend.")
-            return false
-        }
         val backend = HttpBackend(
             baseUrl = baseUrl,
-            authTokenProvider = { token }
+            authTokenProvider = { token },
+            chatKeyProvider = { chatKey },
+            modelProvider = { model }
         )
         val history = buildBackendHistory(userMessage)
         val sessionSnapshot = session.copy(messages = history)
@@ -173,7 +174,12 @@ class ChatManager(
             store.appendMessage(session.sessionId, response)
             true
         } catch (ex: Exception) {
-            appendSystemMessage(ex.message ?: "Backend request failed")
+            val message = ex.message ?: "Backend request failed"
+            if (token.isNullOrBlank() && message.contains("401")) {
+                appendSystemMessage("Sign in required to use the HTTP backend.")
+            } else {
+                appendSystemMessage(message)
+            }
             false
         }
     }

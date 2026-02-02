@@ -32,6 +32,11 @@ configure<ApplicationExtension> {
         buildConfigField("int", "JUNCTION_VERSION_CODE", versionCodeValue.toString())
         buildConfigField("String", "JUNCTION_API_BASE_URL", "\"http://10.0.2.2:8787\"")
         buildConfigField("boolean", "JUNCTION_USE_HTTP_BACKEND", "false")
+        val chatModel = project.findProperty("JUNCTION_CHAT_MODEL")?.toString()
+            ?: localProps.getProperty("JUNCTION_CHAT_MODEL")
+            ?: System.getenv("JUNCTION_CHAT_MODEL")
+            ?: "gpt-5.2"
+        buildConfigField("String", "JUNCTION_CHAT_MODEL", "\"$chatModel\"")
         val localProps = Properties().apply {
             val file = rootProject.file("local.properties")
             if (file.exists()) {

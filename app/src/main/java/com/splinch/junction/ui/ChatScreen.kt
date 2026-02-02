@@ -228,7 +228,7 @@ fun ChatScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Sign in to start a Realtime session.",
+                    text = "Google sign-in is required for Realtime voice. Text chat uses your HTTP backend.",
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
                 )
@@ -321,17 +321,17 @@ fun ChatScreen(
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Type a message") },
-                enabled = user != null
+                enabled = true
             )
             OutlinedButton(
                 onClick = { scope.launch { chatManager.stopResponse() } },
-                enabled = user != null
+                enabled = true
             ) {
                 Text("Stop")
             }
             OutlinedButton(
                 onClick = { scope.launch { chatManager.regenerateResponse() } },
-                enabled = user != null
+                enabled = true
             ) {
                 Text("Regenerate")
             }
@@ -343,7 +343,7 @@ fun ChatScreen(
                         input = ""
                     }
                 },
-                enabled = user != null && input.trim().isNotEmpty()
+                enabled = input.trim().isNotEmpty()
             ) {
                 Text("Send")
             }

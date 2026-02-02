@@ -78,6 +78,8 @@ fun SettingsScreen(
 
     val useBackend by userPrefs.useHttpBackendFlow.collectAsState(initial = false)
     val apiBaseUrl by userPrefs.apiBaseUrlFlow.collectAsState(initial = "")
+    val chatModel by userPrefs.chatModelFlow.collectAsState(initial = BuildConfig.JUNCTION_CHAT_MODEL)
+    val chatApiKey by userPrefs.chatApiKeyFlow.collectAsState(initial = "")
     val digestInterval by userPrefs.digestIntervalMinutesFlow.collectAsState(initial = 30)
     val realtimeEndpoint by userPrefs.realtimeEndpointFlow.collectAsState(initial = "")
     val realtimeClientSecretEndpoint by userPrefs.realtimeClientSecretEndpointFlow.collectAsState(initial = "")
@@ -93,6 +95,8 @@ fun SettingsScreen(
         .collectAsState(initial = EmploymentStatusSnapshot(null, null))
 
     var apiBaseUrlInput by remember { mutableStateOf(apiBaseUrl) }
+    var chatModelInput by remember { mutableStateOf(chatModel) }
+    var chatApiKeyInput by remember { mutableStateOf(chatApiKey) }
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
     var realtimeEndpointInput by remember { mutableStateOf(realtimeEndpoint) }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
@@ -158,6 +162,14 @@ fun SettingsScreen(
 
     LaunchedEffect(apiBaseUrl) {
         apiBaseUrlInput = apiBaseUrl
+    }
+
+    LaunchedEffect(chatModel) {
+        chatModelInput = chatModel
+    }
+
+    LaunchedEffect(chatApiKey) {
+        chatApiKeyInput = chatApiKey
     }
 
     LaunchedEffect(digestInterval) {
@@ -315,6 +327,20 @@ fun SettingsScreen(
                 placeholder = { Text("http://10.0.2.2:8787") },
                 modifier = Modifier.fillMaxWidth()
             )
+            OutlinedTextField(
+                value = chatModelInput,
+                onValueChange = { chatModelInput = it },
+                label = { Text("Chat model") },
+                placeholder = { Text("gpt-5.2") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = chatApiKeyInput,
+                onValueChange = { chatApiKeyInput = it },
+                label = { Text("GPT access key (optional)") },
+                placeholder = { Text("From your Junction server") },
+                modifier = Modifier.fillMaxWidth()
+            )
             Button(onClick = {
                 scope.launch {
                     val base = apiBaseUrlInput.trim()
@@ -328,6 +354,15 @@ fun SettingsScreen(
                 }
             }) {
                 Text("Save API URL")
+            }
+            Button(onClick = {
+                scope.launch {
+                    userPrefs.setChatModel(chatModelInput.trim())
+                    userPrefs.setChatApiKey(chatApiKeyInput.trim())
+                    Toast.makeText(context, "Chat settings saved", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text("Save chat settings")
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),

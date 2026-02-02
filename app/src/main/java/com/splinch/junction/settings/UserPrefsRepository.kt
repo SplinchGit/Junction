@@ -19,6 +19,8 @@ private val Context.dataStore by preferencesDataStore(name = "junction_prefs")
 class UserPrefsRepository(private val context: Context) {
     private val useHttpBackendKey = booleanPreferencesKey("use_http_backend")
     private val apiBaseUrlKey = stringPreferencesKey("api_base_url")
+    private val chatModelKey = stringPreferencesKey("chat_model")
+    private val chatApiKeyKey = stringPreferencesKey("chat_api_key")
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
     private val realtimeEndpointKey = stringPreferencesKey("realtime_endpoint")
     private val realtimeClientSecretEndpointKey = stringPreferencesKey("realtime_client_secret_endpoint")
@@ -28,6 +30,8 @@ class UserPrefsRepository(private val context: Context) {
     private val notificationAccessAckKey = booleanPreferencesKey("notification_access_ack")
     private val notificationListenerEnabledKey = booleanPreferencesKey("notification_listener_enabled")
     private val junctionOnlyNotificationsKey = booleanPreferencesKey("junction_only_notifications")
+    private val lastDigestAtKey = longPreferencesKey("last_digest_at")
+    private val lastDigestSummaryKey = stringPreferencesKey("last_digest_summary")
     private val appWeightsKey = stringPreferencesKey("app_weights_json")
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
     private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
@@ -39,6 +43,14 @@ class UserPrefsRepository(private val context: Context) {
 
     val apiBaseUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[apiBaseUrlKey] ?: BuildConfig.JUNCTION_API_BASE_URL
+    }
+
+    val chatModelFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[chatModelKey] ?: BuildConfig.JUNCTION_CHAT_MODEL
+    }
+
+    val chatApiKeyFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[chatApiKeyKey] ?: ""
     }
 
     val digestIntervalMinutesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -73,6 +85,14 @@ class UserPrefsRepository(private val context: Context) {
         prefs[junctionOnlyNotificationsKey] ?: false
     }
 
+    val lastDigestAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[lastDigestAtKey] ?: 0L
+    }
+
+    val lastDigestSummaryFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[lastDigestSummaryKey] ?: ""
+    }
+
     @Suppress("unused")
     val appWeightsFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
         val json = prefs[appWeightsKey].orEmpty()
@@ -101,6 +121,7 @@ class UserPrefsRepository(private val context: Context) {
             disabledPackages = prefs[disabledPackagesKey] ?: emptySet(),
             lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L,
             realtimeClientSecretEndpoint = prefs[realtimeClientSecretEndpointKey].orEmpty(),
+            chatModel = prefs[chatModelKey] ?: BuildConfig.JUNCTION_CHAT_MODEL,
             connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet(),
             mafiosoGameEnabled = prefs[mafiosoEnabledKey] ?: false
         )
@@ -112,6 +133,14 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setApiBaseUrl(baseUrl: String) {
         context.dataStore.edit { it[apiBaseUrlKey] = baseUrl }
+    }
+
+    suspend fun setChatModel(model: String) {
+        context.dataStore.edit { it[chatModelKey] = model }
+    }
+
+    suspend fun setChatApiKey(key: String) {
+        context.dataStore.edit { it[chatApiKeyKey] = key }
     }
 
     suspend fun setDigestIntervalMinutes(minutes: Int) {
@@ -162,6 +191,13 @@ class UserPrefsRepository(private val context: Context) {
         context.dataStore.edit { it[notificationListenerEnabledKey] = enabled }
     }
 
+    suspend fun updateDigest(summary: String, timestamp: Long) {
+        context.dataStore.edit {
+            it[lastDigestSummaryKey] = summary
+            it[lastDigestAtKey] = timestamp
+        }
+    }
+
     suspend fun setJunctionOnlyNotifications(enabled: Boolean) {
         context.dataStore.edit { it[junctionOnlyNotificationsKey] = enabled }
     }
@@ -191,6 +227,7 @@ class UserPrefsRepository(private val context: Context) {
             prefs[disabledPackagesKey] = snapshot.disabledPackages
             prefs[lastUpdateCheckAtKey] = snapshot.lastUpdateCheckAt
             prefs[realtimeClientSecretEndpointKey] = snapshot.realtimeClientSecretEndpoint
+            prefs[chatModelKey] = snapshot.chatModel
             prefs[connectedIntegrationsKey] = snapshot.connectedIntegrations
             prefs[mafiosoEnabledKey] = snapshot.mafiosoGameEnabled
         }
@@ -222,6 +259,7 @@ data class PrefsSnapshot(
     val disabledPackages: Set<String>,
     val lastUpdateCheckAt: Long,
     val realtimeClientSecretEndpoint: String,
+    val chatModel: String,
     val connectedIntegrations: Set<String>,
     val mafiosoGameEnabled: Boolean
 )

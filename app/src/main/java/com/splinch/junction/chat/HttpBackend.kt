@@ -13,6 +13,8 @@ import org.json.JSONObject
 class HttpBackend(
     private val baseUrl: String,
     private val authTokenProvider: (suspend () -> String?)? = null,
+    private val chatKeyProvider: (suspend () -> String?)? = null,
+    private val modelProvider: (suspend () -> String?)? = null,
     private val httpClient: OkHttpClient = OkHttpClient()
 ) : ChatBackend {
     override suspend fun generateResponse(session: ChatSession, userMessage: ChatMessage): ChatMessage {
@@ -27,6 +29,10 @@ class HttpBackend(
             val token = authTokenProvider?.invoke()
             if (!token.isNullOrBlank()) {
                 requestBuilder.addHeader("Authorization", "Bearer $token")
+            }
+            val chatKey = chatKeyProvider?.invoke()
+            if (!chatKey.isNullOrBlank()) {
+                requestBuilder.addHeader("X-Junction-Chat-Key", chatKey)
             }
             val request = requestBuilder.build()
 
@@ -47,6 +53,10 @@ class HttpBackend(
         val json = JSONObject()
         json.put("sessionId", session.sessionId)
         json.put("message", userMessage.content)
+        val model = runCatching { modelProvider?.invoke() }.getOrNull()?.trim().orEmpty()
+        if (model.isNotBlank()) {
+            json.put("model", model)
+        }
         val messagesArray = JSONArray()
         val history = session.messages.takeLast(20).let { list ->
             if (list.isNotEmpty() && list.last().id == userMessage.id) {

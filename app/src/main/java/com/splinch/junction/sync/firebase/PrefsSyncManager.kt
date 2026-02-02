@@ -2,6 +2,7 @@
 
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.splinch.junction.BuildConfig
 import com.splinch.junction.settings.PrefsSnapshot
 import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -89,6 +90,7 @@ private fun PrefsSnapshot.toFirestoreMap(): Map<String, Any?> {
         "disabledPackages" to disabledPackages.toList(),
         "lastUpdateCheckAt" to lastUpdateCheckAt,
         "realtimeClientSecretEndpoint" to realtimeClientSecretEndpoint,
+        "chatModel" to chatModel,
         "connectedIntegrations" to connectedIntegrations.toList(),
         "mafiosoGameEnabled" to mafiosoGameEnabled
     )
@@ -108,6 +110,7 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
         ?: emptySet()
     val lastUpdateCheckAt = (data["lastUpdateCheckAt"] as? Number)?.toLong() ?: 0L
     val realtimeClientSecretEndpoint = data["realtimeClientSecretEndpoint"] as? String ?: ""
+    val chatModel = data["chatModel"] as? String ?: BuildConfig.JUNCTION_CHAT_MODEL
     val connectedIntegrations = (data["connectedIntegrations"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
         ?: emptySet()
     val mafiosoGameEnabled = data["mafiosoGameEnabled"] as? Boolean ?: false
@@ -120,6 +123,7 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
         disabledPackages = disabledPackages,
         lastUpdateCheckAt = lastUpdateCheckAt,
         realtimeClientSecretEndpoint = realtimeClientSecretEndpoint,
+        chatModel = chatModel,
         connectedIntegrations = connectedIntegrations,
         mafiosoGameEnabled = mafiosoGameEnabled
     )

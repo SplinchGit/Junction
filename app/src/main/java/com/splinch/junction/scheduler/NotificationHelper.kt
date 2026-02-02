@@ -14,6 +14,7 @@ object NotificationHelper {
     private const val CHANNEL_ID = "junction_digest"
     private const val CHANNEL_NAME = "Junction Digest"
     private const val CHANNEL_DESCRIPTION = "Scheduled summaries from Junction"
+    private const val DIGEST_ID = 1001
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -59,10 +60,16 @@ object NotificationHelper {
             .setContentIntent(openPendingIntent)
             .addAction(R.drawable.ic_junction, "Open", openPendingIntent)
             .addAction(R.drawable.ic_junction, "Voice", voicePendingIntent)
+            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .build()
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(1001, notification)
+        manager.notify(DIGEST_ID, notification)
+    }
+
+    fun cancelDigest(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(DIGEST_ID)
     }
 }
