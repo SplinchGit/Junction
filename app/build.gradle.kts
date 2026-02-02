@@ -65,16 +65,16 @@ configure<ApplicationExtension> {
 
     sourceSets {
         getByName("main") {
-            java.directories.add(file("build/generated/ksp/main/kotlin"))
-            java.directories.add(file("build/generated/ksp/main/java"))
+            java.directories.add("build/generated/ksp/main/kotlin")
+            java.directories.add("build/generated/ksp/main/java")
         }
         getByName("debug") {
-            java.directories.add(file("build/generated/ksp/debug/kotlin"))
-            java.directories.add(file("build/generated/ksp/debug/java"))
+            java.directories.add("build/generated/ksp/debug/kotlin")
+            java.directories.add("build/generated/ksp/debug/java")
         }
         getByName("release") {
-            java.directories.add(file("build/generated/ksp/release/kotlin"))
-            java.directories.add(file("build/generated/ksp/release/java"))
+            java.directories.add("build/generated/ksp/release/kotlin")
+            java.directories.add("build/generated/ksp/release/java")
         }
     }
 
