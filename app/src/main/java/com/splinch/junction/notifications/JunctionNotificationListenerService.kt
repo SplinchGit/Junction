@@ -62,10 +62,11 @@ class JunctionNotificationListenerService : NotificationListenerService() {
 
         // Collapse notifications by package + category into a single "widget" item to avoid spam.
         val category = mapCategory(packageName)
+        val now = if (sbn.postTime > 0L) sbn.postTime else System.currentTimeMillis()
+        if (category == FeedCategory.SYSTEM && !shouldKeepSystemNotification(title, text, now)) return
         val bucketKey = "app:$packageName:${category.name}"
         NotificationTapStore.put(bucketKey, notification.contentIntent)
         val eventKey = sbn.key
-        val now = if (sbn.postTime > 0L) sbn.postTime else System.currentTimeMillis()
         val dedupTime = System.currentTimeMillis()
 
         if (isDuplicate(eventKey, dedupTime)) return
@@ -141,7 +142,15 @@ class JunctionNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private val recentKeys = LinkedHashMap<String, Long>()
+        private val systemLock = Any()
         private const val DEDUP_WINDOW_MS = 8_000L
+        private const val SYSTEM_MIN_INTERVAL_MS = 30 * 60 * 1000L
+        private const val SYSTEM_GENERIC_COOLDOWN_MS = 2 * 60 * 60 * 1000L
+        private val batteryThresholds = listOf(15, 30, 50, 80, 100)
+        private val batteryPercentRegex = Regex("(\\d{1,3})%")
+        private var lastSystemBatteryPercent: Int? = null
+        private var lastSystemCharging: Boolean? = null
+        private var lastSystemNotifyAt: Long = 0L
 
         private val messagingApps = setOf(
             "com.google.android.apps.messaging",
@@ -209,6 +218,54 @@ class JunctionNotificationListenerService : NotificationListenerService() {
                 recentKeys[threadKey] = now
                 return false
             }
+        }
+
+        private fun shouldKeepSystemNotification(title: String, body: String?, now: Long): Boolean {
+            val combined = listOfNotNull(title, body).joinToString(" ").lowercase()
+            val percent = batteryPercentRegex.find(combined)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
+                ?.coerceIn(0, 100)
+            val charging = combined.contains("charging") || combined.contains("charged")
+            val batteryRelated = combined.contains("battery") || percent != null || charging
+
+            synchronized(systemLock) {
+                if (batteryRelated) {
+                    val lastPercent = lastSystemBatteryPercent
+                    val lastCharging = lastSystemCharging
+                    val crossed = percent != null &&
+                        lastPercent != null &&
+                        crossedThreshold(lastPercent, percent)
+                    val stateChanged = lastCharging != null && charging != lastCharging
+                    val bigMove = percent != null &&
+                        lastPercent != null &&
+                        kotlin.math.abs(percent - lastPercent) >= 10
+                    val timePassed = now - lastSystemNotifyAt >= SYSTEM_MIN_INTERVAL_MS
+                    val shouldKeep = lastSystemNotifyAt == 0L || crossed || stateChanged || bigMove || timePassed
+                    if (shouldKeep) {
+                        if (percent != null) {
+                            lastSystemBatteryPercent = percent
+                        }
+                        lastSystemCharging = charging
+                        lastSystemNotifyAt = now
+                    }
+                    return shouldKeep
+                }
+
+                val timePassed = now - lastSystemNotifyAt >= SYSTEM_GENERIC_COOLDOWN_MS
+                if (timePassed) {
+                    lastSystemNotifyAt = now
+                }
+                return timePassed
+            }
+        }
+
+        private fun crossedThreshold(previous: Int, current: Int): Boolean {
+            if (previous == current) return false
+            val low = kotlin.math.min(previous, current) + 1
+            val high = kotlin.math.max(previous, current)
+            return batteryThresholds.any { it in low..high }
         }
     }
 }

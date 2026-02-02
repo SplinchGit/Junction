@@ -81,7 +81,11 @@ fun FeedScreen(
         }
     }
 
-    val activeItems = items.filter { it.status != FeedStatus.ARCHIVED }
+    val now = System.currentTimeMillis()
+    val activeItems = items.filter {
+        it.status != FeedStatus.ARCHIVED &&
+            !(it.category == FeedCategory.SYSTEM && now - it.updatedAt > SYSTEM_TTL_MS)
+    }
     val grouped = activeItems.groupBy { it.category }
     val newSinceOpen = activeItems.count { it.timestamp > lastOpenedAt }
     val topCategories = activeItems
@@ -463,3 +467,5 @@ private fun formatTime(timestamp: Long): String {
     val formatter = DateTimeFormatter.ofPattern("h:mm a")
     return formatter.format(instant.atZone(ZoneId.systemDefault()))
 }
+
+private const val SYSTEM_TTL_MS = 6 * 60 * 60 * 1000L

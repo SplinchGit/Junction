@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -110,11 +111,10 @@ fun SettingsScreen(
     var showAddFollowTarget by remember { mutableStateOf(false) }
     var showEmploymentStatusSheet by remember { mutableStateOf(false) }
     var showAddRoleSheet by remember { mutableStateOf(false) }
-    var followLabel by remember { mutableStateOf("") }
-    var followMatch by remember { mutableStateOf("") }
-    var followType by remember { mutableStateOf(FollowTargetType.USER) }
-    var followSource by remember { mutableStateOf(SourceApp.DISCORD) }
-    var followImportance by remember { mutableStateOf("50") }
+    var followWizardStep by remember { mutableStateOf(0) }
+    var creatorNameInput by remember { mutableStateOf("") }
+    var selectedPlatforms by remember { mutableStateOf(setOf<SourceApp>()) }
+    val platformHandles = remember { mutableStateMapOf<SourceApp, String>() }
     var selectedEmploymentState by remember { mutableStateOf(EmploymentState.UNEMPLOYED) }
     var employmentNotes by remember { mutableStateOf("") }
     var roleTitleInput by remember { mutableStateOf("") }
@@ -204,6 +204,15 @@ fun SettingsScreen(
             roleStartDateInput = ""
             rolePayInput = ""
             roleSourceInput = ""
+        }
+    }
+
+    LaunchedEffect(showAddFollowTarget) {
+        if (showAddFollowTarget) {
+            followWizardStep = 0
+            creatorNameInput = ""
+            selectedPlatforms = emptySet()
+            platformHandles.clear()
         }
     }
 
@@ -1050,86 +1059,119 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(text = "Add favorite", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = "Step ${followWizardStep + 1} of 3",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-                Text(text = "Source", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val options = listOf(SourceApp.DISCORD, SourceApp.BLUESKY, SourceApp.YOUTUBE, SourceApp.SPOTIFY, SourceApp.EMAIL)
-                    options.forEach { app ->
-                        val selected = followSource == app
-                        if (selected) {
-                            Button(onClick = { followSource = app }) { Text(app.name.lowercase().replaceFirstChar { it.uppercase() }) }
-                        } else {
-                            OutlinedButton(onClick = { followSource = app }) {
-                                Text(app.name.lowercase().replaceFirstChar { it.uppercase() })
+                when (followWizardStep) {
+                    0 -> {
+                        Text(text = "Who is it?", style = MaterialTheme.typography.labelMedium)
+                        OutlinedTextField(
+                            value = creatorNameInput,
+                            onValueChange = { creatorNameInput = it },
+                            label = { Text("Name") },
+                            placeholder = { Text("e.g., Rhys") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = "This is for following feeds you like.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    1 -> {
+                        Text(text = "Which platforms?", style = MaterialTheme.typography.labelMedium)
+                        SourceApp.values().forEach { app ->
+                            val selected = selectedPlatforms.contains(app)
+                            val label = app.label()
+                            if (selected) {
+                                Button(onClick = {
+                                    selectedPlatforms = selectedPlatforms - app
+                                    platformHandles.remove(app)
+                                }) { Text(label) }
+                            } else {
+                                OutlinedButton(onClick = { selectedPlatforms = selectedPlatforms + app }) {
+                                    Text(label)
+                                }
                             }
                         }
                     }
-                }
-
-                Text(text = "Type", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FollowTargetType.values().forEach { t ->
-                        val selected = followType == t
-                        val label = t.name.lowercase().replaceFirstChar { it.uppercase() }
-                        if (selected) {
-                            Button(onClick = { followType = t }) { Text(label) }
-                        } else {
-                            OutlinedButton(onClick = { followType = t }) { Text(label) }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = followLabel,
-                    onValueChange = { followLabel = it },
-                    label = { Text("Label") },
-                    placeholder = { Text("e.g., Rhys, #general, Splinch Server") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = followMatch,
-                    onValueChange = { followMatch = it },
-                    label = { Text("Match") },
-                    placeholder = { Text("Text Junction should match in notifications") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = followImportance,
-                    onValueChange = { followImportance = it },
-                    label = { Text("Importance (0-100)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Button(
-                    onClick = {
-                        val label = followLabel.trim()
-                        val match = followMatch.trim()
-                        val importance = followImportance.toIntOrNull()?.coerceIn(0, 100) ?: 50
-                        if (label.isBlank() || match.isBlank()) {
-                            Toast.makeText(context, "Add a label and match", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        scope.launch {
-                            followRepository.upsertFollowTarget(
-                                FollowTargetEntity(
-                                    type = followType,
-                                    sourceApp = followSource,
-                                    label = label,
-                                    match = match,
-                                    importance = importance
-                                )
+                    else -> {
+                        Text(text = "Handles / feeds", style = MaterialTheme.typography.labelMedium)
+                        selectedPlatforms.forEach { app ->
+                            OutlinedTextField(
+                                value = platformHandles[app].orEmpty(),
+                                onValueChange = { platformHandles[app] = it },
+                                label = { Text("${app.label()} handle") },
+                                placeholder = { Text("e.g., @handle or channel name") },
+                                modifier = Modifier.fillMaxWidth()
                             )
-                            followLabel = ""
-                            followMatch = ""
-                            followImportance = "50"
-                            showAddFollowTarget = false
-                            Toast.makeText(context, "Added", Toast.LENGTH_SHORT).show()
                         }
                     }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Save")
+                    if (followWizardStep > 0) {
+                        OutlinedButton(onClick = { followWizardStep -= 1 }) {
+                            Text("Back")
+                        }
+                    }
+                    val canNext = when (followWizardStep) {
+                        0 -> creatorNameInput.trim().isNotBlank()
+                        1 -> selectedPlatforms.isNotEmpty()
+                        else -> selectedPlatforms.all { !platformHandles[it].orEmpty().trim().isBlank() }
+                    }
+                    Button(
+                        onClick = {
+                            if (followWizardStep < 2) {
+                                followWizardStep += 1
+                            } else {
+                                val name = creatorNameInput.trim()
+                                if (name.isBlank()) {
+                                    Toast.makeText(context, "Add a name", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                val missing = selectedPlatforms.firstOrNull {
+                                    platformHandles[it].orEmpty().trim().isBlank()
+                                }
+                                if (missing != null) {
+                                    Toast.makeText(
+                                        context,
+                                        "Add a handle for ${missing.label()}",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    return@Button
+                                }
+                                scope.launch {
+                                    val now = System.currentTimeMillis()
+                                    selectedPlatforms.forEach { app ->
+                                        val match = platformHandles[app].orEmpty().trim()
+                                        followRepository.upsertFollowTarget(
+                                            FollowTargetEntity(
+                                                type = FollowTargetType.USER,
+                                                sourceApp = app,
+                                                label = name,
+                                                match = match,
+                                                importance = 80,
+                                                createdAt = now,
+                                                updatedAt = now
+                                            )
+                                        )
+                                    }
+                                    showAddFollowTarget = false
+                                    Toast.makeText(context, "Added", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        enabled = canNext
+                    ) {
+                        Text(if (followWizardStep < 2) "Next" else "Save")
+                    }
                 }
             }
         }
@@ -1143,6 +1185,18 @@ private fun resolveAppLabel(context: android.content.Context, packageName: Strin
         pm.getApplicationLabel(appInfo).toString()
     } catch (_: Exception) {
         packageName
+    }
+}
+
+private fun SourceApp.label(): String {
+    return when (this) {
+        SourceApp.DISCORD -> "Discord"
+        SourceApp.SPOTIFY -> "Spotify"
+        SourceApp.YOUTUBE -> "YouTube"
+        SourceApp.EMAIL -> "Email"
+        SourceApp.BLUESKY -> "Bluesky"
+        SourceApp.TWITCH -> "Twitch"
+        SourceApp.OTHER -> "Other"
     }
 }
 
