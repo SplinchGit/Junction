@@ -2,8 +2,6 @@ package com.splinch.junction.core
 
 import android.app.Application
 import android.util.Log
-import com.splinch.junction.data.JunctionDatabase
-import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.scheduler.NotificationHelper
 import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
@@ -28,12 +26,9 @@ class JunctionApp : Application() {
         runCatching { FirebaseProvider.initialize(this) }
             .onFailure { Log.e(TAG, "Failed to initialize Firebase", it) }
 
-        val database = JunctionDatabase.getInstance(this)
-        val feedRepository = FeedRepository(database.feedDao())
         val prefsRepository = UserPrefsRepository(this)
 
         appScope.launch {
-            feedRepository.seedIfEmpty()
             val interval = prefsRepository.digestIntervalMinutesFlow.first().coerceAtLeast(15)
             Scheduler.scheduleFeedDigest(this@JunctionApp, interval.toLong())
         }

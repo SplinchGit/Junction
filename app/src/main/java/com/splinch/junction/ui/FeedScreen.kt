@@ -48,6 +48,7 @@ import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.feed.model.FeedCategory
 import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.feed.model.FeedStatus
+import com.splinch.junction.notifications.NotificationTapStore
 import com.splinch.junction.update.UpdateInfo
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -202,13 +203,16 @@ fun FeedScreen(
                 },
                 onOpen = {
                     val item = selectedItem ?: return@FeedActionSheet
-                    val packageName = item.packageName
-                    if (!packageName.isNullOrBlank()) {
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
-                        if (launchIntent != null) {
-                            context.startActivity(launchIntent)
-                        } else {
-                            Toast.makeText(context, "Unable to open app", Toast.LENGTH_SHORT).show()
+                    val opened = item.threadKey?.let { NotificationTapStore.trySend(it) } == true
+                    if (!opened) {
+                        val packageName = item.packageName
+                        if (!packageName.isNullOrBlank()) {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            } else {
+                                Toast.makeText(context, "Unable to open app", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                     selectedItem = null

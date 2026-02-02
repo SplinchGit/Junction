@@ -400,6 +400,22 @@ fun SettingsScreen(
         }
 
         item {
+            Text(text = "Feed", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Keep the feed real. Clear any older placeholder items.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Button(onClick = {
+                scope.launch {
+                    feedRepository.clearAll()
+                    Toast.makeText(context, "Feed cleared", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text("Clear feed data")
+            }
+        }
+
+        item {
             Text(text = "Notification access", style = MaterialTheme.typography.titleMedium)
             if (!notificationAck) {
                 Text(

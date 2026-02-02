@@ -1,4 +1,5 @@
 import com.android.build.api.dsl.ApplicationExtension
+import java.util.Properties
 import org.gradle.kotlin.dsl.configure
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -31,7 +32,16 @@ configure<ApplicationExtension> {
         buildConfigField("int", "JUNCTION_VERSION_CODE", versionCodeValue.toString())
         buildConfigField("String", "JUNCTION_API_BASE_URL", "\"http://10.0.2.2:8787\"")
         buildConfigField("boolean", "JUNCTION_USE_HTTP_BACKEND", "false")
-        val webClientId = project.findProperty("JUNCTION_WEB_CLIENT_ID")?.toString() ?: ""
+        val localProps = Properties().apply {
+            val file = rootProject.file("local.properties")
+            if (file.exists()) {
+                file.inputStream().use { load(it) }
+            }
+        }
+        val webClientId = project.findProperty("JUNCTION_WEB_CLIENT_ID")?.toString()
+            ?: localProps.getProperty("JUNCTION_WEB_CLIENT_ID")
+            ?: System.getenv("JUNCTION_WEB_CLIENT_ID")
+            ?: ""
         buildConfigField("String", "JUNCTION_WEB_CLIENT_ID", "\"$webClientId\"")
         val realtimeEndpoint = project.findProperty("JUNCTION_REALTIME_ENDPOINT")?.toString() ?: ""
         buildConfigField("String", "JUNCTION_REALTIME_ENDPOINT", "\"$realtimeEndpoint\"")
@@ -41,6 +51,21 @@ configure<ApplicationExtension> {
             "String",
             "JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT",
             "\"$realtimeClientSecretEndpoint\""
+        )
+    }
+
+    sourceSets {
+        getByName("main").java.srcDirs(
+            "build/generated/ksp/main/kotlin",
+            "build/generated/ksp/main/java"
+        )
+        getByName("debug").java.srcDirs(
+            "build/generated/ksp/debug/kotlin",
+            "build/generated/ksp/debug/java"
+        )
+        getByName("release").java.srcDirs(
+            "build/generated/ksp/release/kotlin",
+            "build/generated/ksp/release/java"
         )
     }
 

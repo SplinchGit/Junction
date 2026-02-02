@@ -100,7 +100,6 @@ class MainActivity : ComponentActivity() {
                         feedSyncManager.start()
                         prefsSyncManager.start()
                         chatManager.initialize()
-                        feedRepository.seedIfEmpty()
                         lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
                         prefs.setNotificationListenerEnabled(
                             NotificationAccessHelper.isNotificationListenerEnabled(context)

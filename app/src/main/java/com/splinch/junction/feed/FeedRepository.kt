@@ -170,6 +170,10 @@ class FeedRepository(
         return feedDao.distinctPackages().filter { it.isNotBlank() }
     }
 
+    suspend fun clearAll() {
+        feedDao.clearAll()
+    }
+
     suspend fun getEntityById(id: String): FeedItemEntity? {
         return feedDao.getById(id)
     }

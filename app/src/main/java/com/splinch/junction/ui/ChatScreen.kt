@@ -77,6 +77,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val activity = context as? android.app.Activity
     var pendingSpeechEnable by remember { mutableStateOf(false) }
+    var authError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(Unit) {
         chatManager.setChatVisible(true)
@@ -234,12 +235,26 @@ fun ChatScreen(
                 Button(
                     onClick = {
                         if (activity != null) {
-                            scope.launch { authManager.signInWithGoogle(activity) }
+                            authError = null
+                            scope.launch {
+                                val result = authManager.signInWithGoogle(activity)
+                                if (result.isFailure) {
+                                    authError = result.exceptionOrNull()?.message ?: "Sign-in failed"
+                                }
+                            }
                         }
                     },
                     modifier = Modifier.padding(top = 8.dp)
                 ) {
                     Text("Sign in with Google")
+                }
+                if (!authError.isNullOrBlank()) {
+                    Text(
+                        text = authError.orEmpty(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
             }
         }

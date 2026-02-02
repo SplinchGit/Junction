@@ -17,21 +17,62 @@ import kotlinx.coroutines.flow.first
 class JunctionNotificationListenerService : NotificationListenerService() {
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    override fun onListenerConnected() {
+        scope.launch {
+            val prefs = UserPrefsRepository(applicationContext)
+            prefs.setNotificationListenerEnabled(true)
+            if (!prefs.notificationAccessAcknowledgedFlow.first()) {
+                prefs.setNotificationAccessAcknowledged(true)
+            }
+        }
+        activeNotifications?.forEach { enqueueNotification(it) }
+    }
+
+    override fun onListenerDisconnected() {
+        scope.launch {
+            UserPrefsRepository(applicationContext).setNotificationListenerEnabled(false)
+        }
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        enqueueNotification(sbn)
+    }
+
+    private fun enqueueNotification(sbn: StatusBarNotification) {
         val notification = sbn.notification
         val extras = notification.extras
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
+        val title = listOf(
+            extras.getCharSequence(Notification.EXTRA_TITLE),
+            extras.getCharSequence(Notification.EXTRA_TITLE_BIG)
+        ).firstOrNull { !it.isNullOrBlank() }?.toString()?.trim().orEmpty()
+        val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.mapNotNull { it?.toString()?.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString("\n")
+            ?.takeIf { it.isNotBlank() }
+        val text = listOf(
+            extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim(),
+            lines,
+            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim(),
+            extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
+        ).firstOrNull { !it.isNullOrBlank() }
         val packageName = sbn.packageName
-        val threadKey = buildThreadKey(packageName, title, text, sbn)
-        val now = System.currentTimeMillis()
+        if (packageName == applicationContext.packageName) return
+        if (title.isBlank() && text.isNullOrBlank()) return
 
-        if (isDuplicate(threadKey, now)) return
+        val threadKey = buildThreadKey(packageName, title, text, sbn)
+        NotificationTapStore.put(threadKey, notification.contentIntent)
+        val now = if (sbn.postTime > 0L) sbn.postTime else System.currentTimeMillis()
+        val dedupTime = System.currentTimeMillis()
+
+        if (isDuplicate(threadKey, dedupTime)) return
 
         scope.launch {
             val prefs = UserPrefsRepository(applicationContext)
             val acknowledged = prefs.notificationAccessAcknowledgedFlow.first()
-            if (!acknowledged) return@launch
+            if (!acknowledged) {
+                prefs.setNotificationAccessAcknowledged(true)
+            }
             if (!prefs.isPackageEnabled(packageName)) return@launch
 
             val repository = FeedRepository(JunctionDatabase.getInstance(applicationContext).feedDao())
