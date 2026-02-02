@@ -19,6 +19,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -66,7 +67,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             JunctionTheme {
                 val context = LocalContext.current
-                val lifecycle = (context as? androidx.activity.ComponentActivity)?.lifecycle
+                val lifecycle = (context as? ComponentActivity)?.lifecycle
                 val scope = rememberCoroutineScope()
                 val database = remember { JunctionDatabase.getInstance(context) }
                 val prefs = remember { UserPrefsRepository(context) }
@@ -95,7 +96,7 @@ class MainActivity : ComponentActivity() {
                 val sessionId by chatManager.sessionId.collectAsState()
                 val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
                 val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
-                var lastOpenedAt by remember { mutableStateOf(0L) }
+                var lastOpenedAt by remember { mutableLongStateOf(0L) }
 
                 LaunchedEffect(Unit) {
                     runCatching {
@@ -227,7 +228,7 @@ private fun JunctionApp(
     employmentRepository: EmploymentRepository,
     prefs: UserPrefsRepository,
     authManager: AuthManager,
-    updateState: kotlinx.coroutines.flow.MutableStateFlow<UpdateInfo?>,
+    updateState: MutableStateFlow<UpdateInfo?>,
     lastOpenedAt: Long,
     voiceToken: Int,
     chatToken: Int

@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,7 +114,7 @@ fun SettingsScreen(
     var showAddFollowTarget by remember { mutableStateOf(false) }
     var showEmploymentStatusSheet by remember { mutableStateOf(false) }
     var showAddRoleSheet by remember { mutableStateOf(false) }
-    var followWizardStep by remember { mutableStateOf(0) }
+    var followWizardStep by remember { mutableIntStateOf(0) }
     var creatorNameInput by remember { mutableStateOf("") }
     var selectedPlatforms by remember { mutableStateOf(setOf<SourceApp>()) }
     val platformHandles = remember { mutableStateMapOf<SourceApp, String>() }
@@ -503,22 +504,24 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         scope.launch {
-                            val token = user?.getIdToken(true)?.await()?.token
                             clientSecretStatus = ConnectionState(ConnectionStatus.TESTING)
                             backendStatus = ConnectionState(ConnectionStatus.TESTING)
+                            val token = user?.getIdToken(true)?.await()?.token
 
-                            clientSecretStatus = if (realtimeClientSecretEndpoint.isBlank()) {
-                                ConnectionState(ConnectionStatus.ERROR, "Missing endpoint")
-                            } else if (token.isNullOrBlank()) {
-                                ConnectionState(ConnectionStatus.ERROR, "Sign-in required")
-                            } else {
-                                testClientSecret(httpClient, realtimeClientSecretEndpoint, token)
+                            clientSecretStatus = when {
+                                realtimeClientSecretEndpoint.isBlank() ->
+                                    ConnectionState(ConnectionStatus.ERROR, "Missing endpoint")
+                                token.isNullOrBlank() ->
+                                    ConnectionState(ConnectionStatus.ERROR, "Sign-in required")
+                                else ->
+                                    testClientSecret(httpClient, realtimeClientSecretEndpoint, token)
                             }
 
-                            backendStatus = if (!useBackend || apiBaseUrl.isBlank()) {
-                                ConnectionState(ConnectionStatus.ERROR, "Disabled")
-                            } else {
-                                testBackendHealth(httpClient, apiBaseUrl)
+                            backendStatus = when {
+                                !useBackend || apiBaseUrl.isBlank() ->
+                                    ConnectionState(ConnectionStatus.ERROR, "Disabled")
+                                else ->
+                                    testBackendHealth(httpClient, apiBaseUrl)
                             }
                         }
                     }
@@ -934,7 +937,7 @@ fun SettingsScreen(
                 Text(text = "Change work status", style = MaterialTheme.typography.titleMedium)
                 Text(text = "Status", style = MaterialTheme.typography.labelMedium)
 
-                EmploymentState.values().forEach { state ->
+                EmploymentState.entries.forEach { state ->
                     val selected = selectedEmploymentState == state
                     val label = state.label()
                     if (selected) {
@@ -1006,7 +1009,7 @@ fun SettingsScreen(
                 )
 
                 Text(text = "Employment type", style = MaterialTheme.typography.labelMedium)
-                EmploymentType.values().forEach { type ->
+                EmploymentType.entries.forEach { type ->
                     val selected = roleTypeInput == type
                     val label = type.label()
                     if (selected) {
@@ -1123,7 +1126,7 @@ fun SettingsScreen(
                     }
                     1 -> {
                         Text(text = "Which platforms?", style = MaterialTheme.typography.labelMedium)
-                        SourceApp.values().forEach { app ->
+                        SourceApp.entries.forEach { app ->
                             val selected = selectedPlatforms.contains(app)
                             val label = app.label()
                             if (selected) {
