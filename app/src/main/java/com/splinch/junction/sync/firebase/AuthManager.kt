@@ -11,6 +11,7 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.splinch.junction.BuildConfig
+import com.splinch.junction.core.Config
 import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,7 +78,7 @@ class AuthManager(private val context: Context) {
             BuildConfig.JUNCTION_WEB_CLIENT_ID,
             resourceIdValue
         )
-            .map { sanitizeWebClientId(it) }
+            .map { Config.sanitizeWebClientId(it) }
             .firstOrNull { it.isNotBlank() }
             .orEmpty()
         if (webClientId.isBlank()) {
@@ -129,12 +130,4 @@ class AuthManager(private val context: Context) {
         }
     }
 
-    private fun sanitizeWebClientId(value: String?): String {
-        val trimmed = value?.trim().orEmpty()
-        if (trimmed.isBlank()) return ""
-        if (trimmed.equals("missing_junction_web_client_id", ignoreCase = true)) return ""
-        if (trimmed.startsWith("missing_", ignoreCase = true)) return ""
-        if (trimmed.equals("null", ignoreCase = true)) return ""
-        return trimmed
-    }
 }

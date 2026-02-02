@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.splinch.junction.BuildConfig
+import com.splinch.junction.core.Config
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -43,11 +43,11 @@ class UserPrefsRepository(private val context: Context) {
     }
 
     val apiBaseUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[apiBaseUrlKey] ?: BuildConfig.JUNCTION_API_BASE_URL
+        prefs[apiBaseUrlKey] ?: Config.buildApiBaseUrl
     }
 
     val chatModelFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[chatModelKey] ?: BuildConfig.JUNCTION_CHAT_MODEL
+        prefs[chatModelKey] ?: Config.buildChatModel
     }
 
     val chatApiKeyFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -59,11 +59,11 @@ class UserPrefsRepository(private val context: Context) {
     }
 
     val realtimeEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[realtimeEndpointKey] ?: BuildConfig.JUNCTION_REALTIME_ENDPOINT
+        prefs[realtimeEndpointKey] ?: Config.buildRealtimeEndpoint
     }
 
     val realtimeClientSecretEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[realtimeClientSecretEndpointKey] ?: BuildConfig.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT
+        prefs[realtimeClientSecretEndpointKey] ?: Config.buildRealtimeClientSecretEndpoint
     }
 
     val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -126,7 +126,7 @@ class UserPrefsRepository(private val context: Context) {
             disabledPackages = prefs[disabledPackagesKey] ?: emptySet(),
             lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L,
             realtimeClientSecretEndpoint = prefs[realtimeClientSecretEndpointKey].orEmpty(),
-            chatModel = prefs[chatModelKey] ?: BuildConfig.JUNCTION_CHAT_MODEL,
+            chatModel = prefs[chatModelKey] ?: Config.buildChatModel,
             connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet(),
             mafiosoGameEnabled = prefs[mafiosoEnabledKey] ?: false
         )

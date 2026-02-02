@@ -17,6 +17,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "./firebase";
+import { config } from "./config";
 
 declare module "firebase/auth";
 declare module "firebase/firestore";
@@ -82,7 +83,7 @@ type RealtimeError = {
   canRetry?: boolean;
 };
 
-const realtimeEndpoint = import.meta.env.VITE_REALTIME_ENDPOINT;
+const { realtimeEndpoint, isDev, hasFirebaseConfig, firebaseMissing } = config;
 const maxMessageLength = 4000;
 const warnAtLength = 3500;
 
@@ -113,7 +114,6 @@ export default function App() {
   const canSend =
     !!user && !!realtimeEndpoint && !overLimit && input.trim().length > 0;
   const showRealtimeMissing = tab === "chat" && !realtimeEndpoint;
-  const isDev = import.meta.env.DEV;
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -841,6 +841,22 @@ export default function App() {
           </div>
           <p>{tab === "feed" ? "Local-first overview" : "Shared conversation"}</p>
         </header>
+
+        {!hasFirebaseConfig && (
+          <div className="banner error">
+            <div className="banner-title">Firebase config missing</div>
+            <div className="banner-message">
+              Set the required VITE_FIREBASE_* values in web/.env to enable sign-in
+              and data sync.
+            </div>
+            {isDev && firebaseMissing.length > 0 && (
+              <details>
+                <summary>Details</summary>
+                <pre>{firebaseMissing.join(", ")}</pre>
+              </details>
+            )}
+          </div>
+        )}
 
         {tab === "feed" && (
           <section className="feed">

@@ -3,19 +3,17 @@ const cors = require("cors");
 const fetch = require("node-fetch");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
+const { config, listMissing, listProviderWarnings } = require("./config");
 
-const PORT = parseInt(process.env.PORT || "8787", 10);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const CHAT_API_KEY = process.env.JUNCTION_CHAT_API_KEY || "";
-const OPENAI_ALLOWED_MODELS = (process.env.OPENAI_ALLOWED_MODELS || "")
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
+const PORT = config.port;
+const OPENAI_API_KEY = config.openAiApiKey;
+const CHAT_API_KEY = config.chatApiKey;
+const OPENAI_ALLOWED_MODELS = config.openAiAllowedModels;
+const ADMIN_EMAIL = config.adminEmail;
 
 function initFirebase() {
   if (admin.apps.length > 0) return;
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const raw = config.firebaseServiceAccountJson;
   if (raw) {
     const serviceAccount = JSON.parse(raw);
     admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
@@ -26,6 +24,14 @@ function initFirebase() {
 
 initFirebase();
 const firestore = admin.firestore();
+const missingConfig = listMissing();
+const providerWarnings = listProviderWarnings();
+if (missingConfig.length > 0) {
+  console.warn("Config missing:", missingConfig.join(", "));
+}
+if (providerWarnings.length > 0) {
+  console.warn("OAuth config warnings:", providerWarnings.join(", "));
+}
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
@@ -65,8 +71,8 @@ const BASE_INSTRUCTIONS = [
   "Keep responses concise, supportive, and practical."
 ].join("\n");
 
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
-const APP_REDIRECT_URI = process.env.APP_REDIRECT_URI || "junction://oauth-callback";
+const PUBLIC_BASE_URL = config.publicBaseUrl;
+const APP_REDIRECT_URI = config.appRedirectUri;
 
 const OAUTH_PROVIDERS = {
   google: {
@@ -111,10 +117,8 @@ function getProviderConfig(provider) {
 }
 
 function getProviderCredentials(provider) {
-  const key = provider.toUpperCase();
-  const clientId = process.env[`${key}_CLIENT_ID`];
-  const clientSecret = process.env[`${key}_CLIENT_SECRET`];
-  return { clientId, clientSecret };
+  const creds = config.oauthProviders[provider] || {};
+  return { clientId: creds.clientId, clientSecret: creds.clientSecret };
 }
 
 function buildRedirectUri(provider) {
@@ -353,7 +357,7 @@ async function exchangeCode(provider, code) {
 function buildSessionConfig() {
   return {
     type: "realtime",
-    model: process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
+    model: config.openAiRealtimeModel,
     modalities: ["text", "audio"],
     voice: "alloy",
     turn_detection: {
@@ -428,7 +432,7 @@ function buildSessionConfig() {
 }
 
 async function verifyAuth(req, res, next) {
-  if (process.env.DISABLE_AUTH === "true") {
+  if (config.disableAuth) {
     req.user = { uid: "local-dev", isAdmin: false };
     return next();
   }
@@ -481,7 +485,7 @@ function pickChatModel(requested) {
     return OPENAI_ALLOWED_MODELS[0];
   }
   if (requested) return requested;
-  return process.env.OPENAI_CHAT_MODEL || "gpt-5.2";
+  return config.openAiChatModel;
 }
 
 function normalizeRole(role) {
@@ -891,7 +895,7 @@ app.post(
 
     const ttl = Math.max(
       60,
-      Math.min(parseInt(process.env.OPENAI_REALTIME_CLIENT_SECRET_TTL || "600", 10) || 600, 3600)
+      Math.min(config.openAiRealtimeClientSecretTtl || 600, 3600)
     );
 
     const payload = {

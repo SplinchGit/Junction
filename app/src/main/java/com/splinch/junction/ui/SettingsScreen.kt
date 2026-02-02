@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.splinch.junction.BuildConfig
+import com.splinch.junction.core.Config
 import com.splinch.junction.employment.EmploymentRepository
 import com.splinch.junction.employment.EmploymentState
 import com.splinch.junction.employment.EmploymentStatusSnapshot
@@ -80,7 +81,7 @@ fun SettingsScreen(
 
     val useBackend by userPrefs.useHttpBackendFlow.collectAsState(initial = false)
     val apiBaseUrl by userPrefs.apiBaseUrlFlow.collectAsState(initial = "")
-    val chatModel by userPrefs.chatModelFlow.collectAsState(initial = BuildConfig.JUNCTION_CHAT_MODEL)
+    val chatModel by userPrefs.chatModelFlow.collectAsState(initial = Config.buildChatModel)
     val chatApiKey by userPrefs.chatApiKeyFlow.collectAsState(initial = "")
     val digestInterval by userPrefs.digestIntervalMinutesFlow.collectAsState(initial = 30)
     val realtimeEndpoint by userPrefs.realtimeEndpointFlow.collectAsState(initial = "")
@@ -96,6 +97,28 @@ fun SettingsScreen(
     val followTargets by followRepository.followTargetsFlow().collectAsState(initial = emptyList())
     val employmentSnapshot by employmentRepository.statusSnapshotFlow()
         .collectAsState(initial = EmploymentStatusSnapshot(null, null))
+    val defaultWebClientIdRes = remember {
+        context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+    }
+    val defaultWebClientIdValue = remember(defaultWebClientIdRes) {
+        if (defaultWebClientIdRes != 0) context.getString(defaultWebClientIdRes) else ""
+    }
+    val overrideWebClientId = Config.sanitizeWebClientId(webClientIdOverride)
+    val buildWebClientId = Config.buildWebClientId
+    val resourceWebClientId = Config.sanitizeWebClientId(defaultWebClientIdValue)
+    val effectiveWebClientId = listOf(
+        overrideWebClientId,
+        buildWebClientId,
+        resourceWebClientId
+    ).firstOrNull { it.isNotBlank() }.orEmpty()
+    val webClientIdSource = when {
+        overrideWebClientId.isNotBlank() -> "Override"
+        buildWebClientId.isNotBlank() -> "BuildConfig"
+        resourceWebClientId.isNotBlank() -> "google-services"
+        else -> "Missing"
+    }
+    val webClientIdLooksValid = effectiveWebClientId.isNotBlank() &&
+        Config.looksLikeWebClientId(effectiveWebClientId)
 
     var apiBaseUrlInput by remember { mutableStateOf(apiBaseUrl) }
     var chatModelInput by remember { mutableStateOf(chatModel) }
@@ -351,6 +374,44 @@ fun SettingsScreen(
                 text = "Stored locally on this device and not synced.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Text(text = "Config health", style = MaterialTheme.typography.titleMedium)
+            StatusRow(
+                label = "Web client ID",
+                value = if (effectiveWebClientId.isBlank()) "Missing" else "Configured",
+                detail = if (effectiveWebClientId.isBlank()) {
+                    "Add JUNCTION_WEB_CLIENT_ID in local.properties or set override."
+                } else {
+                    "${webClientIdSource} • ${maskClientId(effectiveWebClientId)}" +
+                        if (!webClientIdLooksValid) " (unexpected format)" else ""
+                }
+            )
+            StatusRow(
+                label = "google-services default client ID",
+                value = if (resourceWebClientId.isBlank()) "Missing" else "Present",
+                detail = if (resourceWebClientId.isBlank()) {
+                    "No OAuth client in google-services.json."
+                } else {
+                    maskClientId(resourceWebClientId)
+                }
+            )
+            StatusRow(
+                label = "Realtime SDP endpoint",
+                value = if (realtimeEndpoint.isBlank()) "Missing" else "Configured",
+                detail = realtimeEndpoint.ifBlank { "Set in Settings or local.properties." }
+            )
+            StatusRow(
+                label = "Realtime client secret endpoint",
+                value = if (realtimeClientSecretEndpoint.isBlank()) "Missing" else "Configured",
+                detail = realtimeClientSecretEndpoint.ifBlank { "Set in Settings or local.properties." }
+            )
+            StatusRow(
+                label = "HTTP backend base URL",
+                value = if (apiBaseUrl.isBlank()) "Missing" else "Configured",
+                detail = apiBaseUrl.ifBlank { "Set in Settings or local.properties." }
             )
         }
 
@@ -1416,6 +1477,12 @@ private fun StatusRow(label: String, value: String, detail: String?) {
             )
         }
     }
+}
+
+private fun maskClientId(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.length <= 12) return trimmed
+    return trimmed.take(6) + "..." + trimmed.takeLast(4)
 }
 
 private fun EmploymentState.label(): String {
