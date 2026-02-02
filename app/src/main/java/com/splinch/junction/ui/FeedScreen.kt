@@ -191,15 +191,18 @@ fun FeedScreen(
                 item = selectedItem!!,
                 onDismiss = { selectedItem = null },
                 onArchive = {
-                    scope.launch { feedRepository.archive(selectedItem!!.id) }
+                    val item = selectedItem ?: return@FeedActionSheet
+                    scope.launch { feedRepository.archive(item.id) }
                     selectedItem = null
                 },
                 onMarkSeen = {
-                    scope.launch { feedRepository.markSeen(selectedItem!!.id) }
+                    val item = selectedItem ?: return@FeedActionSheet
+                    scope.launch { feedRepository.markSeen(item.id) }
                     selectedItem = null
                 },
                 onOpen = {
-                    val packageName = selectedItem!!.packageName
+                    val item = selectedItem ?: return@FeedActionSheet
+                    val packageName = item.packageName
                     if (!packageName.isNullOrBlank()) {
                         val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName)
                         if (launchIntent != null) {

@@ -13,7 +13,7 @@ import com.splinch.junction.feed.model.FeedItemEntity
 
 @Database(
     entities = [ChatSessionEntity::class, ChatMessageEntity::class, FeedItemEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class)
@@ -31,7 +31,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -102,9 +102,10 @@ abstract class JunctionDatabase : RoomDatabase() {
         }
 
         private fun rebuildFeedItems(db: SupportSQLiteDatabase) {
-            val existingColumns = getColumns(db, "feed_items")
+            val hasFeedItems = tableExists(db, "feed_items")
+            val existingColumns = if (hasFeedItems) getColumns(db, "feed_items") else emptySet()
             createFeedItemsTable(db, "feed_items_new")
-            if (existingColumns.isNotEmpty()) {
+            if (hasFeedItems && existingColumns.isNotEmpty()) {
                 val columns = listOf(
                     ColumnSpec(
                         name = "id",
@@ -236,6 +237,8 @@ abstract class JunctionDatabase : RoomDatabase() {
                     "INSERT INTO feed_items_new ($insertColumns) SELECT $selectColumns FROM feed_items"
                 )
                 db.execSQL("DROP TABLE feed_items")
+            } else if (hasFeedItems) {
+                db.execSQL("DROP TABLE feed_items")
             }
             db.execSQL("ALTER TABLE feed_items_new RENAME TO feed_items")
         }
@@ -256,10 +259,31 @@ abstract class JunctionDatabase : RoomDatabase() {
                         "INTEGER NOT NULL DEFAULT 1"
                     )
                 }
+                rebuildFeedItems(db)
             }
         }
 
         private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                if (tableExists(db, "chat_sessions")) {
+                    ensureColumn(
+                        db,
+                        "chat_sessions",
+                        "speechModeEnabled",
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                    ensureColumn(
+                        db,
+                        "chat_sessions",
+                        "agentToolsEnabled",
+                        "INTEGER NOT NULL DEFAULT 1"
+                    )
+                }
+                rebuildFeedItems(db)
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 if (tableExists(db, "chat_sessions")) {
                     ensureColumn(
