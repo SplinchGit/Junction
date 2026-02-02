@@ -19,7 +19,8 @@ class HttpBackend(
 ) : ChatBackend {
     override suspend fun generateResponse(session: ChatSession, userMessage: ChatMessage): ChatMessage {
         return withContext(Dispatchers.IO) {
-            val payload = buildPayload(session, userMessage)
+            val model = modelProvider?.invoke()?.trim().orEmpty()
+            val payload = buildPayload(session, userMessage, model)
             val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
             val endpoint = baseUrl.trim().trimEnd('/')
             val url = if (endpoint.endsWith("/chat")) endpoint else "$endpoint/chat"
@@ -49,11 +50,14 @@ class HttpBackend(
         }
     }
 
-    private fun buildPayload(session: ChatSession, userMessage: ChatMessage): JSONObject {
+    private fun buildPayload(
+        session: ChatSession,
+        userMessage: ChatMessage,
+        model: String
+    ): JSONObject {
         val json = JSONObject()
         json.put("sessionId", session.sessionId)
         json.put("message", userMessage.content)
-        val model = runCatching { modelProvider?.invoke() }.getOrNull()?.trim().orEmpty()
         if (model.isNotBlank()) {
             json.put("model", model)
         }
