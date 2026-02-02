@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import com.splinch.junction.feed.model.FeedCategory
 import com.splinch.junction.feed.model.FeedItemEntity
 import com.splinch.junction.feed.model.FeedStatus
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +31,38 @@ interface FeedDao {
 
     @Query("SELECT * FROM feed_items WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): FeedItemEntity?
+
+    @Query("SELECT * FROM feed_items WHERE threadKey = :threadKey LIMIT 1")
+    suspend fun getByThreadKey(threadKey: String): FeedItemEntity?
+
+    @Query(
+        "SELECT * FROM feed_items WHERE packageName = :packageName AND category = :category " +
+            "ORDER BY updatedAt DESC LIMIT 1"
+    )
+    suspend fun getLatestByPackageAndCategory(
+        packageName: String,
+        category: FeedCategory
+    ): FeedItemEntity?
+
+    @Query(
+        "SELECT * FROM feed_items WHERE packageName = :packageName AND category = :category AND id != :keepId"
+    )
+    suspend fun getByPackageAndCategoryExcept(
+        packageName: String,
+        category: FeedCategory,
+        keepId: String
+    ): List<FeedItemEntity>
+
+    @Query(
+        "UPDATE feed_items SET status = 'ARCHIVED', aggregateCount = 0, updatedAt = :updatedAt " +
+            "WHERE packageName = :packageName AND category = :category AND id != :keepId"
+    )
+    suspend fun archiveByPackageAndCategoryExcept(
+        packageName: String,
+        category: FeedCategory,
+        keepId: String,
+        updatedAt: Long
+    )
 
     @Query("SELECT COUNT(*) FROM feed_items")
     suspend fun countAll(): Int

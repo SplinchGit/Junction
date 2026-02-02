@@ -60,9 +60,10 @@ class JunctionNotificationListenerService : NotificationListenerService() {
         if (packageName == applicationContext.packageName) return
         if (title.isBlank() && text.isNullOrBlank()) return
 
-        // Collapse all notifications from an app into a single "widget" item to avoid spam.
-        val aggregateId = "app:$packageName"
-        NotificationTapStore.put(aggregateId, notification.contentIntent)
+        // Collapse notifications by package + category into a single "widget" item to avoid spam.
+        val category = mapCategory(packageName)
+        val bucketKey = "app:$packageName:${category.name}"
+        NotificationTapStore.put(bucketKey, notification.contentIntent)
         val eventKey = sbn.key
         val now = if (sbn.postTime > 0L) sbn.postTime else System.currentTimeMillis()
         val dedupTime = System.currentTimeMillis()
@@ -80,10 +81,23 @@ class JunctionNotificationListenerService : NotificationListenerService() {
             val database = JunctionDatabase.getInstance(applicationContext)
             val repository = FeedRepository(database.feedDao())
             val source = resolveAppLabel(packageManager, packageName)
-            val category = mapCategory(packageName)
-
-            val previous = repository.getEntityById(aggregateId)
-            val nextCount = (previous?.aggregateCount ?: 0) + 1
+            val previous = repository.getEntityById(bucketKey)
+                ?: repository.getEntityByThreadKey(bucketKey)
+                ?: repository.getLatestByPackageAndCategory(packageName, category)
+            // If the incoming notification has the same title+body as the previous
+            // within a short merge window, don't increment the count -- just refresh timestamp.
+            val MERGE_WINDOW_MS = 5 * 60 * 1000L
+            val normalizedTitle = if (title.isNotBlank()) title else source
+            val normalizedBody = text ?: ""
+            val nextCount = if (previous != null
+                && previous.title == normalizedTitle
+                && (previous.body ?: "") == normalizedBody
+                && now - previous.updatedAt < MERGE_WINDOW_MS
+            ) {
+                previous.aggregateCount
+            } else {
+                (previous?.aggregateCount ?: 0) + 1
+            }
 
             // If enabled, suppress the original app notification so Junction becomes the inbox.
             val suppressOriginal = prefs.junctionOnlyNotificationsFlow.first()
@@ -95,20 +109,21 @@ class JunctionNotificationListenerService : NotificationListenerService() {
             }
 
             val item = FeedItemEntity(
-                id = aggregateId,
+                id = bucketKey,
                 source = source,
                 packageName = packageName,
                 category = category,
-                title = if (title.isNotBlank()) title else source,
+                title = normalizedTitle,
                 body = text,
                 timestamp = now,
                 priority = 5,
                 status = FeedStatus.NEW,
-                threadKey = aggregateId,
+                threadKey = bucketKey,
                 actionHint = "open",
                 aggregateCount = nextCount
             )
             repository.add(item)
+            repository.archiveByPackageAndCategoryExcept(packageName, category, bucketKey)
         }
     }
 

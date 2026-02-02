@@ -178,6 +178,37 @@ class FeedRepository(
         return feedDao.getById(id)
     }
 
+    suspend fun getEntityByThreadKey(threadKey: String): FeedItemEntity? {
+        return feedDao.getByThreadKey(threadKey)
+    }
+
+    suspend fun getLatestByPackageAndCategory(
+        packageName: String,
+        category: FeedCategory
+    ): FeedItemEntity? {
+        return feedDao.getLatestByPackageAndCategory(packageName, category)
+    }
+
+    suspend fun archiveByPackageAndCategoryExcept(
+        packageName: String,
+        category: FeedCategory,
+        keepId: String
+    ) {
+        val updatedAt = System.currentTimeMillis()
+        val duplicates = feedDao.getByPackageAndCategoryExcept(packageName, category, keepId)
+        if (duplicates.isEmpty()) return
+        feedDao.archiveByPackageAndCategoryExcept(packageName, category, keepId, updatedAt)
+        duplicates.forEach { duplicate ->
+            remoteSync?.onLocalUpsert(
+                duplicate.copy(
+                    status = FeedStatus.ARCHIVED,
+                    aggregateCount = 0,
+                    updatedAt = updatedAt
+                )
+            )
+        }
+    }
+
     private fun FeedItemEntity.toModel(): FeedItem {
         return FeedItem(
             id = id,
