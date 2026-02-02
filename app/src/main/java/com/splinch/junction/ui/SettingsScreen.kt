@@ -35,6 +35,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.splinch.junction.BuildConfig
+import com.splinch.junction.employment.EmploymentRepository
+import com.splinch.junction.employment.EmploymentState
+import com.splinch.junction.employment.EmploymentStatusSnapshot
+import com.splinch.junction.employment.EmploymentType
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.follow.FollowRepository
 import com.splinch.junction.follow.FollowTargetEntity
@@ -52,6 +56,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +68,7 @@ fun SettingsScreen(
     userPrefs: UserPrefsRepository,
     feedRepository: FeedRepository,
     followRepository: FollowRepository,
+    employmentRepository: EmploymentRepository,
     authManager: AuthManager,
     modifier: Modifier = Modifier
 ) {
@@ -79,6 +89,8 @@ fun SettingsScreen(
     val mafiosoEnabled by userPrefs.mafiosoGameEnabledFlow.collectAsState(initial = false)
     val user by authManager.userFlow.collectAsState()
     val followTargets by followRepository.followTargetsFlow().collectAsState(initial = emptyList())
+    val employmentSnapshot by employmentRepository.statusSnapshotFlow()
+        .collectAsState(initial = EmploymentStatusSnapshot(null, null))
 
     var apiBaseUrlInput by remember { mutableStateOf(apiBaseUrl) }
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
@@ -92,11 +104,21 @@ fun SettingsScreen(
     var backendStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
 
     var showAddFollowTarget by remember { mutableStateOf(false) }
+    var showEmploymentStatusSheet by remember { mutableStateOf(false) }
+    var showAddRoleSheet by remember { mutableStateOf(false) }
     var followLabel by remember { mutableStateOf("") }
     var followMatch by remember { mutableStateOf("") }
     var followType by remember { mutableStateOf(FollowTargetType.USER) }
     var followSource by remember { mutableStateOf(SourceApp.DISCORD) }
     var followImportance by remember { mutableStateOf("50") }
+    var selectedEmploymentState by remember { mutableStateOf(EmploymentState.UNEMPLOYED) }
+    var employmentNotes by remember { mutableStateOf("") }
+    var roleTitleInput by remember { mutableStateOf("") }
+    var roleEmployerInput by remember { mutableStateOf("") }
+    var roleTypeInput by remember { mutableStateOf(EmploymentType.FULL_TIME) }
+    var roleStartDateInput by remember { mutableStateOf("") }
+    var rolePayInput by remember { mutableStateOf("") }
+    var roleSourceInput by remember { mutableStateOf("") }
     val integrations = remember(connectedIntegrations) {
         listOf(
             IntegrationItem(
@@ -154,6 +176,25 @@ fun SettingsScreen(
         packages = feedRepository.getDistinctPackages()
     }
 
+    LaunchedEffect(showEmploymentStatusSheet, employmentSnapshot.status) {
+        if (showEmploymentStatusSheet) {
+            val status = employmentSnapshot.status
+            selectedEmploymentState = status?.state ?: EmploymentState.UNEMPLOYED
+            employmentNotes = status?.notes.orEmpty()
+        }
+    }
+
+    LaunchedEffect(showAddRoleSheet) {
+        if (showAddRoleSheet) {
+            roleTitleInput = ""
+            roleEmployerInput = ""
+            roleTypeInput = EmploymentType.FULL_TIME
+            roleStartDateInput = ""
+            rolePayInput = ""
+            roleSourceInput = ""
+        }
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -162,6 +203,25 @@ fun SettingsScreen(
     ) {
         item {
             Text(text = "Settings", style = MaterialTheme.typography.titleLarge)
+        }
+
+        item {
+            WorkStatusCard(
+                snapshot = employmentSnapshot,
+                onChangeStatus = { showEmploymentStatusSheet = true },
+                onEndRole = {
+                    val role = employmentSnapshot.role ?: return@WorkStatusCard
+                    scope.launch {
+                        employmentRepository.endRole(role.id)
+                        employmentRepository.setStatus(
+                            state = EmploymentState.UNEMPLOYED,
+                            since = System.currentTimeMillis(),
+                            currentRoleId = null
+                        )
+                    }
+                },
+                onAddRole = { showAddRoleSheet = true }
+            )
         }
 
         item {
@@ -779,6 +839,173 @@ fun SettingsScreen(
         }
     }
 
+    if (showEmploymentStatusSheet) {
+        ModalBottomSheet(onDismissRequest = { showEmploymentStatusSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(text = "Change work status", style = MaterialTheme.typography.titleMedium)
+                Text(text = "Status", style = MaterialTheme.typography.labelMedium)
+
+                EmploymentState.values().forEach { state ->
+                    val selected = selectedEmploymentState == state
+                    val label = state.label()
+                    if (selected) {
+                        Button(onClick = { selectedEmploymentState = state }) {
+                            Text(label)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { selectedEmploymentState = state }) {
+                            Text(label)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = employmentNotes,
+                    onValueChange = { employmentNotes = it },
+                    label = { Text("Notes (optional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = {
+                        val current = employmentSnapshot.status
+                        val now = System.currentTimeMillis()
+                        val since = if (current?.state == selectedEmploymentState) current.since else now
+                        val keepRole = selectedEmploymentState == EmploymentState.EMPLOYED ||
+                            selectedEmploymentState == EmploymentState.SELF_EMPLOYED
+                        val roleId = if (keepRole) current?.currentRoleId else null
+                        val notes = employmentNotes.trim().ifBlank { null }
+                        scope.launch {
+                            employmentRepository.setStatus(
+                                state = selectedEmploymentState,
+                                since = since,
+                                currentRoleId = roleId,
+                                notes = notes
+                            )
+                        }
+                        showEmploymentStatusSheet = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            }
+        }
+    }
+
+    if (showAddRoleSheet) {
+        ModalBottomSheet(onDismissRequest = { showAddRoleSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(text = "Add role", style = MaterialTheme.typography.titleMedium)
+
+                OutlinedTextField(
+                    value = roleTitleInput,
+                    onValueChange = { roleTitleInput = it },
+                    label = { Text("Title") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = roleEmployerInput,
+                    onValueChange = { roleEmployerInput = it },
+                    label = { Text("Employer") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(text = "Employment type", style = MaterialTheme.typography.labelMedium)
+                EmploymentType.values().forEach { type ->
+                    val selected = roleTypeInput == type
+                    val label = type.label()
+                    if (selected) {
+                        Button(onClick = { roleTypeInput = type }) {
+                            Text(label)
+                        }
+                    } else {
+                        OutlinedButton(onClick = { roleTypeInput = type }) {
+                            Text(label)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = roleStartDateInput,
+                    onValueChange = { roleStartDateInput = it },
+                    label = { Text("Start date (YYYY-MM-DD)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = rolePayInput,
+                    onValueChange = { rolePayInput = it },
+                    label = { Text("Pay (optional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = roleSourceInput,
+                    onValueChange = { roleSourceInput = it },
+                    label = { Text("Source (optional)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = {
+                        val title = roleTitleInput.trim()
+                        val employer = roleEmployerInput.trim()
+                        if (title.isBlank() || employer.isBlank()) {
+                            Toast.makeText(context, "Add a title and employer", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        val startDate = if (roleStartDateInput.isBlank()) {
+                            System.currentTimeMillis()
+                        } else {
+                            val parsed = parseDateToMillis(roleStartDateInput.trim())
+                            if (parsed == null) {
+                                Toast.makeText(context, "Start date must be YYYY-MM-DD", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            parsed
+                        }
+                        val pay = rolePayInput.trim().ifBlank { null }
+                        val source = roleSourceInput.trim().ifBlank { null }
+                        scope.launch {
+                            val role = employmentRepository.createRole(
+                                title = title,
+                                employerName = employer,
+                                employmentType = roleTypeInput,
+                                startDate = startDate,
+                                source = source,
+                                payText = pay
+                            )
+                            val nextState = if (employmentSnapshot.status?.state == EmploymentState.SELF_EMPLOYED) {
+                                EmploymentState.SELF_EMPLOYED
+                            } else {
+                                EmploymentState.EMPLOYED
+                            }
+                            employmentRepository.setStatus(
+                                state = nextState,
+                                since = startDate,
+                                currentRoleId = role.id
+                            )
+                        }
+                        showAddRoleSheet = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            }
+        }
+    }
+
     if (showAddFollowTarget) {
         ModalBottomSheet(onDismissRequest = { showAddFollowTarget = false }) {
             Column(
@@ -881,6 +1108,61 @@ private fun resolveAppLabel(context: android.content.Context, packageName: Strin
         pm.getApplicationLabel(appInfo).toString()
     } catch (_: Exception) {
         packageName
+    }
+}
+
+@Composable
+private fun WorkStatusCard(
+    snapshot: EmploymentStatusSnapshot,
+    onChangeStatus: () -> Unit,
+    onEndRole: () -> Unit,
+    onAddRole: () -> Unit
+) {
+    val status = snapshot.status
+    val role = snapshot.role
+    val now = System.currentTimeMillis()
+    val statusLabel = status?.state?.label() ?: "Not set"
+    val duration = status?.since?.let { formatDuration(it, now) }
+    val sinceDate = status?.since?.let { formatDate(it) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Work status",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(text = "Status: $statusLabel", style = MaterialTheme.typography.bodyMedium)
+        if (role != null) {
+            Text(
+                text = "At: ${role.employerName} - ${role.title}",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Type: ${role.employmentType.label()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (duration != null && sinceDate != null) {
+            Text(
+                text = "Duration: $duration (since $sinceDate)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onChangeStatus) {
+                Text("Change status")
+            }
+            OutlinedButton(onClick = onAddRole) {
+                Text("Add role")
+            }
+            if (role != null) {
+                OutlinedButton(onClick = onEndRole) {
+                    Text("End role")
+                }
+            }
+        }
     }
 }
 
@@ -1001,6 +1283,33 @@ private fun StatusRow(label: String, value: String, detail: String?) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+private fun EmploymentState.label(): String {
+    return name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
+}
+
+private fun EmploymentType.label(): String {
+    return name.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }
+}
+
+private fun formatDuration(since: Long, now: Long): String {
+    val days = Duration.between(Instant.ofEpochMilli(since), Instant.ofEpochMilli(now)).toDays()
+    return if (days == 1L) "1 day" else "$days days"
+}
+
+private fun formatDate(timestamp: Long): String {
+    val date = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+    return DateTimeFormatter.ISO_LOCAL_DATE.format(date)
+}
+
+private fun parseDateToMillis(input: String): Long? {
+    return try {
+        val date = LocalDate.parse(input, DateTimeFormatter.ISO_LOCAL_DATE)
+        date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    } catch (_: Exception) {
+        null
     }
 }
 

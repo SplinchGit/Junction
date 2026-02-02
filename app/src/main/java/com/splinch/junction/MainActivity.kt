@@ -35,6 +35,7 @@ import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.employment.EmploymentRepository
 import com.splinch.junction.follow.FollowRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
 import com.splinch.junction.settings.UserPrefsRepository
@@ -77,6 +78,7 @@ class MainActivity : ComponentActivity() {
                 val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
                 val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
                 val followRepository = remember { FollowRepository(database.followDao()) }
+                val employmentRepository = remember { EmploymentRepository(database.employmentDao()) }
                 val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
                 val chatManager = remember {
                     ChatManager(
@@ -299,6 +301,7 @@ private fun JunctionApp(
                 userPrefs = prefs,
                 feedRepository = feedRepository,
                 followRepository = followRepository,
+                employmentRepository = employmentRepository,
                 authManager = authManager,
                 modifier = Modifier.padding(padding)
             )

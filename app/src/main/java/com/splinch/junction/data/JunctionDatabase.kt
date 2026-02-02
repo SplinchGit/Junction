@@ -10,6 +10,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.splinch.junction.feed.data.FeedDao
 import com.splinch.junction.feed.model.FeedConverters
 import com.splinch.junction.feed.model.FeedItemEntity
+import com.splinch.junction.employment.EmploymentConverters
+import com.splinch.junction.employment.EmploymentStatusEntity
+import com.splinch.junction.employment.RoleEntity
+import com.splinch.junction.employment.data.EmploymentDao
 import com.splinch.junction.follow.FollowConverters
 import com.splinch.junction.follow.FollowTargetEntity
 import com.splinch.junction.follow.InterestRuleEntity
@@ -22,18 +26,21 @@ import com.splinch.junction.follow.data.FollowDao
         ChatSessionEntity::class,
         ChatMessageEntity::class,
         FeedItemEntity::class,
+        EmploymentStatusEntity::class,
+        RoleEntity::class,
         FollowTargetEntity::class,
         InterestRuleEntity::class,
         SuggestionEntity::class,
         RejectedSuggestionEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
-@TypeConverters(FeedConverters::class, FollowConverters::class)
+@TypeConverters(FeedConverters::class, FollowConverters::class, EmploymentConverters::class)
 abstract class JunctionDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun feedDao(): FeedDao
+    abstract fun employmentDao(): EmploymentDao
     abstract fun followDao(): FollowDao
 
     companion object {
@@ -46,7 +53,14 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                ).addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7
+                )
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -402,6 +416,42 @@ abstract class JunctionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Add aggregateCount to feed_items; rebuild handles older / corrupted tables safely.
                 rebuildFeedItems(db)
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `employment_status` (
+                        `id` TEXT NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `currentRoleId` TEXT,
+                        `since` INTEGER NOT NULL,
+                        `notes` TEXT,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `roles` (
+                        `id` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `employerName` TEXT NOT NULL,
+                        `employmentType` TEXT NOT NULL,
+                        `startDate` INTEGER NOT NULL,
+                        `endDate` INTEGER,
+                        `payText` TEXT,
+                        `source` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
             }
         }
     }
