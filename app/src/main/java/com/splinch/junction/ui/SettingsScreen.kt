@@ -241,7 +241,7 @@ fun SettingsScreen(
                 scope.launch {
                     val base = apiBaseUrlInput.trim()
                     userPrefs.setApiBaseUrl(base)
-                    if (realtimeClientSecretEndpointInput.isBlank()) {
+                    if (realtimeClientSecretInput.isBlank()) {
                         userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(base))
                     }
                     if (realtimeEndpointInput.isBlank()) {

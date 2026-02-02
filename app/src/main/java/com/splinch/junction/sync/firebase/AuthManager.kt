@@ -22,6 +22,10 @@ class AuthManager(private val context: Context) {
 
     private var authListener: com.google.firebase.auth.FirebaseAuth.AuthStateListener? = null
 
+    init {
+        FirebaseProvider.initialize(context)
+    }
+
     fun start() {
         if (!FirebaseProvider.initialize(context)) {
             _userFlow.value = null
