@@ -31,7 +31,7 @@ configure<ApplicationExtension> {
         versionName = "0.5.0"
         buildConfigField("int", "JUNCTION_VERSION_CODE", versionCodeValue.toString())
         buildConfigField("String", "JUNCTION_API_BASE_URL", "\"http://10.0.2.2:8787\"")
-        buildConfigField("boolean", "JUNCTION_USE_HTTP_BACKEND", "false")
+        buildConfigField("boolean"), "JUNCTION_USE_HTTP_BACKEND", "false")
         val localProps = Properties().apply {
             val file = rootProject.file("local.properties")
             if (file.exists()) {
@@ -76,6 +76,18 @@ configure<ApplicationExtension> {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("build/generated/ksp/main/kotlin", "build/generated/ksp/main/java")
+        }
+        getByName("debug") {
+            java.srcDirs("build/generated/ksp/debug/kotlin", "build/generated/ksp/debug/java")
+        }
+        getByName("release") {
+            java.srcDirs("build/generated/ksp/release/kotlin", "build/generated/ksp/release/java")
         }
     }
 }
