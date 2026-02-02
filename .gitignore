@@ -9,5 +9,6 @@ app/google-services.json
 web/.env
 web/.env.local
 web/.env.*.local
+**/node_modules/
 
 .vscode/

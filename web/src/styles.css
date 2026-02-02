@@ -92,6 +92,37 @@ body {
   margin-bottom: 20px;
 }
 
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-transform: capitalize;
+  background: #2a333f;
+  color: var(--text);
+}
+
+.status-pill.connected {
+  background: var(--accent);
+  color: #062116;
+}
+
+.status-pill.connecting {
+  background: var(--accent-2);
+  color: #081424;
+}
+
+.status-pill.error {
+  background: #ff6b6b;
+  color: #2b0b0b;
+}
+
 .topbar p {
   color: var(--muted);
   margin: 0;
@@ -187,6 +218,30 @@ body {
   gap: 12px;
 }
 
+.conversation-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.conversation-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid #2a333f;
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .messages {
   flex: 1;
   display: flex;
@@ -211,6 +266,48 @@ body {
   background: #1f263a;
 }
 
+.bubble.streaming {
+  opacity: 0.85;
+}
+
+.tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tool-card {
+  background: var(--panel-2);
+  border: 1px solid #2a333f;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-title {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.tool-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.tool-actions button {
+  background: var(--accent);
+  color: #062116;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
 .composer {
   display: flex;
   gap: 10px;
@@ -233,6 +330,11 @@ body {
   border-radius: 10px;
   font-weight: 600;
   cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .empty {

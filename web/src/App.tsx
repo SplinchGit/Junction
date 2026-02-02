@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -9,6 +9,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -16,6 +17,9 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { auth, db, googleProvider } from "./firebase";
+
+declare module "firebase/auth";
+declare module "firebase/firestore";
 
 const categoryLabels: Record<string, string> = {
   FRIENDS_FAMILY: "Friends & Family",
@@ -49,6 +53,30 @@ type Conversation = {
   updatedAt: number;
 };
 
+type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
+
+type PendingToolCall = {
+  id: string;
+  name: string;
+  args: any;
+  summary: string;
+};
+
+type UndoAction = {
+  label: string;
+  run: () => Promise<string>;
+};
+
+type RealtimeSession = {
+  pc: RTCPeerConnection;
+  dataChannel: RTCDataChannel;
+  localStream?: MediaStream;
+  remoteStream?: MediaStream;
+  keepAlive: boolean;
+};
+
+const realtimeEndpoint = import.meta.env.VITE_REALTIME_ENDPOINT;
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -57,6 +85,18 @@ export default function App() {
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [input, setInput] = useState("");
   const [tab, setTab] = useState<"feed" | "chat">("feed");
+  const [speechModes, setSpeechModes] = useState<Record<string, boolean>>({});
+  const [micMuted, setMicMuted] = useState(true);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
+  const [streamingText, setStreamingText] = useState("");
+  const [pendingToolCalls, setPendingToolCalls] = useState<PendingToolCall[]>([]);
+  const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
+
+  const rtcRef = useRef<RealtimeSession | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const streamingRef = useRef("");
+  const disconnectAfterResponse = useRef(false);
+  const speechMode = activeConversation ? !!speechModes[activeConversation] : false;
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -66,17 +106,32 @@ export default function App() {
       setMessages([]);
       setFeedItems([]);
       setActiveConversation(null);
+      setSpeechModes({});
+      setMicMuted(true);
+      setPendingToolCalls([]);
+      setLastUndo(null);
+      disconnectRealtime();
       return;
     }
 
     const convRef = collection(db, "users", user.uid, "conversations");
     const convQuery = query(convRef, orderBy("updatedAt", "desc"));
-    const unsub = onSnapshot(convQuery, (snap) => {
+    const unsub = onSnapshot(convQuery, (snap: { docs: any[] }) => {
       const data = snap.docs.map((docSnap) => ({
         id: docSnap.id,
         updatedAt: docSnap.data().updatedAt?.toMillis?.() ?? Date.now(),
       }));
+      const modes: Record<string, boolean> = {};
+      snap.docs.forEach((docSnap) => {
+        const enabled = docSnap.data().speechModeEnabled;
+        if (typeof enabled === "boolean") {
+          modes[docSnap.id] = enabled;
+        }
+      });
       setConversations(data);
+      if (Object.keys(modes).length) {
+        setSpeechModes((prev) => ({ ...prev, ...modes }));
+      }
       if (!activeConversation && data.length > 0) {
         setActiveConversation(data[0].id);
       }
@@ -87,8 +142,12 @@ export default function App() {
   useEffect(() => {
     if (!user || !activeConversation) {
       setMessages([]);
+      setStreamingText("");
+      streamingRef.current = "";
       return;
     }
+    setPendingToolCalls([]);
+    setLastUndo(null);
     const msgRef = collection(
       db,
       "users",
@@ -98,7 +157,7 @@ export default function App() {
       "messages"
     );
     const msgQuery = query(msgRef, orderBy("createdAt", "asc"));
-    const unsub = onSnapshot(msgQuery, (snap) => {
+    const unsub = onSnapshot(msgQuery, (snap: { docs: any[] }) => {
       const data = snap.docs.map((docSnap) => ({
         id: docSnap.id,
         role: docSnap.data().role,
@@ -111,10 +170,19 @@ export default function App() {
   }, [user, activeConversation]);
 
   useEffect(() => {
+    if (!user || !activeConversation) return;
+    setDoc(
+      doc(db, "users", user.uid, "conversations", activeConversation),
+      { speechModeEnabled: speechMode },
+      { merge: true }
+    );
+  }, [speechMode, user, activeConversation]);
+
+  useEffect(() => {
     if (!user) return;
     const feedRef = collection(db, "users", user.uid, "feed_items");
     const feedQuery = query(feedRef, orderBy("timestamp", "desc"));
-    const unsub = onSnapshot(feedQuery, (snap) => {
+    const unsub = onSnapshot(feedQuery, (snap: { docs: any[] }) => {
       const data = snap.docs.map((docSnap) => ({
         id: docSnap.id,
         source: docSnap.data().source,
@@ -128,6 +196,49 @@ export default function App() {
     });
     return () => unsub();
   }, [user]);
+
+  useEffect(() => {
+    if (tab !== "chat") {
+      disconnectRealtime();
+      return;
+    }
+    if (speechMode && user) {
+      ensureRealtime(true).catch(() => null);
+    }
+  }, [speechMode, tab, user, activeConversation]);
+
+  useEffect(() => {
+    if (rtcRef.current?.pc) {
+      disconnectRealtime();
+      if (speechMode && user && tab === "chat") {
+        ensureRealtime(true).catch(() => null);
+      }
+    }
+  }, [activeConversation]);
+
+  useEffect(() => {
+    if (!speechMode) {
+      setMicMuted(true);
+      if (audioRef.current) audioRef.current.muted = true;
+      if (rtcRef.current?.keepAlive) {
+        disconnectRealtime();
+      }
+    } else if (audioRef.current) {
+      audioRef.current.muted = false;
+      if (rtcRef.current && !rtcRef.current.localStream) {
+        disconnectRealtime();
+      }
+    }
+  }, [speechMode]);
+
+  useEffect(() => {
+    const stream = rtcRef.current?.localStream;
+    if (stream) {
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = !micMuted;
+      });
+    }
+  }, [micMuted]);
 
   const groupedFeed = useMemo(() => {
     const active = feedItems.filter((item) => item.status !== "ARCHIVED");
@@ -146,17 +257,26 @@ export default function App() {
     await signOut(auth);
   }
 
-  async function sendMessage() {
-    if (!user || !input.trim()) return;
-    let conversationId = activeConversation;
+  function setSpeechModeForConversation(enabled: boolean) {
+    if (!activeConversation) return;
+    setSpeechModes((prev) => ({ ...prev, [activeConversation]: enabled }));
+  }
 
+  async function ensureConversation(): Promise<string> {
+    if (!user) throw new Error("Sign in required");
+    let conversationId = activeConversation;
     if (!conversationId) {
       const convRef = collection(db, "users", user.uid, "conversations");
       const docRef = await addDoc(convRef, { updatedAt: serverTimestamp() });
       conversationId = docRef.id;
       setActiveConversation(conversationId);
     }
+    return conversationId;
+  }
 
+  async function appendMessage(role: Message["role"], content: string) {
+    if (!user) return;
+    const conversationId = await ensureConversation();
     const msgRef = collection(
       db,
       "users",
@@ -165,20 +285,36 @@ export default function App() {
       conversationId,
       "messages"
     );
-
     await addDoc(msgRef, {
-      role: "user",
-      content: input.trim(),
+      role,
+      content,
       createdAt: serverTimestamp(),
     });
-
     await setDoc(
       doc(db, "users", user.uid, "conversations", conversationId),
       { updatedAt: serverTimestamp() },
       { merge: true }
     );
+  }
 
+  async function sendMessage() {
+    if (!user || !input.trim()) return;
+    const text = input.trim();
+    await appendMessage("user", text);
     setInput("");
+
+    const keepAlive = speechMode;
+    disconnectAfterResponse.current = !keepAlive;
+    await ensureRealtime(keepAlive);
+    sendEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+      },
+    });
+    sendEvent({ type: "response.create" });
     setTab("chat");
   }
 
@@ -198,6 +334,364 @@ export default function App() {
       { status: "ARCHIVED" },
       { merge: true }
     );
+  }
+
+  async function ensureRealtime(keepAlive: boolean) {
+    if (!user) return;
+    if (!realtimeEndpoint) {
+      setConnectionState("error");
+      return;
+    }
+    if (rtcRef.current?.pc) return;
+
+    try {
+      setConnectionState("connecting");
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
+      let localStream: MediaStream | undefined;
+      if (speechMode) {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localStream.getAudioTracks().forEach((track) => {
+          track.enabled = !micMuted;
+          pc.addTrack(track, localStream as MediaStream);
+        });
+      }
+
+      pc.ontrack = (event) => {
+        const stream = event.streams[0];
+        if (audioRef.current && stream) {
+          audioRef.current.srcObject = stream;
+          audioRef.current.play().catch(() => null);
+        }
+      };
+
+      const dataChannel = pc.createDataChannel("oai-events");
+      dataChannel.onopen = async () => {
+        setConnectionState("connected");
+        await seedConversation();
+      };
+      dataChannel.onmessage = (event) => {
+        handleEvent(event.data);
+      };
+      dataChannel.onclose = () => {
+        setConnectionState("disconnected");
+        if (speechMode) {
+          disconnectRealtime();
+          ensureRealtime(true).catch(() => null);
+        }
+      };
+
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false,
+      });
+      await pc.setLocalDescription(offer);
+      await waitForIce(pc);
+
+      const token = await user.getIdToken();
+      const response = await fetch(realtimeEndpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/sdp",
+        },
+        body: pc.localDescription?.sdp || "",
+      });
+      if (!response.ok) {
+        setConnectionState("error");
+        return;
+      }
+      const answer = await response.text();
+      await pc.setRemoteDescription({ type: "answer", sdp: answer });
+
+      rtcRef.current = { pc, dataChannel, localStream, keepAlive };
+    } catch (err) {
+      setConnectionState("error");
+    }
+  }
+
+  function disconnectRealtime() {
+    rtcRef.current?.dataChannel?.close();
+    rtcRef.current?.pc?.close();
+    rtcRef.current?.localStream?.getTracks().forEach((track) => track.stop());
+    rtcRef.current = null;
+    setConnectionState("disconnected");
+  }
+
+  function sendEvent(event: any) {
+    const channel = rtcRef.current?.dataChannel;
+    if (!channel || channel.readyState !== "open") return;
+    channel.send(JSON.stringify(event));
+  }
+
+  async function seedConversation() {
+    if (!messages.length) return;
+    messages.slice(-20).forEach((msg) => {
+      const contentType = msg.role === "user" ? "input_text" : "output_text";
+      sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: msg.role === "user" ? "user" : "assistant",
+          content: [{ type: contentType, text: msg.content }],
+        },
+      });
+    });
+  }
+
+  function handleEvent(raw: string) {
+    let json: any;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const type = json.type;
+    if (type === "response.output_text.delta") {
+      const delta = json.delta || json.text || "";
+      if (delta) {
+        streamingRef.current += delta;
+        setStreamingText(streamingRef.current);
+      }
+      return;
+    }
+    if (type === "response.output_text.done") {
+      const text = json.text || json.final || streamingRef.current;
+      if (text) {
+        appendMessage("assistant", text);
+        streamingRef.current = "";
+        setStreamingText("");
+      }
+      return;
+    }
+    if (type === "response.done") {
+      const output = json.response?.output || json.response?.output_items || [];
+      const calls: PendingToolCall[] = [];
+      output.forEach((item: any) => {
+        if (item.type === "function_call") {
+          const args = safeJson(item.arguments);
+          calls.push({
+            id: item.call_id || item.id,
+            name: item.name,
+            args,
+            summary: summarizeTool(item.name, args),
+          });
+        }
+      });
+      if (calls.length) {
+        setPendingToolCalls((prev) => {
+          const existing = new Set(prev.map((c) => c.id));
+          const fresh = calls.filter((c) => !existing.has(c.id));
+          return [...prev, ...fresh];
+        });
+      }
+      if (disconnectAfterResponse.current && !speechMode) {
+        disconnectAfterResponse.current = false;
+        disconnectRealtime();
+      }
+      return;
+    }
+    if (type === "error") {
+      setConnectionState("error");
+    }
+  }
+
+  async function stopResponse() {
+    setStreamingText("");
+    streamingRef.current = "";
+    sendEvent({ type: "response.cancel" });
+  }
+
+  async function regenerateResponse() {
+    const keepAlive = speechMode;
+    disconnectAfterResponse.current = !keepAlive;
+    await ensureRealtime(keepAlive);
+    sendEvent({ type: "response.create" });
+  }
+
+  async function applyTool(call: PendingToolCall) {
+    const result = await applyToolAction(call);
+    if (!result) return;
+    setPendingToolCalls((prev) => prev.filter((c) => c.id !== call.id));
+    if (result.summary) {
+      await appendMessage("system", result.summary);
+    }
+    setLastUndo(result.undo || null);
+    sendEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: call.id,
+        output: result.outputJson,
+      },
+    });
+    sendEvent({ type: "response.create" });
+  }
+
+  async function cancelTool(call: PendingToolCall) {
+    setPendingToolCalls((prev) => prev.filter((c) => c.id !== call.id));
+    sendEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: call.id,
+        output: JSON.stringify({ status: "cancelled", message: "User cancelled" }),
+      },
+    });
+    sendEvent({ type: "response.create" });
+  }
+
+  async function runUndo() {
+    if (!lastUndo) return;
+    const message = await lastUndo.run();
+    await appendMessage("system", message);
+    setLastUndo(null);
+  }
+
+  async function applyToolAction(call: PendingToolCall) {
+    if (!user) return null;
+    const uid = user.uid;
+    const prefsRef = doc(db, "users", uid, "preferences", "main");
+
+    switch (call.name) {
+      case "set_speech_mode": {
+        const enabled = !!call.args.enabled;
+        const previous = speechMode;
+        setSpeechModeForConversation(enabled);
+        return {
+          summary: `Speech mode ${enabled ? "enabled" : "disabled"}.`,
+          outputJson: JSON.stringify({ status: "applied", enabled }),
+          undo: {
+            label: "Undo speech mode",
+            run: async () => {
+              setSpeechModeForConversation(previous);
+              return "Reverted speech mode.";
+            },
+          },
+        };
+      }
+      case "set_feed_filter": {
+        const packageName = call.args.packageName;
+        const enabled = !!call.args.enabled;
+        if (!packageName) return null;
+        const snap = await getDoc(prefsRef);
+        const disabled = new Set<string>((snap.data()?.disabledPackages as string[]) || []);
+        const prev = !disabled.has(packageName);
+        if (enabled) disabled.delete(packageName);
+        else disabled.add(packageName);
+        await setDoc(
+          prefsRef,
+          { disabledPackages: Array.from(disabled) },
+          { merge: true }
+        );
+        return {
+          summary: `Feed filter updated for ${packageName}.`,
+          outputJson: JSON.stringify({ status: "applied", packageName, enabled }),
+          undo: {
+            label: "Undo feed filter",
+            run: async () => {
+              if (prev) disabled.delete(packageName);
+              else disabled.add(packageName);
+              await setDoc(
+                prefsRef,
+                { disabledPackages: Array.from(disabled) },
+                { merge: true }
+              );
+              return `Reverted feed filter for ${packageName}.`;
+            },
+          },
+        };
+      }
+      case "archive_feed_item": {
+        const id = call.args.id;
+        if (!id) return null;
+        const itemRef = doc(db, "users", uid, "feed_items", id);
+        const snapshot = await getDoc(itemRef);
+        const previous = snapshot.data()?.status;
+        await setDoc(itemRef, { status: "ARCHIVED" }, { merge: true });
+        return {
+          summary: "Archived feed item.",
+          outputJson: JSON.stringify({ status: "applied", id }),
+          undo: previous
+            ? {
+                label: "Undo archive",
+                run: async () => {
+                  await setDoc(itemRef, { status: previous }, { merge: true });
+                  return "Restored feed item.";
+                },
+              }
+            : undefined,
+        };
+      }
+      case "check_for_updates": {
+        return {
+          summary: "Update check requested.",
+          outputJson: JSON.stringify({ status: "applied" }),
+        };
+      }
+      case "set_setting": {
+        const key = call.args.key;
+        const value = call.args.value;
+        if (!key) return null;
+        const mappedKey =
+          key === "digest_interval_minutes" ? "digestIntervalMinutes" : key;
+        const parsedValue =
+          mappedKey === "digestIntervalMinutes"
+            ? Number(value)
+            : value;
+        await setDoc(prefsRef, { [mappedKey]: parsedValue }, { merge: true });
+        return {
+          summary: `Setting ${key} updated.`,
+          outputJson: JSON.stringify({ status: "applied", key }),
+        };
+      }
+      default:
+        return null;
+    }
+  }
+
+  function safeJson(raw: any) {
+    if (!raw) return {};
+    try {
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {
+      return {};
+    }
+  }
+
+  function summarizeTool(name: string, args: any) {
+    switch (name) {
+      case "set_speech_mode":
+        return `Set speech mode to ${!!args.enabled}`;
+      case "set_feed_filter":
+        return `Set feed filter ${args.packageName} = ${!!args.enabled}`;
+      case "archive_feed_item":
+        return `Archive feed item ${args.id}`;
+      case "check_for_updates":
+        return "Check for updates";
+      case "set_setting":
+        return `Set ${args.key}`;
+      default:
+        return name;
+    }
+  }
+
+  function waitForIce(pc: RTCPeerConnection) {
+    return new Promise<void>((resolve) => {
+      if (pc.iceGatheringState === "complete") {
+        resolve();
+        return;
+      }
+      const handler = () => {
+        if (pc.iceGatheringState === "complete") {
+          pc.removeEventListener("icegatheringstatechange", handler);
+          resolve();
+        }
+      };
+      pc.addEventListener("icegatheringstatechange", handler);
+    });
   }
 
   return (
@@ -232,7 +726,10 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          <h1>{tab === "feed" ? "Calm Feed" : "JunctionGPT"}</h1>
+          <div className="topbar-row">
+            <h1>{tab === "feed" ? "Calm Feed" : "JunctionGPT"}</h1>
+            <span className={`status-pill ${connectionState}`}>{connectionState}</span>
+          </div>
           <p>{tab === "feed" ? "Local-first overview" : "Shared conversation"}</p>
         </header>
 
@@ -286,20 +783,75 @@ export default function App() {
                   ))}
                 </div>
                 <div className="conversation">
+                  <div className="conversation-controls">
+                    <label>
+                        <input
+                          type="checkbox"
+                          checked={speechMode}
+                          onChange={(e) => setSpeechModeForConversation(e.target.checked)}
+                        />
+                      Speech mode
+                    </label>
+                    {speechMode && (
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={!micMuted}
+                          onChange={(e) => setMicMuted(!e.target.checked)}
+                        />
+                        Mic
+                      </label>
+                    )}
+                    <button className="ghost" onClick={stopResponse}>
+                      Stop
+                    </button>
+                    <button className="ghost" onClick={regenerateResponse}>
+                      Regenerate
+                    </button>
+                  </div>
                   <div className="messages">
                     {messages.map((message) => (
                       <div key={message.id} className={`bubble ${message.role}`}>
                         <p>{message.content}</p>
                       </div>
                     ))}
+                    {streamingText && (
+                      <div className="bubble assistant streaming">
+                        <p>{streamingText}</p>
+                      </div>
+                    )}
                   </div>
+                  {pendingToolCalls.length > 0 && (
+                    <div className="tool-calls">
+                      {pendingToolCalls.map((call) => (
+                        <div key={call.id} className="tool-card">
+                          <div className="tool-title">Proposed change</div>
+                          <div className="tool-summary">{call.summary}</div>
+                          <div className="tool-actions">
+                            <button onClick={() => applyTool(call)}>Apply</button>
+                            <button className="ghost" onClick={() => cancelTool(call)}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {lastUndo && (
+                    <button className="ghost" onClick={runUndo}>
+                      {lastUndo.label}
+                    </button>
+                  )}
                   <div className="composer">
                     <input
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       placeholder="Type a message"
+                      disabled={!user}
                     />
-                    <button onClick={sendMessage}>Send</button>
+                    <button onClick={sendMessage} disabled={!user}>
+                      Send
+                    </button>
                   </div>
                 </div>
               </div>
@@ -307,6 +859,7 @@ export default function App() {
           </section>
         )}
       </main>
+      <audio ref={audioRef} autoPlay />
     </div>
   );
 }

@@ -2,6 +2,7 @@ package com.splinch.junction.sync.firebase
 
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.splinch.junction.chat.senderFromString
 import com.splinch.junction.data.ChatDao
 import com.splinch.junction.data.ChatMessageEntity
 import kotlinx.coroutines.CoroutineScope
@@ -51,9 +52,12 @@ class ChatSyncManager(
             .collection("conversations")
             .document(conversationId)
 
+        val session = chatDao.getSession()
         val conversationData = mapOf(
             "id" to conversationId,
-            "updatedAt" to message.timestamp
+            "updatedAt" to message.timestamp,
+            "speechModeEnabled" to (session?.speechModeEnabled ?: false),
+            "agentToolsEnabled" to (session?.agentToolsEnabled ?: true)
         )
 
         conversationRef.set(conversationData, SetOptions.merge())
@@ -65,6 +69,27 @@ class ChatSyncManager(
                     "role" to message.sender,
                     "content" to message.content,
                     "createdAt" to message.timestamp
+                ),
+                SetOptions.merge()
+            )
+    }
+
+    suspend fun updateConversationMetadata(
+        conversationId: String,
+        speechModeEnabled: Boolean,
+        agentToolsEnabled: Boolean
+    ) {
+        val uid = currentUserId ?: return
+        val firestore = FirebaseProvider.firestoreOrNull() ?: return
+        firestore
+            .collection("users")
+            .document(uid)
+            .collection("conversations")
+            .document(conversationId)
+            .set(
+                mapOf(
+                    "speechModeEnabled" to speechModeEnabled,
+                    "agentToolsEnabled" to agentToolsEnabled
                 ),
                 SetOptions.merge()
             )
@@ -94,7 +119,7 @@ class ChatSyncManager(
                             id = id,
                             sessionId = conversationId,
                             timestamp = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                            sender = data["role"] as? String ?: "USER",
+                            sender = senderFromString(data["role"] as? String).name,
                             content = data["content"] as? String ?: ""
                         )
                         chatDao.insertMessage(message)

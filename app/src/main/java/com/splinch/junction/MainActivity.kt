@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
@@ -27,7 +29,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.splinch.junction.chat.BackendFactory
+import androidx.lifecycle.lifecycleScope
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
@@ -52,6 +54,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val voiceOpenRequests = MutableStateFlow(0)
     private val chatOpenRequests = MutableStateFlow(0)
+    private val prefsRepository by lazy { UserPrefsRepository(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,49 +72,67 @@ class MainActivity : ComponentActivity() {
                 val chatSyncManager = remember { ChatSyncManager(database.chatDao(), authManager) }
                 val feedSyncManager = remember { FeedSyncManager(database.feedDao(), authManager) }
                 val prefsSyncManager = remember { PrefsSyncManager(prefs, authManager) }
-                val backendProvider = remember { BackendFactory.provider(prefs) }
                 val roomStore = remember { RoomConversationStore(database.chatDao()) }
                 val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
-                val chatManager = remember {
-                    ChatManager(
-                        store = conversationStore,
-                        backendProvider = backendProvider
-                    )
-                }
                 val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
                 val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
-
+                val chatManager = remember {
+                    ChatManager(
+                        context = context,
+                        store = conversationStore,
+                        feedRepository = feedRepository,
+                        prefs = prefs,
+                        authManager = authManager,
+                        updateState = updateState
+                    )
+                }
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
                 val sessionId by chatManager.sessionId.collectAsState()
+                val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
+                val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
                 var lastOpenedAt by remember { mutableStateOf(0L) }
 
                 LaunchedEffect(Unit) {
-                    authManager.start()
-                    chatSyncManager.start()
-                    feedSyncManager.start()
-                    prefsSyncManager.start()
-                    chatManager.initialize()
-                    feedRepository.seedIfEmpty()
-                    lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
-                    prefs.setNotificationListenerEnabled(
-                        NotificationAccessHelper.isNotificationListenerEnabled(context)
-                    )
+                    runCatching {
+                        authManager.start()
+                        chatSyncManager.start()
+                        feedSyncManager.start()
+                        prefsSyncManager.start()
+                        chatManager.initialize()
+                        feedRepository.seedIfEmpty()
+                        lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
+                        prefs.setNotificationListenerEnabled(
+                            NotificationAccessHelper.isNotificationListenerEnabled(context)
+                        )
 
-                    val lastChecked = prefs.lastUpdateCheckAtFlow.first()
-                    val now = System.currentTimeMillis()
-                    if (now - lastChecked > 86_400_000L) {
-                        scope.launch {
-                            val update = UpdateChecker().checkForUpdate(BuildConfig.VERSION_NAME)
-                            updateState.value = update
-                            prefs.updateLastUpdateCheckAt(now)
+                        val lastChecked = prefs.lastUpdateCheckAtFlow.first()
+                        val now = System.currentTimeMillis()
+                        if (now - lastChecked > 86_400_000L) {
+                            scope.launch {
+                                val update = UpdateChecker().checkForUpdate(BuildConfig.VERSION_NAME)
+                                updateState.value = update
+                                prefs.updateLastUpdateCheckAt(now)
+                            }
                         }
+                    }.onFailure { ex ->
+                        Log.e(TAG, "Startup initialization failed", ex)
                     }
                 }
 
                 LaunchedEffect(sessionId) {
                     if (sessionId.isNotBlank()) {
                         chatSyncManager.setActiveConversation(sessionId)
+                    }
+                }
+
+                LaunchedEffect(sessionId, speechModeEnabled, agentToolsEnabled) {
+                    if (sessionId.isNotBlank()) {
+                        chatSyncManager.updateConversationMetadata(
+                            conversationId = sessionId,
+                            speechModeEnabled = speechModeEnabled,
+                            agentToolsEnabled = agentToolsEnabled
+                        )
                     }
                 }
 
@@ -148,6 +169,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        val data = intent?.data
+        if (data != null && data.scheme == "junction" && data.host == "oauth-callback") {
+            val provider = data.getQueryParameter("provider")
+            val status = data.getQueryParameter("status")
+            if (!provider.isNullOrBlank() && status == "connected") {
+                lifecycleScope.launch {
+                    prefsRepository.setIntegrationConnected(provider, true)
+                }
+                Toast.makeText(
+                    applicationContext,
+                    "Connected: ${provider.replaceFirstChar { it.uppercase() }}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
         if (intent?.getBooleanExtra(EXTRA_OPEN_VOICE, false) == true) {
             voiceOpenRequests.value = voiceOpenRequests.value + 1
         } else if (intent?.getBooleanExtra(EXTRA_OPEN_CHAT, false) == true) {
@@ -158,6 +194,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_CHAT = "extra_open_chat"
         const val EXTRA_OPEN_VOICE = "extra_open_voice"
+        private const val TAG = "MainActivity"
     }
 }
 
@@ -200,6 +237,8 @@ private fun JunctionApp(
     LaunchedEffect(voiceToken) {
         if (voiceToken > 0) {
             selectedTab = JunctionTab.CHAT
+            chatManager.setSpeechMode(true)
+            chatManager.setMicEnabled(true)
         }
     }
 
@@ -228,17 +267,17 @@ private fun JunctionApp(
         }
     ) { padding ->
         when (selectedTab) {
-                    JunctionTab.FEED -> FeedScreen(
-                        items = feedItems,
-                        lastOpenedAt = lastOpenedAt,
-                        feedRepository = feedRepository,
-                        updateInfo = updateState.collectAsState().value,
-                        modifier = Modifier.padding(padding)
-                    )
+            JunctionTab.FEED -> FeedScreen(
+                items = feedItems,
+                lastOpenedAt = lastOpenedAt,
+                feedRepository = feedRepository,
+                updateInfo = updateState.collectAsState().value,
+                modifier = Modifier.padding(padding)
+            )
             JunctionTab.CHAT -> ChatScreen(
                 chatManager = chatManager,
-                modifier = Modifier.padding(padding),
-                voiceRequestToken = voiceToken
+                authManager = authManager,
+                modifier = Modifier.padding(padding)
             )
             JunctionTab.SETTINGS -> SettingsScreen(
                 userPrefs = prefs,

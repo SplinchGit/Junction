@@ -9,6 +9,16 @@ enum class Sender {
     SYSTEM
 }
 
+fun senderFromString(value: String?): Sender {
+    val normalized = value?.trim()?.uppercase()
+    return when (normalized) {
+        "USER" -> Sender.USER
+        "ASSISTANT", "MODEL" -> Sender.ASSISTANT
+        "SYSTEM" -> Sender.SYSTEM
+        else -> Sender.SYSTEM
+    }
+}
+
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val timestamp: Instant = Instant.now(),
@@ -20,5 +30,7 @@ data class ChatMessage(
 data class ChatSession(
     val sessionId: String,
     val startedAt: Instant,
-    val messages: List<ChatMessage> = emptyList()
+    val messages: List<ChatMessage> = emptyList(),
+    val speechModeEnabled: Boolean = false,
+    val agentToolsEnabled: Boolean = true
 )

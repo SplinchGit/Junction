@@ -1,5 +1,7 @@
 package com.splinch.junction.update
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -13,24 +15,26 @@ class UpdateChecker(
     private val httpClient: OkHttpClient = OkHttpClient()
 ) {
     suspend fun checkForUpdate(currentVersion: String): UpdateInfo? {
-        val request = Request.Builder()
-            .url("https://api.github.com/repos/SplinchGit/Junction/releases/latest")
-            .get()
-            .build()
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("https://api.github.com/repos/SplinchGit/Junction/releases/latest")
+                .get()
+                .build()
 
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val body = response.body?.string() ?: return null
-            val json = JSONObject(body)
-            val tag = json.optString("tag_name", "").trim()
-            val url = json.optString("html_url", "").trim()
-            if (tag.isBlank() || url.isBlank()) return null
-            val latestVersion = tag.removePrefix("v")
-            if (isNewer(latestVersion, currentVersion)) {
-                return UpdateInfo(version = latestVersion, url = url)
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                val tag = json.optString("tag_name", "").trim()
+                val url = json.optString("html_url", "").trim()
+                if (tag.isBlank() || url.isBlank()) return@withContext null
+                val latestVersion = tag.removePrefix("v")
+                if (isNewer(latestVersion, currentVersion)) {
+                    return@withContext UpdateInfo(version = latestVersion, url = url)
+                }
             }
+            null
         }
-        return null
     }
 
     private fun isNewer(remote: String, local: String): Boolean {

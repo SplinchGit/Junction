@@ -12,16 +12,23 @@ import org.json.JSONObject
 
 class HttpBackend(
     private val baseUrl: String,
+    private val authTokenProvider: (suspend () -> String?)? = null,
     private val httpClient: OkHttpClient = OkHttpClient()
 ) : ChatBackend {
     override suspend fun generateResponse(session: ChatSession, userMessage: ChatMessage): ChatMessage {
         return withContext(Dispatchers.IO) {
             val payload = buildPayload(session, userMessage)
             val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = Request.Builder()
-                .url(baseUrl.trimEnd('/') + "/chat")
+            val endpoint = baseUrl.trim().trimEnd('/')
+            val url = if (endpoint.endsWith("/chat")) endpoint else "$endpoint/chat"
+            val requestBuilder = Request.Builder()
+                .url(url)
                 .post(body)
-                .build()
+            val token = authTokenProvider?.invoke()
+            if (!token.isNullOrBlank()) {
+                requestBuilder.addHeader("Authorization", "Bearer $token")
+            }
+            val request = requestBuilder.build()
 
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {

@@ -87,7 +87,10 @@ private fun PrefsSnapshot.toFirestoreMap(): Map<String, Any?> {
         "notificationListenerEnabled" to notificationListenerEnabled,
         "appWeights" to appWeights,
         "disabledPackages" to disabledPackages.toList(),
-        "lastUpdateCheckAt" to lastUpdateCheckAt
+        "lastUpdateCheckAt" to lastUpdateCheckAt,
+        "realtimeClientSecretEndpoint" to realtimeClientSecretEndpoint,
+        "connectedIntegrations" to connectedIntegrations.toList(),
+        "mafiosoGameEnabled" to mafiosoGameEnabled
     )
 }
 
@@ -104,6 +107,10 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
     val disabledPackages = (data["disabledPackages"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
         ?: emptySet()
     val lastUpdateCheckAt = (data["lastUpdateCheckAt"] as? Number)?.toLong() ?: 0L
+    val realtimeClientSecretEndpoint = data["realtimeClientSecretEndpoint"] as? String ?: ""
+    val connectedIntegrations = (data["connectedIntegrations"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
+        ?: emptySet()
+    val mafiosoGameEnabled = data["mafiosoGameEnabled"] as? Boolean ?: false
     return PrefsSnapshot(
         lastOpenedAt = lastOpenedAt,
         digestIntervalMinutes = digestInterval,
@@ -111,6 +118,9 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
         notificationListenerEnabled = listenerEnabled,
         appWeights = appWeights,
         disabledPackages = disabledPackages,
-        lastUpdateCheckAt = lastUpdateCheckAt
+        lastUpdateCheckAt = lastUpdateCheckAt,
+        realtimeClientSecretEndpoint = realtimeClientSecretEndpoint,
+        connectedIntegrations = connectedIntegrations,
+        mafiosoGameEnabled = mafiosoGameEnabled
     )
 }

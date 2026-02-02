@@ -162,8 +162,16 @@ class FeedRepository(
         return feedDao.getAll().map { it.toModel() }
     }
 
+    suspend fun getById(id: String): FeedItem? {
+        return feedDao.getById(id)?.toModel()
+    }
+
     suspend fun getDistinctPackages(): List<String> {
         return feedDao.distinctPackages().filter { it.isNotBlank() }
+    }
+
+    suspend fun getEntityById(id: String): FeedItemEntity? {
+        return feedDao.getById(id)
     }
 
     private fun FeedItemEntity.toModel(): FeedItem {

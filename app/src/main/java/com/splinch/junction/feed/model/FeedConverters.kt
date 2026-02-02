@@ -4,8 +4,12 @@ import androidx.room.TypeConverter
 
 class FeedConverters {
     @TypeConverter
-    fun toCategory(value: String?): FeedCategory? {
-        return value?.let { FeedCategory.valueOf(it) }
+    fun toCategory(value: String?): FeedCategory {
+        return try {
+            FeedCategory.valueOf(value?.trim().orEmpty())
+        } catch (_: Exception) {
+            FeedCategory.OTHER
+        }
     }
 
     @TypeConverter
@@ -14,8 +18,12 @@ class FeedConverters {
     }
 
     @TypeConverter
-    fun toStatus(value: String?): FeedStatus? {
-        return value?.let { FeedStatus.valueOf(it) }
+    fun toStatus(value: String?): FeedStatus {
+        return try {
+            FeedStatus.valueOf(value?.trim().orEmpty())
+        } catch (_: Exception) {
+            FeedStatus.NEW
+        }
     }
 
     @TypeConverter

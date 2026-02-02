@@ -22,6 +22,10 @@ class SyncingConversationStore(
         delegate.clear()
     }
 
+    override fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>> {
+        return delegate.messagesFlow(sessionId)
+    }
+
     private fun ChatMessage.toEntity(sessionId: String): ChatMessageEntity {
         return ChatMessageEntity(
             id = id,

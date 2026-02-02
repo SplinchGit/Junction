@@ -44,6 +44,10 @@ class AuthManager(private val context: Context) {
         }
     }
 
+    fun currentUser(): FirebaseUser? {
+        return FirebaseProvider.authOrNull()?.currentUser
+    }
+
     suspend fun signInWithGoogle(activity: Activity): Result<Unit> {
         if (!FirebaseProvider.initialize(context)) {
             return Result.failure(IllegalStateException("Firebase is not configured yet"))

@@ -20,6 +20,8 @@ class UserPrefsRepository(private val context: Context) {
     private val useHttpBackendKey = booleanPreferencesKey("use_http_backend")
     private val apiBaseUrlKey = stringPreferencesKey("api_base_url")
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
+    private val realtimeEndpointKey = stringPreferencesKey("realtime_endpoint")
+    private val realtimeClientSecretEndpointKey = stringPreferencesKey("realtime_client_secret_endpoint")
 
     private val lastOpenedAtKey = longPreferencesKey("last_opened_at")
     private val lastUpdateCheckAtKey = longPreferencesKey("last_update_check_at")
@@ -27,6 +29,8 @@ class UserPrefsRepository(private val context: Context) {
     private val notificationListenerEnabledKey = booleanPreferencesKey("notification_listener_enabled")
     private val appWeightsKey = stringPreferencesKey("app_weights_json")
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
+    private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
+    private val mafiosoEnabledKey = booleanPreferencesKey("mafioso_game_enabled")
 
     val useHttpBackendFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[useHttpBackendKey] ?: BuildConfig.JUNCTION_USE_HTTP_BACKEND
@@ -38,6 +42,14 @@ class UserPrefsRepository(private val context: Context) {
 
     val digestIntervalMinutesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
         prefs[digestIntervalKey] ?: 30
+    }
+
+    val realtimeEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[realtimeEndpointKey] ?: BuildConfig.JUNCTION_REALTIME_ENDPOINT
+    }
+
+    val realtimeClientSecretEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[realtimeClientSecretEndpointKey] ?: BuildConfig.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT
     }
 
     val lastOpenedAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
@@ -65,6 +77,14 @@ class UserPrefsRepository(private val context: Context) {
         prefs[disabledPackagesKey] ?: emptySet()
     }
 
+    val connectedIntegrationsFlow: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[connectedIntegrationsKey] ?: emptySet()
+    }
+
+    val mafiosoGameEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[mafiosoEnabledKey] ?: false
+    }
+
     val snapshotFlow: Flow<PrefsSnapshot> = context.dataStore.data.map { prefs ->
         PrefsSnapshot(
             lastOpenedAt = prefs[lastOpenedAtKey] ?: 0L,
@@ -73,7 +93,10 @@ class UserPrefsRepository(private val context: Context) {
             notificationListenerEnabled = prefs[notificationListenerEnabledKey] ?: false,
             appWeights = parseWeights(prefs[appWeightsKey].orEmpty()),
             disabledPackages = prefs[disabledPackagesKey] ?: emptySet(),
-            lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L
+            lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L,
+            realtimeClientSecretEndpoint = prefs[realtimeClientSecretEndpointKey].orEmpty(),
+            connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet(),
+            mafiosoGameEnabled = prefs[mafiosoEnabledKey] ?: false
         )
     }
 
@@ -87,6 +110,28 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setDigestIntervalMinutes(minutes: Int) {
         context.dataStore.edit { it[digestIntervalKey] = minutes }
+    }
+
+    suspend fun setRealtimeEndpoint(url: String) {
+        context.dataStore.edit { it[realtimeEndpointKey] = url }
+    }
+
+    suspend fun setRealtimeClientSecretEndpoint(url: String) {
+        context.dataStore.edit { it[realtimeClientSecretEndpointKey] = url }
+    }
+
+    suspend fun setIntegrationConnected(provider: String, connected: Boolean) {
+        val current = connectedIntegrationsFlow.first().toMutableSet()
+        if (connected) {
+            current.add(provider)
+        } else {
+            current.remove(provider)
+        }
+        context.dataStore.edit { it[connectedIntegrationsKey] = current }
+    }
+
+    suspend fun setMafiosoGameEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[mafiosoEnabledKey] = enabled }
     }
 
     suspend fun updateLastOpenedAt(timestamp: Long) {
@@ -141,6 +186,9 @@ class UserPrefsRepository(private val context: Context) {
             prefs[appWeightsKey] = toWeightsJson(snapshot.appWeights)
             prefs[disabledPackagesKey] = snapshot.disabledPackages
             prefs[lastUpdateCheckAtKey] = snapshot.lastUpdateCheckAt
+            prefs[realtimeClientSecretEndpointKey] = snapshot.realtimeClientSecretEndpoint
+            prefs[connectedIntegrationsKey] = snapshot.connectedIntegrations
+            prefs[mafiosoEnabledKey] = snapshot.mafiosoGameEnabled
         }
     }
 
@@ -168,5 +216,8 @@ data class PrefsSnapshot(
     val notificationListenerEnabled: Boolean,
     val appWeights: Map<String, Int>,
     val disabledPackages: Set<String>,
-    val lastUpdateCheckAt: Long
+    val lastUpdateCheckAt: Long,
+    val realtimeClientSecretEndpoint: String,
+    val connectedIntegrations: Set<String>,
+    val mafiosoGameEnabled: Boolean
 )
