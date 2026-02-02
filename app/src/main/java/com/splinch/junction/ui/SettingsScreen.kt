@@ -84,6 +84,7 @@ fun SettingsScreen(
     val digestInterval by userPrefs.digestIntervalMinutesFlow.collectAsState(initial = 30)
     val realtimeEndpoint by userPrefs.realtimeEndpointFlow.collectAsState(initial = "")
     val realtimeClientSecretEndpoint by userPrefs.realtimeClientSecretEndpointFlow.collectAsState(initial = "")
+    val webClientIdOverride by userPrefs.webClientIdOverrideFlow.collectAsState(initial = "")
     val notificationAck by userPrefs.notificationAccessAcknowledgedFlow.collectAsState(initial = false)
     val listenerEnabled by userPrefs.notificationListenerEnabledFlow.collectAsState(initial = false)
     val junctionOnlyNotifications by userPrefs.junctionOnlyNotificationsFlow.collectAsState(initial = false)
@@ -101,6 +102,7 @@ fun SettingsScreen(
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
     var realtimeEndpointInput by remember { mutableStateOf(realtimeEndpoint) }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
+    var webClientIdOverrideInput by remember { mutableStateOf(webClientIdOverride) }
     var understandChecked by remember { mutableStateOf(false) }
     var packages by remember { mutableStateOf(emptyList<String>()) }
     var authError by remember { mutableStateOf<String?>(null) }
@@ -182,6 +184,10 @@ fun SettingsScreen(
 
     LaunchedEffect(realtimeClientSecretEndpoint) {
         realtimeClientSecretInput = realtimeClientSecretEndpoint
+    }
+
+    LaunchedEffect(webClientIdOverride) {
+        webClientIdOverrideInput = webClientIdOverride
     }
 
     LaunchedEffect(Unit) {
@@ -311,6 +317,40 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+            OutlinedTextField(
+                value = webClientIdOverrideInput,
+                onValueChange = { webClientIdOverrideInput = it },
+                label = { Text("Web client ID override (optional)") },
+                placeholder = { Text("xxxxxx.apps.googleusercontent.com") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = {
+                    scope.launch {
+                        userPrefs.setWebClientIdOverride(webClientIdOverrideInput.trim())
+                        Toast.makeText(context, "Web client ID saved", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("Save client ID")
+                }
+                TextButton(onClick = {
+                    scope.launch {
+                        userPrefs.setWebClientIdOverride("")
+                        webClientIdOverrideInput = ""
+                        Toast.makeText(context, "Client ID cleared", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("Clear")
+                }
+            }
+            Text(
+                text = "Stored locally on this device and not synced.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         item {

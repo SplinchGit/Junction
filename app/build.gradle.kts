@@ -26,9 +26,9 @@ configure<ApplicationExtension> {
         applicationId = "com.splinch.junction"
         minSdk = 26
         targetSdk = 36
-        val versionCodeValue = 1
+        val versionCodeValue = 2
         versionCode = versionCodeValue
-        versionName = "0.1.0"
+        versionName = "0.5.0"
         buildConfigField("int", "JUNCTION_VERSION_CODE", versionCodeValue.toString())
         buildConfigField("String", "JUNCTION_API_BASE_URL", "\"http://10.0.2.2:8787\"")
         buildConfigField("boolean", "JUNCTION_USE_HTTP_BACKEND", "false")
@@ -63,21 +63,6 @@ configure<ApplicationExtension> {
         )
     }
 
-    sourceSets {
-        getByName("main") {
-            java.directories.add("build/generated/ksp/main/kotlin")
-            java.directories.add("build/generated/ksp/main/java")
-        }
-        getByName("debug") {
-            java.directories.add("build/generated/ksp/debug/kotlin")
-            java.directories.add("build/generated/ksp/debug/java")
-        }
-        getByName("release") {
-            java.directories.add("build/generated/ksp/release/kotlin")
-            java.directories.add("build/generated/ksp/release/java")
-        }
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -103,27 +88,27 @@ kotlin {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
-    implementation("androidx.activity:activity-compose:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+    implementation("androidx.activity:activity-compose:1.12.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
-    implementation("androidx.work:work-runtime-ktx:2.11.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.1")
     implementation("androidx.datastore:datastore-preferences:1.2.0")
-    implementation("androidx.room:room-runtime:2.7.2")
-    implementation("androidx.room:room-ktx:2.7.2")
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
     implementation("com.google.firebase:firebase-crashlytics:20.0.4")
-    ksp("androidx.room:room-compiler:2.7.2")
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // Firebase dependencies
     // Pin firebase bom to a version compatible with Kotlin 1.9
-    implementation(platform("com.google.firebase:firebase-bom:34.7.0"))
+    implementation(platform("com.google.firebase:firebase-bom:34.8.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("androidx.credentials:credentials:1.5.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
-    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.0")
 
     val composeBom = platform("androidx.compose:compose-bom:2025.08.00")
     implementation(composeBom)

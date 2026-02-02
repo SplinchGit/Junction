@@ -11,14 +11,17 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.splinch.junction.BuildConfig
+import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.tasks.await
 
 class AuthManager(private val context: Context) {
     private val _userFlow = MutableStateFlow<FirebaseUser?>(null)
     val userFlow: StateFlow<FirebaseUser?> = _userFlow.asStateFlow()
+    private val userPrefs by lazy { UserPrefsRepository(context.applicationContext) }
 
     private var authListener: com.google.firebase.auth.FirebaseAuth.AuthStateListener? = null
 
@@ -56,24 +59,32 @@ class AuthManager(private val context: Context) {
         if (!FirebaseProvider.initialize(context)) {
             return Result.failure(IllegalStateException("Firebase is not configured yet"))
         }
-        val webClientId = sanitizeWebClientId(BuildConfig.JUNCTION_WEB_CLIENT_ID).ifBlank {
-            // Only present if google-services.json includes an OAuth client; avoid hard reference to R.string.
-            val resId = context.resources.getIdentifier(
+        val overrideId = runCatching { userPrefs.webClientIdOverrideFlow.first() }.getOrDefault("")
+        val resourceId = runCatching {
+            context.resources.getIdentifier(
                 "default_web_client_id",
                 "string",
                 context.packageName
             )
-            if (resId != 0) {
-                runCatching { context.getString(resId) }.getOrDefault("")
-            } else {
-                ""
-            }
+        }.getOrDefault(0)
+        val resourceIdValue = if (resourceId != 0) {
+            runCatching { context.getString(resourceId) }.getOrDefault("")
+        } else {
+            ""
         }
+        val webClientId = sequenceOf(
+            overrideId,
+            BuildConfig.JUNCTION_WEB_CLIENT_ID,
+            resourceIdValue
+        )
+            .map { sanitizeWebClientId(it) }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
         if (webClientId.isBlank()) {
             return Result.failure(
                 IllegalStateException(
-                    "Missing JUNCTION_WEB_CLIENT_ID. Add it to local.properties or ensure google-services.json " +
-                        "includes a Web client ID."
+                    "Missing Google web client ID. Add JUNCTION_WEB_CLIENT_ID to local.properties, set a " +
+                        "Web client ID override in Settings, or ensure google-services.json includes a Web client ID."
                 )
             )
         }

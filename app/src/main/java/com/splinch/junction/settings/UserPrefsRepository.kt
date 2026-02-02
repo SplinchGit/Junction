@@ -24,6 +24,7 @@ class UserPrefsRepository(private val context: Context) {
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
     private val realtimeEndpointKey = stringPreferencesKey("realtime_endpoint")
     private val realtimeClientSecretEndpointKey = stringPreferencesKey("realtime_client_secret_endpoint")
+    private val webClientIdOverrideKey = stringPreferencesKey("web_client_id_override")
 
     private val lastOpenedAtKey = longPreferencesKey("last_opened_at")
     private val lastUpdateCheckAtKey = longPreferencesKey("last_update_check_at")
@@ -63,6 +64,10 @@ class UserPrefsRepository(private val context: Context) {
 
     val realtimeClientSecretEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[realtimeClientSecretEndpointKey] ?: BuildConfig.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT
+    }
+
+    val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[webClientIdOverrideKey] ?: ""
     }
 
     val lastOpenedAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
@@ -153,6 +158,10 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setRealtimeClientSecretEndpoint(url: String) {
         context.dataStore.edit { it[realtimeClientSecretEndpointKey] = url }
+    }
+
+    suspend fun setWebClientIdOverride(value: String) {
+        context.dataStore.edit { it[webClientIdOverrideKey] = value }
     }
 
     suspend fun setIntegrationConnected(provider: String, connected: Boolean) {
