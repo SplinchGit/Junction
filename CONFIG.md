@@ -36,7 +36,15 @@ Files that consume these:
 - `web/src/firebase.ts`
 - `web/src/App.tsx`
 
-## Server (`server/`)
+## Firebase Functions (`functions/`) — primary backend
+
+Required:
+- Functions config or env: `OPENAI_API_KEY`
+
+Files that consume these:
+- `functions/index.js`
+
+## Server (`server/`) — optional (advanced)
 
 Required:
 - `server/.env`
@@ -54,14 +62,6 @@ Optional:
 Files that consume these:
 - `server/config.js`
 - `server/index.js`
-
-## Firebase Functions (`functions/`)
-
-Required:
-- Functions config or env: `OPENAI_API_KEY`
-
-Files that consume these:
-- `functions/index.js`
 
 ## Quick sanity check
 

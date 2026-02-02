@@ -133,6 +133,7 @@ fun SettingsScreen(
     val httpClient = remember { OkHttpClient() }
     var clientSecretStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
     var backendStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
+    var showAdvancedBackend by remember { mutableStateOf(false) }
 
     var showAddFollowTarget by remember { mutableStateOf(false) }
     var showEmploymentStatusSheet by remember { mutableStateOf(false) }
@@ -417,88 +418,106 @@ fun SettingsScreen(
 
         item {
             Text(text = "Backend", style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(text = "Use HTTP backend", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = useBackend,
-                    onCheckedChange = { enabled ->
-                        scope.launch { userPrefs.setUseHttpBackend(enabled) }
-                    }
-                )
+            Text(
+                text = "Primary: Firebase Functions (Realtime). Server/HTTP backend is optional.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(onClick = { showAdvancedBackend = !showAdvancedBackend }) {
+                Text(if (showAdvancedBackend) "Hide advanced" else "Show advanced")
             }
+            if (showAdvancedBackend) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = "Use HTTP backend", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = useBackend,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPrefs.setUseHttpBackend(enabled) }
+                        }
+                    )
+                }
 
-            OutlinedTextField(
-                value = apiBaseUrlInput,
-                onValueChange = { apiBaseUrlInput = it },
-                label = { Text("API Base URL") },
-                placeholder = { Text("http://10.0.2.2:8787") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = chatModelInput,
-                onValueChange = { chatModelInput = it },
-                label = { Text("Chat model") },
-                placeholder = { Text("gpt-5.2") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = chatApiKeyInput,
-                onValueChange = { chatApiKeyInput = it },
-                label = { Text("GPT access key (optional)") },
-                placeholder = { Text("From your Junction server") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(onClick = {
-                scope.launch {
-                    val base = apiBaseUrlInput.trim()
-                    userPrefs.setApiBaseUrl(base)
-                    if (realtimeClientSecretInput.isBlank()) {
-                        userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(base))
-                    }
-                    if (realtimeEndpointInput.isBlank()) {
-                        userPrefs.setRealtimeEndpoint(deriveSdpEndpoint(base))
-                    }
-                }
-            }) {
-                Text("Save API URL")
-            }
-            Button(onClick = {
-                scope.launch {
-                    userPrefs.setChatModel(chatModelInput.trim())
-                    userPrefs.setChatApiKey(chatApiKeyInput.trim())
-                    Toast.makeText(context, "Chat settings saved", Toast.LENGTH_SHORT).show()
-                }
-            }) {
-                Text("Save chat settings")
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                TextButton(onClick = {
+                OutlinedTextField(
+                    value = apiBaseUrlInput,
+                    onValueChange = { apiBaseUrlInput = it },
+                    label = { Text("API Base URL") },
+                    placeholder = { Text("http://10.0.2.2:8787") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = chatModelInput,
+                    onValueChange = { chatModelInput = it },
+                    label = { Text("Chat model") },
+                    placeholder = { Text("gpt-5.2") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = chatApiKeyInput,
+                    onValueChange = { chatApiKeyInput = it },
+                    label = { Text("GPT access key (optional)") },
+                    placeholder = { Text("From your Junction server") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Button(onClick = {
                     scope.launch {
-                        val base = "http://10.0.2.2:8787"
+                        val base = apiBaseUrlInput.trim()
                         userPrefs.setApiBaseUrl(base)
-                        userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(base))
-                        userPrefs.setRealtimeEndpoint(deriveSdpEndpoint(base))
-                        userPrefs.setUseHttpBackend(true)
-                        Toast.makeText(context, "Emulator defaults applied", Toast.LENGTH_SHORT).show()
+                        if (realtimeClientSecretInput.isBlank()) {
+                            userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(base))
+                        }
+                        if (realtimeEndpointInput.isBlank()) {
+                            userPrefs.setRealtimeEndpoint(deriveSdpEndpoint(base))
+                        }
                     }
                 }) {
-                    Text("Use emulator defaults")
+                    Text("Save API URL")
                 }
-                TextButton(onClick = {
+                Button(onClick = {
                     scope.launch {
-                        userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(apiBaseUrlInput.trim()))
-                        userPrefs.setRealtimeEndpoint(deriveSdpEndpoint(apiBaseUrlInput.trim()))
-                        Toast.makeText(context, "Derived endpoints from base URL", Toast.LENGTH_SHORT).show()
+                        userPrefs.setChatModel(chatModelInput.trim())
+                        userPrefs.setChatApiKey(chatApiKeyInput.trim())
+                        Toast.makeText(context, "Chat settings saved", Toast.LENGTH_SHORT).show()
                     }
                 }) {
-                    Text("Auto-fill endpoints")
+                    Text("Save chat settings")
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TextButton(onClick = {
+                        scope.launch {
+                            val base = "http://10.0.2.2:8787"
+                            userPrefs.setApiBaseUrl(base)
+                            userPrefs.setRealtimeClientSecretEndpoint(deriveClientSecretEndpoint(base))
+                            userPrefs.setRealtimeEndpoint(deriveSdpEndpoint(base))
+                            userPrefs.setUseHttpBackend(true)
+                            Toast.makeText(context, "Emulator defaults applied", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Text("Use emulator defaults")
+                    }
+                    TextButton(onClick = {
+                        scope.launch {
+                            userPrefs.setRealtimeClientSecretEndpoint(
+                                deriveClientSecretEndpoint(apiBaseUrlInput.trim())
+                            )
+                            userPrefs.setRealtimeEndpoint(
+                                deriveSdpEndpoint(apiBaseUrlInput.trim())
+                            )
+                            Toast.makeText(
+                                context,
+                                "Derived endpoints from base URL",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }) {
+                        Text("Auto-fill endpoints")
+                    }
                 }
             }
         }

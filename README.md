@@ -45,7 +45,7 @@ A calm, local-first social operations hub with a native Android client and a lig
    npm run dev
    ```
 
-## Firebase Functions (Realtime SDP exchange)
+## Firebase Functions (Realtime SDP exchange) — primary backend
 
 1. Install Firebase CLI and log in.
 2. Install dependencies:
@@ -64,7 +64,7 @@ A calm, local-first social operations hub with a native Android client and a lig
    ```
 5. Copy the function URL into Android Settings -> Realtime.
 
-## Self-hosted Junction server (cost-efficient)
+## Self-hosted Junction server (optional, advanced)
 
 This server handles OpenAI calls securely (API keys stay server-side) and mints short-lived Realtime client secrets.
 
