@@ -1,7 +1,6 @@
 ﻿package com.splinch.junction.ui
 
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
@@ -31,15 +30,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+import com.splinch.junction.BuildConfig
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
-import com.splinch.junction.BuildConfig
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -482,7 +482,7 @@ fun SettingsScreen(
                         if (result.isSuccess) {
                             val url = result.getOrNull().orEmpty()
                             if (url.isNotBlank()) {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
                             } else {
                                 Toast.makeText(context, "Missing auth URL", Toast.LENGTH_SHORT).show()
                             }
