@@ -33,6 +33,8 @@ data class FeedItemEntity(
     val status: FeedStatus = FeedStatus.NEW,
     val threadKey: String?,
     val actionHint: String?,
+    // Used when we collapse many events into one "app widget" item.
+    val aggregateCount: Int = 1,
     val updatedAt: Long = timestamp
 )
 
@@ -48,5 +50,6 @@ data class FeedItem(
     val status: FeedStatus,
     val threadKey: String?,
     val actionHint: String?,
+    val aggregateCount: Int,
     val updatedAt: Long
 )

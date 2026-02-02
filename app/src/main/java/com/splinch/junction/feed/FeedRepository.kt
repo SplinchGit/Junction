@@ -191,6 +191,7 @@ class FeedRepository(
             status = status,
             threadKey = threadKey,
             actionHint = actionHint,
+            aggregateCount = aggregateCount,
             updatedAt = updatedAt
         )
     }

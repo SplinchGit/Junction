@@ -63,6 +63,7 @@ fun FeedScreen(
     lastOpenedAt: Long,
     feedRepository: FeedRepository,
     updateInfo: UpdateInfo?,
+    onAskChat: (voice: Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -70,6 +71,7 @@ fun FeedScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedItem by remember { mutableStateOf<FeedItem?>(null) }
     var showUpdateBanner by remember { mutableStateOf(updateInfo != null) }
+    var showChatChooser by remember { mutableStateOf(false) }
 
     LaunchedEffect(updateInfo) {
         showUpdateBanner = updateInfo != null
@@ -201,6 +203,11 @@ fun FeedScreen(
                     scope.launch { feedRepository.markSeen(item.id) }
                     selectedItem = null
                 },
+                onAskChat = {
+                    // Ask voice/text in a separate prompt so it's always explicit.
+                    showChatChooser = true
+                    selectedItem = null
+                },
                 onOpen = {
                     val item = selectedItem ?: return@FeedActionSheet
                     val opened = item.threadKey?.let { NotificationTapStore.trySend(it) } == true
@@ -218,6 +225,27 @@ fun FeedScreen(
                     selectedItem = null
                 }
             )
+        }
+    }
+
+    if (showChatChooser) {
+        ModalBottomSheet(onDismissRequest = { showChatChooser = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(text = "Open JunctionGPT", style = MaterialTheme.typography.titleMedium)
+                ActionRow("Text chat") {
+                    showChatChooser = false
+                    onAskChat(false)
+                }
+                ActionRow("Voice chat") {
+                    showChatChooser = false
+                    onAskChat(true)
+                }
+            }
         }
     }
 }
@@ -326,9 +354,16 @@ private fun FeedCard(item: FeedItem, onClick: () -> Unit) {
             }
             if (item.status == FeedStatus.NEW) {
                 Text(
-                    text = "NEW",
+                    text = if (item.aggregateCount > 1) "NEW • ${item.aggregateCount} updates" else "NEW",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            } else if (item.aggregateCount > 1) {
+                Text(
+                    text = "${item.aggregateCount} updates",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -360,6 +395,7 @@ private fun FeedActionSheet(
     onDismiss: () -> Unit,
     onArchive: () -> Unit,
     onMarkSeen: () -> Unit,
+    onAskChat: () -> Unit,
     onOpen: () -> Unit
 ) {
     Column(
@@ -372,25 +408,30 @@ private fun FeedActionSheet(
         when (item.category) {
             FeedCategory.FRIENDS_FAMILY -> {
                 ActionRow("Open", onOpen)
+                ActionRow("Ask JunctionGPT", onAskChat)
                 ActionRow("Mark seen", onMarkSeen)
                 ActionRow("Dismiss", onArchive)
             }
             FeedCategory.PROJECTS -> {
                 ActionRow("Open", onOpen)
+                ActionRow("Ask JunctionGPT", onAskChat)
                 ActionRow("Mark done", onMarkSeen)
                 ActionRow("Snooze", onDismiss)
             }
             FeedCategory.NEWS -> {
                 ActionRow("Read", onOpen)
+                ActionRow("Ask JunctionGPT", onAskChat)
                 ActionRow("Save", onDismiss)
                 ActionRow("Dismiss", onArchive)
             }
             FeedCategory.SYSTEM -> {
                 ActionRow("Open app", onOpen)
+                ActionRow("Ask JunctionGPT", onAskChat)
                 ActionRow("Dismiss", onArchive)
             }
             else -> {
                 ActionRow("Open", onOpen)
+                ActionRow("Ask JunctionGPT", onAskChat)
                 ActionRow("Mark seen", onMarkSeen)
                 ActionRow("Dismiss", onArchive)
             }

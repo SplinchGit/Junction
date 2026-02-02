@@ -27,7 +27,7 @@ import com.splinch.junction.follow.data.FollowDao
         SuggestionEntity::class,
         RejectedSuggestionEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class, FollowConverters::class)
@@ -46,7 +46,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -110,6 +110,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     status TEXT NOT NULL,
                     threadKey TEXT,
                     actionHint TEXT,
+                    aggregateCount INTEGER NOT NULL,
                     updatedAt INTEGER NOT NULL
                 )
                 """.trimIndent()
@@ -223,6 +224,15 @@ abstract class JunctionDatabase : RoomDatabase() {
                         defaultExpr = "NULL",
                         coalesceExpr = { cols ->
                             if (cols.contains("actionHint")) "actionHint" else "NULL"
+                        }
+                    ),
+                    ColumnSpec(
+                        name = "aggregateCount",
+                        sqlType = "INTEGER",
+                        notNull = true,
+                        defaultExpr = "1",
+                        coalesceExpr = { cols ->
+                            if (cols.contains("aggregateCount")) "COALESCE(aggregateCount, 1)" else "1"
                         }
                     ),
                     ColumnSpec(
@@ -385,6 +395,13 @@ abstract class JunctionDatabase : RoomDatabase() {
                     )
                     """.trimIndent()
                 )
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Add aggregateCount to feed_items; rebuild handles older / corrupted tables safely.
+                rebuildFeedItems(db)
             }
         }
     }

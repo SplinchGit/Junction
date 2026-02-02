@@ -60,12 +60,14 @@ class JunctionNotificationListenerService : NotificationListenerService() {
         if (packageName == applicationContext.packageName) return
         if (title.isBlank() && text.isNullOrBlank()) return
 
-        val threadKey = buildThreadKey(packageName, title, text, sbn)
-        NotificationTapStore.put(threadKey, notification.contentIntent)
+        // Collapse all notifications from an app into a single "widget" item to avoid spam.
+        val aggregateId = "app:$packageName"
+        NotificationTapStore.put(aggregateId, notification.contentIntent)
+        val eventKey = sbn.key
         val now = if (sbn.postTime > 0L) sbn.postTime else System.currentTimeMillis()
         val dedupTime = System.currentTimeMillis()
 
-        if (isDuplicate(threadKey, dedupTime)) return
+        if (isDuplicate(eventKey, dedupTime)) return
 
         scope.launch {
             val prefs = UserPrefsRepository(applicationContext)
@@ -75,11 +77,25 @@ class JunctionNotificationListenerService : NotificationListenerService() {
             }
             if (!prefs.isPackageEnabled(packageName)) return@launch
 
-            val repository = FeedRepository(JunctionDatabase.getInstance(applicationContext).feedDao())
+            val database = JunctionDatabase.getInstance(applicationContext)
+            val repository = FeedRepository(database.feedDao())
             val source = resolveAppLabel(packageManager, packageName)
             val category = mapCategory(packageName)
 
+            val previous = repository.getEntityById(aggregateId)
+            val nextCount = (previous?.aggregateCount ?: 0) + 1
+
+            // If enabled, suppress the original app notification so Junction becomes the inbox.
+            val suppressOriginal = prefs.junctionOnlyNotificationsFlow.first()
+            if (suppressOriginal &&
+                (notification.flags and Notification.FLAG_ONGOING_EVENT) == 0 &&
+                notification.category != Notification.CATEGORY_CALL
+            ) {
+                runCatching { cancelNotification(sbn.key) }
+            }
+
             val item = FeedItemEntity(
+                id = aggregateId,
                 source = source,
                 packageName = packageName,
                 category = category,
@@ -88,21 +104,12 @@ class JunctionNotificationListenerService : NotificationListenerService() {
                 timestamp = now,
                 priority = 5,
                 status = FeedStatus.NEW,
-                threadKey = threadKey,
-                actionHint = "open"
+                threadKey = aggregateId,
+                actionHint = "open",
+                aggregateCount = nextCount
             )
             repository.add(item)
         }
-    }
-
-    private fun buildThreadKey(
-        packageName: String,
-        title: String,
-        text: String?,
-        sbn: StatusBarNotification
-    ): String {
-        val base = listOf(packageName, title, text.orEmpty(), sbn.tag.orEmpty(), sbn.id.toString())
-        return base.joinToString("|")
     }
 
     private fun mapCategory(packageName: String): FeedCategory {

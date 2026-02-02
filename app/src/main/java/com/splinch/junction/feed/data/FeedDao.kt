@@ -22,10 +22,10 @@ interface FeedDao {
     @Query("UPDATE feed_items SET status = :status, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: FeedStatus, updatedAt: Long)
 
-    @Query("UPDATE feed_items SET status = 'ARCHIVED', updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE feed_items SET status = 'ARCHIVED', aggregateCount = 0, updatedAt = :updatedAt WHERE id = :id")
     suspend fun archive(id: String, updatedAt: Long)
 
-    @Query("UPDATE feed_items SET status = 'SEEN', updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE feed_items SET status = 'SEEN', aggregateCount = 0, updatedAt = :updatedAt WHERE id = :id")
     suspend fun markSeen(id: String, updatedAt: Long)
 
     @Query("SELECT * FROM feed_items WHERE id = :id LIMIT 1")

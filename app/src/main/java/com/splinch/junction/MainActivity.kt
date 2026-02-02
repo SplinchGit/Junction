@@ -228,6 +228,7 @@ private fun JunctionApp(
     voiceToken: Int,
     chatToken: Int
 ) {
+    val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(JunctionTab.FEED) }
     val feedItems by feedRepository.feedFlow.collectAsState(initial = emptyList())
 
@@ -275,6 +276,18 @@ private fun JunctionApp(
                 lastOpenedAt = lastOpenedAt,
                 feedRepository = feedRepository,
                 updateInfo = updateState.collectAsState().value,
+                onAskChat = { voice ->
+                    selectedTab = JunctionTab.CHAT
+                    scope.launch {
+                        if (voice) {
+                            chatManager.setSpeechMode(true)
+                            chatManager.setMicEnabled(true)
+                        } else {
+                            chatManager.setSpeechMode(false)
+                            chatManager.setMicEnabled(false)
+                        }
+                    }
+                },
                 modifier = Modifier.padding(padding)
             )
             JunctionTab.CHAT -> ChatScreen(

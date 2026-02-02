@@ -17,6 +17,7 @@ internal fun FeedItemEntity.toFirestoreMap(userId: String): Map<String, Any?> {
         "status" to status.name,
         "threadKey" to threadKey,
         "actionHint" to actionHint,
+        "aggregateCount" to aggregateCount,
         "updatedAt" to updatedAt
     )
 }
@@ -30,6 +31,7 @@ internal fun feedItemFromFirestore(id: String, data: Map<String, Any?>): FeedIte
     val title = data["title"] as? String ?: return null
     val timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis()
     val updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: timestamp
+    val aggregateCount = (data["aggregateCount"] as? Number)?.toInt() ?: 1
     return FeedItemEntity(
         id = id,
         source = source,
@@ -42,6 +44,7 @@ internal fun feedItemFromFirestore(id: String, data: Map<String, Any?>): FeedIte
         status = status,
         threadKey = data["threadKey"] as? String,
         actionHint = data["actionHint"] as? String,
+        aggregateCount = aggregateCount,
         updatedAt = updatedAt
     )
 }

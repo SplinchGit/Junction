@@ -27,13 +27,14 @@ class UserPrefsRepository(private val context: Context) {
     private val lastUpdateCheckAtKey = longPreferencesKey("last_update_check_at")
     private val notificationAccessAckKey = booleanPreferencesKey("notification_access_ack")
     private val notificationListenerEnabledKey = booleanPreferencesKey("notification_listener_enabled")
+    private val junctionOnlyNotificationsKey = booleanPreferencesKey("junction_only_notifications")
     private val appWeightsKey = stringPreferencesKey("app_weights_json")
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
     private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
     private val mafiosoEnabledKey = booleanPreferencesKey("mafioso_game_enabled")
 
     val useHttpBackendFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[useHttpBackendKey] ?: BuildConfig.JUNCTION_USE_HTTP_BACKEND
+        prefs[useHttpBackendKey] ?: false
     }
 
     val apiBaseUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -68,6 +69,11 @@ class UserPrefsRepository(private val context: Context) {
         prefs[notificationListenerEnabledKey] ?: false
     }
 
+    val junctionOnlyNotificationsFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[junctionOnlyNotificationsKey] ?: false
+    }
+
+    @Suppress("unused")
     val appWeightsFlow: Flow<Map<String, Int>> = context.dataStore.data.map { prefs ->
         val json = prefs[appWeightsKey].orEmpty()
         parseWeights(json)
@@ -156,10 +162,8 @@ class UserPrefsRepository(private val context: Context) {
         context.dataStore.edit { it[notificationListenerEnabledKey] = enabled }
     }
 
-    suspend fun setAppWeight(packageName: String, weight: Int) {
-        val current = appWeightsFlow.first().toMutableMap()
-        current[packageName] = weight
-        context.dataStore.edit { it[appWeightsKey] = toWeightsJson(current) }
+    suspend fun setJunctionOnlyNotifications(enabled: Boolean) {
+        context.dataStore.edit { it[junctionOnlyNotificationsKey] = enabled }
     }
 
     suspend fun setPackageEnabled(packageName: String, enabled: Boolean) {

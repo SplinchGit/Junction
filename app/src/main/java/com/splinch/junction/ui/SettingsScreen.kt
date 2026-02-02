@@ -73,6 +73,7 @@ fun SettingsScreen(
     val realtimeClientSecretEndpoint by userPrefs.realtimeClientSecretEndpointFlow.collectAsState(initial = "")
     val notificationAck by userPrefs.notificationAccessAcknowledgedFlow.collectAsState(initial = false)
     val listenerEnabled by userPrefs.notificationListenerEnabledFlow.collectAsState(initial = false)
+    val junctionOnlyNotifications by userPrefs.junctionOnlyNotificationsFlow.collectAsState(initial = false)
     val disabledPackages by userPrefs.disabledPackagesFlow.collectAsState(initial = emptySet())
     val connectedIntegrations by userPrefs.connectedIntegrationsFlow.collectAsState(initial = emptySet())
     val mafiosoEnabled by userPrefs.mafiosoGameEnabledFlow.collectAsState(initial = false)
@@ -471,6 +472,26 @@ fun SettingsScreen(
                     },
                     style = MaterialTheme.typography.bodyMedium
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Junction-only notifications", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = "If enabled, Junction will dismiss incoming app notifications and show them only in your Junction feed.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = junctionOnlyNotifications,
+                        onCheckedChange = { enabled ->
+                            scope.launch { userPrefs.setJunctionOnlyNotifications(enabled) }
+                        }
+                    )
+                }
                 TextButton(onClick = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }) {
