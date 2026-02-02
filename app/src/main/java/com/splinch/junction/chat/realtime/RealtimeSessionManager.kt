@@ -1,7 +1,9 @@
 package com.splinch.junction.chat.realtime
 
 import android.content.Context
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import com.splinch.junction.chat.ChatMessage
 import com.splinch.junction.chat.Sender
@@ -493,7 +495,7 @@ class RealtimeSessionManager(
 
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager?.isSpeakerphoneOn = true
+        setSpeakerphoneEnabled(true)
         awaitingIce = CompletableDeferred()
         dataChannelOpen = CompletableDeferred()
     }
@@ -587,7 +589,27 @@ class RealtimeSessionManager(
         peerConnection?.close()
         peerConnection = null
         audioManager?.mode = AudioManager.MODE_NORMAL
-        audioManager?.isSpeakerphoneOn = false
+        setSpeakerphoneEnabled(false)
+    }
+
+    private fun setSpeakerphoneEnabled(enabled: Boolean) {
+        val manager = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (enabled) {
+                val devices = manager.availableCommunicationDevices
+                val speaker = devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                }
+                if (speaker != null) {
+                    manager.setCommunicationDevice(speaker)
+                }
+            } else {
+                manager.clearCommunicationDevice()
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            manager.isSpeakerphoneOn = enabled
+        }
     }
 
     private companion object {

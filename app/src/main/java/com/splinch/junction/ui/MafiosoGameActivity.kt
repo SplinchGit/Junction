@@ -3,7 +3,6 @@ package com.splinch.junction.ui
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Bundle
-import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -16,11 +15,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.splinch.junction.ui.theme.JunctionTheme
 
 class MafiosoGameActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
         setContent {
             JunctionTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -48,7 +56,6 @@ private fun MafiosoWebView() {
                 settings.userAgentString = settings.userAgentString + " Junction"
                 webChromeClient = WebChromeClient()
                 webViewClient = WebViewClient()
-                systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN
                 loadUrl("file:///android_asset/mafioso/index.html")
             }
         }

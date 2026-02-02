@@ -32,7 +32,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     JunctionDatabase::class.java,
                     "junction.db"
                 ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
             }
