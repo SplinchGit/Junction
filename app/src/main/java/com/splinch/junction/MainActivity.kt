@@ -35,6 +35,7 @@ import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.follow.FollowRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
                 val roomStore = remember { RoomConversationStore(database.chatDao()) }
                 val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
                 val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
+                val followRepository = remember { FollowRepository(database.followDao()) }
                 val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
                 val chatManager = remember {
                     ChatManager(
@@ -151,6 +153,7 @@ class MainActivity : ComponentActivity() {
                 JunctionApp(
                     chatManager = chatManager,
                     feedRepository = feedRepository,
+                    followRepository = followRepository,
                     prefs = prefs,
                     authManager = authManager,
                     updateState = updateState,
@@ -217,6 +220,7 @@ private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
 private fun JunctionApp(
     chatManager: ChatManager,
     feedRepository: FeedRepository,
+    followRepository: FollowRepository,
     prefs: UserPrefsRepository,
     authManager: AuthManager,
     updateState: kotlinx.coroutines.flow.MutableStateFlow<UpdateInfo?>,
@@ -281,6 +285,7 @@ private fun JunctionApp(
             JunctionTab.SETTINGS -> SettingsScreen(
                 userPrefs = prefs,
                 feedRepository = feedRepository,
+                followRepository = followRepository,
                 authManager = authManager,
                 modifier = Modifier.padding(padding)
             )

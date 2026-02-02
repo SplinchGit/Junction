@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -33,6 +36,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.splinch.junction.BuildConfig
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.follow.FollowRepository
+import com.splinch.junction.follow.FollowTargetEntity
+import com.splinch.junction.follow.FollowTargetType
+import com.splinch.junction.follow.SourceApp
 import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
@@ -47,9 +54,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun SettingsScreen(
     userPrefs: UserPrefsRepository,
     feedRepository: FeedRepository,
+    followRepository: FollowRepository,
     authManager: AuthManager,
     modifier: Modifier = Modifier
 ) {
@@ -68,6 +77,7 @@ fun SettingsScreen(
     val connectedIntegrations by userPrefs.connectedIntegrationsFlow.collectAsState(initial = emptySet())
     val mafiosoEnabled by userPrefs.mafiosoGameEnabledFlow.collectAsState(initial = false)
     val user by authManager.userFlow.collectAsState()
+    val followTargets by followRepository.followTargetsFlow().collectAsState(initial = emptyList())
 
     var apiBaseUrlInput by remember { mutableStateOf(apiBaseUrl) }
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
@@ -79,6 +89,13 @@ fun SettingsScreen(
     val httpClient = remember { OkHttpClient() }
     var clientSecretStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
     var backendStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
+
+    var showAddFollowTarget by remember { mutableStateOf(false) }
+    var followLabel by remember { mutableStateOf("") }
+    var followMatch by remember { mutableStateOf("") }
+    var followType by remember { mutableStateOf(FollowTargetType.USER) }
+    var followSource by remember { mutableStateOf(SourceApp.DISCORD) }
+    var followImportance by remember { mutableStateOf("50") }
     val integrations = remember(connectedIntegrations) {
         listOf(
             IntegrationItem(
@@ -463,6 +480,68 @@ fun SettingsScreen(
         }
 
         item {
+            Text(text = "Favorites", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Tell Junction who/what matters. These are explicit follow targets (no assumptions).",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Button(
+                onClick = { showAddFollowTarget = true },
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Text("Add favorite")
+            }
+        }
+
+        if (followTargets.isNotEmpty()) {
+            items(followTargets, key = { it.id }) { target ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = target.label, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = "${target.sourceApp.name.lowercase().replaceFirstChar { it.uppercase() }} • " +
+                                target.type.name.lowercase().replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = target.isEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                followRepository.upsertFollowTarget(
+                                    target.copy(
+                                        isEnabled = enabled,
+                                        updatedAt = System.currentTimeMillis()
+                                    )
+                                )
+                            }
+                        }
+                    )
+                    TextButton(
+                        onClick = {
+                            scope.launch { followRepository.deleteFollowTarget(target.id) }
+                        }
+                    ) {
+                        Text("Remove")
+                    }
+                }
+            }
+        } else {
+            item {
+                Text(
+                    text = "No favorites yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
             Text(
                 text = "Integrations",
                 style = MaterialTheme.typography.titleMedium,
@@ -676,6 +755,100 @@ fun SettingsScreen(
                 text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.JUNCTION_VERSION_CODE})",
                 style = MaterialTheme.typography.bodyMedium
             )
+        }
+    }
+
+    if (showAddFollowTarget) {
+        ModalBottomSheet(onDismissRequest = { showAddFollowTarget = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(text = "Add favorite", style = MaterialTheme.typography.titleMedium)
+
+                Text(text = "Source", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val options = listOf(SourceApp.DISCORD, SourceApp.BLUESKY, SourceApp.YOUTUBE, SourceApp.SPOTIFY, SourceApp.EMAIL)
+                    options.forEach { app ->
+                        val selected = followSource == app
+                        if (selected) {
+                            Button(onClick = { followSource = app }) { Text(app.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        } else {
+                            OutlinedButton(onClick = { followSource = app }) {
+                                Text(app.name.lowercase().replaceFirstChar { it.uppercase() })
+                            }
+                        }
+                    }
+                }
+
+                Text(text = "Type", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FollowTargetType.values().forEach { t ->
+                        val selected = followType == t
+                        val label = t.name.lowercase().replaceFirstChar { it.uppercase() }
+                        if (selected) {
+                            Button(onClick = { followType = t }) { Text(label) }
+                        } else {
+                            OutlinedButton(onClick = { followType = t }) { Text(label) }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = followLabel,
+                    onValueChange = { followLabel = it },
+                    label = { Text("Label") },
+                    placeholder = { Text("e.g., Rhys, #general, Splinch Server") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = followMatch,
+                    onValueChange = { followMatch = it },
+                    label = { Text("Match") },
+                    placeholder = { Text("Text Junction should match in notifications") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = followImportance,
+                    onValueChange = { followImportance = it },
+                    label = { Text("Importance (0-100)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = {
+                        val label = followLabel.trim()
+                        val match = followMatch.trim()
+                        val importance = followImportance.toIntOrNull()?.coerceIn(0, 100) ?: 50
+                        if (label.isBlank() || match.isBlank()) {
+                            Toast.makeText(context, "Add a label and match", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        scope.launch {
+                            followRepository.upsertFollowTarget(
+                                FollowTargetEntity(
+                                    type = followType,
+                                    sourceApp = followSource,
+                                    label = label,
+                                    match = match,
+                                    importance = importance
+                                )
+                            )
+                            followLabel = ""
+                            followMatch = ""
+                            followImportance = "50"
+                            showAddFollowTarget = false
+                            Toast.makeText(context, "Added", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            }
         }
     }
 }
