@@ -6,7 +6,9 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "chat_sessions")
 data class ChatSessionEntity(
     @PrimaryKey val id: String,
-    val startedAt: Long
+    val startedAt: Long,
+    val speechModeEnabled: Boolean = false,
+    val agentToolsEnabled: Boolean = true
 )
 
 @Entity(tableName = "chat_messages")

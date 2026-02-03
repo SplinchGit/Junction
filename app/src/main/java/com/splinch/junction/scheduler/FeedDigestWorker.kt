@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.splinch.junction.data.JunctionDatabase
-import com.splinch.junction.feed.FeedPriority
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.feed.model.FeedStatus
+import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 class FeedDigestWorker(
@@ -17,26 +19,34 @@ class FeedDigestWorker(
         return withContext(Dispatchers.Default) {
             val database = JunctionDatabase.getInstance(applicationContext)
             val repository = FeedRepository(database.feedDao())
-            val events = repository.getEventsForDigest()
-            val summary = buildSummary(events)
+            val prefs = UserPrefsRepository(applicationContext)
+            val items = repository.getAll().filter { it.status != FeedStatus.ARCHIVED }
+            val summary = buildSummary(items)
             if (summary.isNotBlank()) {
-                NotificationHelper.showDigest(applicationContext, summary)
+                val now = System.currentTimeMillis()
+                val lastDigestAt = prefs.lastDigestAtFlow.first()
+                val lastSummary = prefs.lastDigestSummaryFlow.first()
+                val hasNewItems = items.any { it.timestamp > lastDigestAt }
+                val unchanged = summary == lastSummary
+                val withinCooldown = now - lastDigestAt < DIGEST_COOLDOWN_MS
+                if (hasNewItems && !(unchanged && withinCooldown)) {
+                    NotificationHelper.showDigest(applicationContext, summary)
+                    prefs.updateDigest(summary, now)
+                }
+            } else {
+                NotificationHelper.cancelDigest(applicationContext)
             }
             Result.success()
         }
     }
 
-    private fun buildSummary(events: List<com.splinch.junction.feed.SocialEvent>): String {
-        if (events.isEmpty()) return ""
-        val top = events.sortedBy { priorityOrder(it.priority) }.take(3)
-        return top.joinToString(" • ") { it.title }
+    private fun buildSummary(items: List<com.splinch.junction.feed.model.FeedItem>): String {
+        if (items.isEmpty()) return ""
+        val top = items.sortedByDescending { it.priority }.take(3)
+        return top.joinToString(" - ") { it.title }
     }
 
-    private fun priorityOrder(priority: FeedPriority): Int {
-        return when (priority) {
-            FeedPriority.HIGH -> 0
-            FeedPriority.MEDIUM -> 1
-            FeedPriority.LOW -> 2
-        }
+    companion object {
+        private const val DIGEST_COOLDOWN_MS = 2 * 60 * 60 * 1000L
     }
 }

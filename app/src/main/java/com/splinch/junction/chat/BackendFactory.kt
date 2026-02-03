@@ -1,9 +1,9 @@
 package com.splinch.junction.chat
 
-import com.splinch.junction.settings.SettingsRepository
+import com.splinch.junction.settings.UserPrefsRepository
 import kotlinx.coroutines.flow.first
 
-class BackendProvider(private val settingsRepository: SettingsRepository) {
+class BackendProvider(private val settingsRepository: UserPrefsRepository) {
     suspend fun getBackend(): ChatBackend {
         val useBackend = settingsRepository.useHttpBackendFlow.first()
         val baseUrl = settingsRepository.apiBaseUrlFlow.first()
@@ -16,7 +16,7 @@ class BackendProvider(private val settingsRepository: SettingsRepository) {
 }
 
 object BackendFactory {
-    fun provider(settingsRepository: SettingsRepository): BackendProvider {
+    fun provider(settingsRepository: UserPrefsRepository): BackendProvider {
         return BackendProvider(settingsRepository)
     }
 }

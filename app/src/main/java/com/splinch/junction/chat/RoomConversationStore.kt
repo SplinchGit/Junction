@@ -4,6 +4,7 @@ import com.splinch.junction.data.ChatDao
 import com.splinch.junction.data.ChatMessageEntity
 import com.splinch.junction.data.ChatSessionEntity
 import java.time.Instant
+import kotlinx.coroutines.flow.map
 
 class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     override suspend fun loadSession(): ChatSession? {
@@ -12,7 +13,9 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
         return ChatSession(
             sessionId = session.id,
             startedAt = Instant.ofEpochMilli(session.startedAt),
-            messages = messages
+            messages = messages,
+            speechModeEnabled = session.speechModeEnabled,
+            agentToolsEnabled = session.agentToolsEnabled
         )
     }
 
@@ -20,7 +23,9 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
         chatDao.upsertSession(
             ChatSessionEntity(
                 id = session.sessionId,
-                startedAt = session.startedAt.toEpochMilli()
+                startedAt = session.startedAt.toEpochMilli(),
+                speechModeEnabled = session.speechModeEnabled,
+                agentToolsEnabled = session.agentToolsEnabled
             )
         )
     }
@@ -34,11 +39,17 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
         chatDao.clearSession()
     }
 
+    override fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>> {
+        return chatDao.messageStream(sessionId).map { entities ->
+            entities.map { it.toModel() }
+        }
+    }
+
     private fun ChatMessageEntity.toModel(): ChatMessage {
         return ChatMessage(
             id = id,
             timestamp = Instant.ofEpochMilli(timestamp),
-            sender = Sender.valueOf(sender),
+            sender = senderFromString(sender),
             content = content
         )
     }

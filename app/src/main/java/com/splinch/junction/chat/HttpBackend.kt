@@ -12,16 +12,30 @@ import org.json.JSONObject
 
 class HttpBackend(
     private val baseUrl: String,
+    private val authTokenProvider: (suspend () -> String?)? = null,
+    private val chatKeyProvider: (suspend () -> String?)? = null,
+    private val modelProvider: (suspend () -> String?)? = null,
     private val httpClient: OkHttpClient = OkHttpClient()
 ) : ChatBackend {
     override suspend fun generateResponse(session: ChatSession, userMessage: ChatMessage): ChatMessage {
         return withContext(Dispatchers.IO) {
-            val payload = buildPayload(session, userMessage)
+            val model = modelProvider?.invoke()?.trim().orEmpty()
+            val payload = buildPayload(session, userMessage, model)
             val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = Request.Builder()
-                .url(baseUrl.trimEnd('/') + "/chat")
+            val endpoint = baseUrl.trim().trimEnd('/')
+            val url = if (endpoint.endsWith("/chat")) endpoint else "$endpoint/chat"
+            val requestBuilder = Request.Builder()
+                .url(url)
                 .post(body)
-                .build()
+            val token = authTokenProvider?.invoke()
+            if (!token.isNullOrBlank()) {
+                requestBuilder.addHeader("Authorization", "Bearer $token")
+            }
+            val chatKey = chatKeyProvider?.invoke()
+            if (!chatKey.isNullOrBlank()) {
+                requestBuilder.addHeader("X-Junction-Chat-Key", chatKey)
+            }
+            val request = requestBuilder.build()
 
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -36,10 +50,17 @@ class HttpBackend(
         }
     }
 
-    private fun buildPayload(session: ChatSession, userMessage: ChatMessage): JSONObject {
+    private fun buildPayload(
+        session: ChatSession,
+        userMessage: ChatMessage,
+        model: String
+    ): JSONObject {
         val json = JSONObject()
         json.put("sessionId", session.sessionId)
         json.put("message", userMessage.content)
+        if (model.isNotBlank()) {
+            json.put("model", model)
+        }
         val messagesArray = JSONArray()
         val history = session.messages.takeLast(20).let { list ->
             if (list.isNotEmpty() && list.last().id == userMessage.id) {
