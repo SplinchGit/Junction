@@ -13,6 +13,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      JAVA_TOOL_OPTIONS: -Xmx3g
 
     steps:
       - name: Checkout
@@ -65,22 +67,41 @@ jobs:
           sudo apt-get install -y unzip wget
           mkdir -p $HOME/android-sdk/cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-101-10427498_latest.zip -O /tmp/cmdline-tools.zip
-          unzip -q /tmp/cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest || true
+          unzip -q /tmp/cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools || true
+          # Move whatever extracted dir name to "latest"
+          if [ -d "$HOME/android-sdk/cmdline-tools/cmdline-tools" ]; then
+            mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest || true
+          fi
           export ANDROID_HOME=$HOME/android-sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
+          # Install two common platforms/build-tools to cover likely compileSdkVersions
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-31" "platforms;android-33" "build-tools;31.0.0" "build-tools;33.0.2"
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Build Debug APK (capture logs even on failure)
+        # run Gradle with stacktrace/info and capture everything to build.log; if it fails, still upload log
+        run: |
+          ./gradlew assembleDebug --no-daemon --stacktrace --info > build.log 2>&1 || true
+          # Show a short tail in the job log for quick feedback
+          echo "==== build.log tail ===="
+          tail -n 200 build.log || true
+      - name: Upload build log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
-      - name: Upload job artifact
+      - name: Upload APK (if produced)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
