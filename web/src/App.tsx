@@ -83,7 +83,7 @@ type RealtimeError = {
   canRetry?: boolean;
 };
 
-const { realtimeEndpoint, isDev, hasFirebaseConfig, firebaseMissing } = config;
+const { realtimeEndpoint, isDev, hasFirebaseConfig, firebaseMissing, apiBase } = config;
 const maxMessageLength = 4000;
 const warnAtLength = 3500;
 
@@ -112,8 +112,8 @@ export default function App() {
   const overLimit = inputLength > maxMessageLength;
   const showCounter = inputLength >= warnAtLength;
   const canSend =
-    !!user && !!realtimeEndpoint && !overLimit && input.trim().length > 0;
-  const showRealtimeMissing = tab === "chat" && !realtimeEndpoint;
+    !!user && (!!realtimeEndpoint || !!apiBase) && !overLimit && input.trim().length > 0;
+  const showRealtimeMissing = tab === "chat" && !realtimeEndpoint && !apiBase;
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -315,11 +315,34 @@ export default function App() {
     );
   }
 
+  async function saveUserApiKey() {
+    if (!user) return alert("Sign in first");
+    if (!apiBase) return alert("API base not configured in the web client (VITE_API_BASE)");
+    const key = window.prompt("Paste your OpenAI API key (it will be stored encrypted)");
+    if (!key) return;
+    try {
+      const idToken = await auth.currentUser?.getIdToken(true);
+      const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/user/key`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ key }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      alert("Key saved (encrypted) on the server for your account.");
+    } catch (e: any) {
+      console.error(e);
+      alert("Failed to save key: " + (e.message || e));
+    }
+  }
+
   async function sendMessage() {
     if (!user || !input.trim()) return;
-    if (!realtimeEndpoint) {
+    if (!realtimeEndpoint && !apiBase) {
       setRealtimeError({
-        message: "Realtime not configured. Set VITE_REALTIME_ENDPOINT to continue.",
+        message: "Realtime not configured. Set VITE_REALTIME_ENDPOINT or VITE_API_BASE to continue.",
         canRetry: false,
       });
       return;
@@ -335,27 +358,97 @@ export default function App() {
     setRealtimeError(null);
     const keepAlive = speechMode;
     disconnectAfterResponse.current = !keepAlive;
-    const ready = await ensureRealtime(keepAlive, true);
-    if (!ready) return;
-    await appendMessage("user", text);
-    setInput("");
-    const sent = sendEvent({
-      type: "conversation.item.create",
-      item: {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text }],
-      },
-    });
-    if (!sent) {
-      setRealtimeError({
-        message: "Realtime connection not ready. Please retry.",
-        canRetry: true,
-      });
-      return;
+
+    // prefer HTTP backend streaming when configured
+    if (apiBase) {
+      try {
+        await appendMessage("user", text);
+        setInput("");
+        streamingRef.current = "";
+        setStreamingText("");
+
+        const idToken = await auth.currentUser?.getIdToken(true);
+        const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/chat/stream`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ text, mode: null }),
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          setRealtimeError({ message: "Backend error", detail, canRetry: true });
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        const dec = new TextDecoder();
+        if (!reader) return;
+
+        // cancel any ongoing speech
+        window.speechSynthesis.cancel();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            const chunk = dec.decode(value, { stream: true });
+            streamingRef.current += chunk;
+            setStreamingText(streamingRef.current);
+            // speak the chunk quickly
+            try {
+              const u = new SpeechSynthesisUtterance(chunk);
+              window.speechSynthesis.speak(u);
+            } catch (e) {
+              // TTS may not be available — ignore
+            }
+          }
+        }
+
+        // finalize: store assistant message
+        const finalText = streamingRef.current;
+        if (finalText.trim()) await appendMessage("assistant", finalText);
+        streamingRef.current = "";
+        setStreamingText("");
+
+        if (disconnectAfterResponse.current && !speechMode) {
+          disconnectAfterResponse.current = false;
+        }
+
+        return;
+      } catch (e: any) {
+        console.error("stream error", e);
+        setRealtimeError({ message: "Stream failed.", detail: e?.message || String(e), canRetry: true });
+      }
     }
-    sendEvent({ type: "response.create" });
-    setTab("chat");
+
+    // Fallback: existing realtime pipeline
+    try {
+      const ready = await ensureRealtime(keepAlive, true);
+      if (!ready) return;
+      await appendMessage("user", text);
+      setInput("");
+      const sent = sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text }],
+        },
+      });
+      if (!sent) {
+        setRealtimeError({
+          message: "Realtime connection not ready. Please retry.",
+          canRetry: true,
+        });
+        return;
+      }
+      sendEvent({ type: "response.create" });
+      setTab("chat");
+    } catch (e: any) {
+      setRealtimeError({ message: "Send failed.", detail: e?.message || String(e), canRetry: true });
+    }
   }
 
   async function markSeen(item: FeedItem) {
@@ -611,6 +704,7 @@ export default function App() {
     setStreamingText("");
     streamingRef.current = "";
     sendEvent({ type: "response.cancel" });
+    try { window.speechSynthesis.cancel(); } catch {}
   }
 
   async function regenerateResponse() {
@@ -825,7 +919,12 @@ export default function App() {
           {user ? (
             <>
               <div className="account-email">{user.email}</div>
-              <button onClick={handleSignOut}>Sign out</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={handleSignOut}>Sign out</button>
+                {apiBase && (
+                  <button onClick={saveUserApiKey}>Save API Key</button>
+                )}
+              </div>
             </>
           ) : (
             <button onClick={handleSignIn}>Sign in with Google</button>
