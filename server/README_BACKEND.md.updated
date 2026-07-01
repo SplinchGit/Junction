@@ -1,0 +1,11 @@
+Update: Added Firebase token verification and per-user encrypted key storage.
+
+Important env vars to set in production (server/.env):
+- FIREBASE_SERVICE_ACCOUNT_JSON : service account JSON (or set GOOGLE_APPLICATION_CREDENTIALS to path)
+- ENCRYPTION_KEY : base64 32 byte key (generate with `openssl rand -base64 32`)
+- OPENAI_API_KEY : optional server-wide key
+
+Endpoints added:
+- POST /api/user/key  (Authorization: Bearer <firebase-id-token>) body { key }  -> stores encrypted user key
+- POST /api/chat (Authorization) -> non-stream chat
+- POST /api/chat/stream (Authorization) -> streaming chat (forwards OpenAI streaming)

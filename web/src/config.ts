@@ -34,11 +34,13 @@ const firebaseMissing = [
   .map(([key]) => key);
 
 const realtimeEndpoint = envValue("VITE_REALTIME_ENDPOINT");
+const apiBase = envValue("VITE_API_BASE");
 
 export const config = {
   firebase,
   firebaseMissing,
   hasFirebaseConfig: firebaseMissing.length === 0,
   realtimeEndpoint,
+  apiBase,
   isDev: import.meta.env.DEV,
 };

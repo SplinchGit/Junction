@@ -1,0 +1,7 @@
+*** Begin Patch for web/src/App.tsx ***
+
+- Add streaming HTTP-based chat when VITE_API_BASE is set. Uses Firebase ID token for auth, posts to /api/chat/stream, reads response body as a stream, appends text to streamingText, and feeds chunks to speechSynthesis.
+- Added simple UI to store a per-user OpenAI key (Account area). The key is sent to /api/user/key and stored encrypted in Firestore by the backend.
+
+Note: This patch modifies sendMessage() to prefer HTTP streaming when config.apiBase is set, falling back to the existing realtime pipeline when not configured.
+*** End Patch ***
