@@ -25,7 +25,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.IOException
 
 class ChatManager(
     context: Context,
@@ -161,18 +169,74 @@ class ChatManager(
             ?.getIdToken(true)
             ?.await()
             ?.token
-        val backend = HttpBackend(
-            baseUrl = baseUrl,
-            authTokenProvider = { token },
-            chatKeyProvider = { chatKey },
-            modelProvider = { model }
-        )
-        val history = buildBackendHistory(userMessage)
-        val sessionSnapshot = session.copy(messages = history)
-        return try {
-            val response = backend.generateResponse(sessionSnapshot, userMessage)
-            store.appendMessage(session.sessionId, response)
-            true
+
+        // Try streaming endpoint first: POST { /api/chat/stream }
+        val endpoint = baseUrl.trim().trimEnd('/') + "/api/chat/stream"
+        val client = OkHttpClient()
+
+        try {
+            val payload = org.json.JSONObject()
+            payload.put("sessionId", session.sessionId)
+            payload.put("message", userMessage.content)
+            if (model.isNotBlank()) payload.put("model", model)
+            val messagesArray = org.json.JSONArray()
+            val history = session.messages.takeLast(20).let { list ->
+                if (list.isNotEmpty() && list.last().id == userMessage.id) list.dropLast(1) else list
+            }
+            history.forEach { msg ->
+                val obj = org.json.JSONObject()
+                obj.put("role", msg.sender.name.lowercase())
+                obj.put("content", msg.content)
+                messagesArray.put(obj)
+            }
+            payload.put("messages", messagesArray)
+
+            val body = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val rb = Request.Builder().url(endpoint).post(body)
+            if (!token.isNullOrBlank()) rb.addHeader("Authorization", "Bearer $token")
+            if (!chatKey.isNullOrBlank()) rb.addHeader("X-Junction-Chat-Key", chatKey)
+            val request = rb.build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IOException("Backend error: ${response.code}")
+                }
+
+                val stream = response.body?.charStream() ?: response.body?.byteStream()?.let { InputStreamReader(it) }
+                if (stream == null) return false
+
+                val reader = BufferedReader(stream)
+                val sb = StringBuilder()
+                val itemId = java.util.UUID.randomUUID().toString()
+                var line: String?
+                while (true) {
+                    line = reader.readLine() ?: break
+                    if (line.isNotEmpty()) {
+                        sb.append(line)
+                        // emit delta to UI
+                        val delta = line
+                        // update streaming assistant on main
+                        withContext(Dispatchers.Main) {
+                            val current = _streamingAssistant.value
+                            if (current == null || current.itemId != itemId) {
+                                _streamingAssistant.value = StreamingAssistantMessage(itemId = itemId, content = delta)
+                            } else {
+                                _streamingAssistant.value = current.copy(content = current.content + delta)
+                            }
+                        }
+                    }
+                }
+
+                val finalText = sb.toString()
+                if (finalText.isNotBlank()) {
+                    store.appendMessage(session.sessionId, ChatMessage(sender = Sender.ASSISTANT, content = finalText))
+                }
+                // clear streaming state
+                withContext(Dispatchers.Main) {
+                    _streamingAssistant.value = null
+                }
+                return true
+            }
         } catch (ex: Exception) {
             val message = ex.message ?: "Backend request failed"
             if (token.isNullOrBlank() && message.contains("401")) {
@@ -180,7 +244,7 @@ class ChatManager(
             } else {
                 appendSystemMessage(message)
             }
-            false
+            return false
         }
     }
 
@@ -389,6 +453,7 @@ class ChatManager(
         for (msg in _messages.value) {
             builder.append("[${DateTimeFormatter.ISO_INSTANT.format(msg.timestamp)}] ${msg.sender}:\n")
             builder.append(msg.content).append("\n\n")
+
         }
         return builder.toString().trim()
     }
