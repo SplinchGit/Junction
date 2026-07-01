@@ -34,11 +34,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Write google-services.json (from secret)
-        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
+      - name: Write google-services.json if provided (runtime check)
         run: |
-          echo "Writing google-services.json from secret"
-          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+          if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
+            echo "Writing google-services.json from secret"
+            echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+          else
+            echo "No GOOGLE_SERVICES_JSON provided; skipping"
+          fi
 
       - name: Write local.properties overrides (from secrets)
         run: |
@@ -55,6 +58,21 @@ jobs:
           if [ -n "${{ secrets.JUNCTION_API_BASE_URL }}" ]; then
             echo "JUNCTION_API_BASE_URL=${{ secrets.JUNCTION_API_BASE_URL }}" >> local.properties
           fi
+
+      - name: Install Android SDK command-line tools & required platforms
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip wget
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-101-10427498_latest.zip -O /tmp/cmdline-tools.zip
+          unzip -q /tmp/cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest || true
+          export ANDROID_HOME=$HOME/android-sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
