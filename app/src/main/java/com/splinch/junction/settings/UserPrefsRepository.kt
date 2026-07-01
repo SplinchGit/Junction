@@ -25,6 +25,7 @@ class UserPrefsRepository(private val context: Context) {
     private val realtimeEndpointKey = stringPreferencesKey("realtime_endpoint")
     private val realtimeClientSecretEndpointKey = stringPreferencesKey("realtime_client_secret_endpoint")
     private val webClientIdOverrideKey = stringPreferencesKey("web_client_id_override")
+    private val copilotEnabledKey = booleanPreferencesKey("copilot_enabled")
 
     private val lastOpenedAtKey = longPreferencesKey("last_opened_at")
     private val lastUpdateCheckAtKey = longPreferencesKey("last_update_check_at")
@@ -68,6 +69,10 @@ class UserPrefsRepository(private val context: Context) {
 
     val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[webClientIdOverrideKey] ?: ""
+    }
+
+    val copilotEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[copilotEnabledKey] ?: false
     }
 
     val lastOpenedAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
@@ -162,6 +167,10 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setWebClientIdOverride(value: String) {
         context.dataStore.edit { it[webClientIdOverrideKey] = value }
+    }
+
+    suspend fun setCopilotEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[copilotEnabledKey] = enabled }
     }
 
     suspend fun setIntegrationConnected(provider: String, connected: Boolean) {
