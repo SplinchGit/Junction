@@ -1,19 +1,26 @@
 {
-  "name": "junction-server",
-  "private": true,
+  "name": "junction-backend",
   "version": "0.1.0",
-  "type": "commonjs",
-  "main": "index.js",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc -p .",
+    "start": "node dist/index.js"
+  },
   "engines": {
     "node": ">=18"
   },
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
+    "axios": "^1.4.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "firebase-admin": "^12.1.0",
-    "node-fetch": "^2.7.0"
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.4.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.1.6"
   }
 }
