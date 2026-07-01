@@ -1,32 +1,99 @@
-﻿name: Android Build
+name: Build Android APK
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+  packages: write
+  actions: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Write google-services.json (from secret)
+        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
+        run: |
+          echo "Writing google-services.json from secret"
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+
+      - name: Write local.properties overrides (from secrets)
+        run: |
+          echo "Creating local.properties overrides"
+          if [ -n "${{ secrets.JUNCTION_WEB_CLIENT_ID }}" ]; then
+            echo "JUNCTION_WEB_CLIENT_ID=${{ secrets.JUNCTION_WEB_CLIENT_ID }}" >> local.properties
+          fi
+          if [ -n "${{ secrets.JUNCTION_REALTIME_ENDPOINT }}" ]; then
+            echo "JUNCTION_REALTIME_ENDPOINT=${{ secrets.JUNCTION_REALTIME_ENDPOINT }}" >> local.properties
+          fi
+          if [ -n "${{ secrets.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT }}" ]; then
+            echo "JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT=${{ secrets.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT }}" >> local.properties
+          fi
+          if [ -n "${{ secrets.JUNCTION_API_BASE_URL }}" ]; then
+            echo "JUNCTION_API_BASE_URL=${{ secrets.JUNCTION_API_BASE_URL }}" >> local.properties
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
-      - name: Upload APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload job artifact
         uses: actions/upload-artifact@v4
         with:
-          name: junction-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: app-debug.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          name: app-debug.apk
+
+      - name: Create or update "latest-build" release
+        id: create_release
+        uses: peter-evans/create-or-update-release@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: latest-build
+          release_name: "Latest build"
+          draft: false
+          prerelease: false
+          make_latest: true
+
+      - name: Upload APK to release
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./app-debug.apk
+          asset_name: app-debug.apk
+          asset_content_type: application/vnd.android.package-archive
