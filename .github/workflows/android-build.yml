@@ -68,31 +68,89 @@ jobs:
           mkdir -p $HOME/android-sdk/cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-101-10427498_latest.zip -O /tmp/cmdline-tools.zip
           unzip -q /tmp/cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools || true
-          # Move whatever extracted dir name to "latest"
+          # Move whatever extracted dir name (cmdline-tools) to "latest"
           if [ -d "$HOME/android-sdk/cmdline-tools/cmdline-tools" ]; then
             mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest || true
           fi
           export ANDROID_HOME=$HOME/android-sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+          # Accept licenses and install common platforms/build-tools (adjust android-33 if your project uses different compileSdkVersion)
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
-          # Install two common platforms/build-tools to cover likely compileSdkVersions
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-31" "platforms;android-33" "build-tools;31.0.0" "build-tools;33.0.2"
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-31" "platforms;android-33" "build-tools;31.0.0" "build-tools;33.0.2" || true
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
+      - name: Dump workspace & locate gradle wrapper
+        id: locate
+        run: |
+          echo "=== Workdir: $(pwd) ==="
+          ls -la .
+          # locate gradlew; prefer repo-root gradlew
+          if [ -f ./gradlew ]; then
+            echo "FOUND_GRADLEWRAPPER=./gradlew" >> $GITHUB_OUTPUT
+          else
+            GRADLE_PATH=$(find . -type f -name gradlew | head -n1 || true)
+            if [ -n "$GRADLE_PATH" ]; then
+              GRADLE_DIR=$(dirname "$GRADLE_PATH")
+              echo "FOUND_GRADLEWRAPPER=$GRADLE_PATH" >> $GITHUB_OUTPUT
+              echo "FOUND_GRADLE_DIR=$GRADLE_DIR" >> $GITHUB_OUTPUT
+            else
+              echo "FOUND_GRADLEWRAPPER=" >> $GITHUB_OUTPUT
+            fi
+          fi
+          echo "=== Listing app/ if present ==="
+          if [ -d app ]; then ls -la app || true; else echo "no app/ dir"; fi
+
+      - name: Grant execute permission for gradlew (if found)
+        run: |
+          if [ -n "${{ steps.locate.outputs.FOUND_GRADLEWRAPPER }}" ]; then
+            chmod +x "${{ steps.locate.outputs.FOUND_GRADLEWRAPPER }}"
+          else
+            echo "No gradlew found; build may fail if no gradle wrapper available"
+          fi
 
       - name: Build Debug APK (capture logs even on failure)
-        # run Gradle with stacktrace/info and capture everything to build.log; if it fails, still upload log
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace --info > build.log 2>&1 || true
-          # Show a short tail in the job log for quick feedback
+          # choose run directory
+          if [ -n "${{ steps.locate.outputs.FOUND_GRADLE_DIR }}" ]; then
+            RUN_DIR="${{ steps.locate.outputs.FOUND_GRADLE_DIR }}"
+          elif [ -n "${{ steps.locate.outputs.FOUND_GRADLEWRAPPER }}" ]; then
+            RUN_DIR="$(dirname "${{ steps.locate.outputs.FOUND_GRADLEWRAPPER }}")"
+          else
+            RUN_DIR="."
+          fi
+          echo "Running gradle from $RUN_DIR"
+          cd "$RUN_DIR" || exit 0
+          # Run gradle capturing full output
+          ./gradlew assembleDebug --no-daemon --stacktrace --info > "$GITHUB_WORKSPACE/build.log" 2>&1 || true
+          # show some tail so job log gives context
           echo "==== build.log tail ===="
-          tail -n 200 build.log || true
+          tail -n 200 "$GITHUB_WORKSPACE/build.log" || true
+
+      - name: Ensure fallback build.log exists
+        run: |
+          if [ ! -s "$GITHUB_WORKSPACE/build.log" ]; then
+            echo "No build.log produced; writing fallback info" > "$GITHUB_WORKSPACE/build.log"
+            echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_WORKSPACE/build.log"
+            echo "Gradle wrapper present: $([[ -n \"${{ steps.locate.outputs.FOUND_GRADLEWRAPPER }}\" ]] && echo yes || echo no)" >> "$GITHUB_WORKSPACE/build.log"
+            echo "Listing repo root:" >> "$GITHUB_WORKSPACE/build.log"
+            ls -la >> "$GITHUB_WORKSPACE/build.log"
+          fi
+
+      - name: Collect APK into workspace root (if produced)
+        run: |
+          APK=$(find . -type f -name "*-debug.apk" | head -n1 || true)
+          if [ -n "$APK" ]; then
+            echo "Found APK at: $APK"
+            cp "$APK" "$GITHUB_WORKSPACE/app-debug.apk"
+          else
+            echo "No debug APK found"
+          fi
+          ls -la "$GITHUB_WORKSPACE" || true
+
       - name: Upload build log (always)
         if: always()
         uses: actions/upload-artifact@v4
@@ -100,12 +158,12 @@ jobs:
           name: build-log
           path: build.log
 
-      - name: Upload APK (if produced)
+      - name: Upload APK artifact (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app-debug.apk
 
   release:
     needs: build
@@ -118,8 +176,15 @@ jobs:
         with:
           name: app-debug.apk
 
-      - name: Create or update "latest-build" release
+      - name: Find downloaded APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find . -type f -name "*-debug.apk" -o -name "app-debug.apk" | head -n1 || true)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_OUTPUT
+
+      - name: Create or update "latest-build" release (skip if no APK)
         id: create_release
+        if: steps.find_apk.outputs.APK_PATH != ''
         uses: peter-evans/create-or-update-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -130,9 +195,10 @@ jobs:
           make_latest: true
 
       - name: Upload APK to release
+        if: steps.find_apk.outputs.APK_PATH != ''
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./app-debug.apk
+          asset_path: ${{ steps.find_apk.outputs.APK_PATH }}
           asset_name: app-debug.apk
           asset_content_type: application/vnd.android.package-archive
