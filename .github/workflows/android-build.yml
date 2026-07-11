@@ -50,6 +50,9 @@ jobs:
           echo "Creating local.properties overrides"
           if [ -n "${{ secrets.JUNCTION_WEB_CLIENT_ID }}" ]; then
             echo "JUNCTION_WEB_CLIENT_ID=${{ secrets.JUNCTION_WEB_CLIENT_ID }}" >> local.properties
+          else
+            echo "JUNCTION_WEB_CLIENT_ID=debug-placeholder-web-client-id" >> local.properties
+            echo "Note: JUNCTION_WEB_CLIENT_ID secret not provided; using debug placeholder"
           fi
           if [ -n "${{ secrets.JUNCTION_REALTIME_ENDPOINT }}" ]; then
             echo "JUNCTION_REALTIME_ENDPOINT=${{ secrets.JUNCTION_REALTIME_ENDPOINT }}" >> local.properties
