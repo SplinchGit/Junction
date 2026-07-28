@@ -17,8 +17,6 @@ import org.json.JSONObject
 private val Context.dataStore by preferencesDataStore(name = "junction_prefs")
 
 class UserPrefsRepository(private val context: Context) {
-    private val useHttpBackendKey = booleanPreferencesKey("use_http_backend")
-    private val apiBaseUrlKey = stringPreferencesKey("api_base_url")
     private val chatModelKey = stringPreferencesKey("chat_model")
     private val chatApiKeyKey = stringPreferencesKey("chat_api_key")
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
@@ -36,14 +34,10 @@ class UserPrefsRepository(private val context: Context) {
     private val appWeightsKey = stringPreferencesKey("app_weights_json")
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
     private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
-    private val mafiosoEnabledKey = booleanPreferencesKey("mafioso_game_enabled")
+    private val firebaseSyncEnabledKey = booleanPreferencesKey("firebase_sync_enabled")
 
-    val useHttpBackendFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[useHttpBackendKey] ?: false
-    }
-
-    val apiBaseUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[apiBaseUrlKey] ?: Config.buildApiBaseUrl
+    val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[firebaseSyncEnabledKey] ?: false
     }
 
     val chatModelFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -112,10 +106,6 @@ class UserPrefsRepository(private val context: Context) {
         prefs[connectedIntegrationsKey] ?: emptySet()
     }
 
-    val mafiosoGameEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[mafiosoEnabledKey] ?: false
-    }
-
     val snapshotFlow: Flow<PrefsSnapshot> = context.dataStore.data.map { prefs ->
         PrefsSnapshot(
             lastOpenedAt = prefs[lastOpenedAtKey] ?: 0L,
@@ -127,17 +117,8 @@ class UserPrefsRepository(private val context: Context) {
             lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L,
             realtimeClientSecretEndpoint = prefs[realtimeClientSecretEndpointKey].orEmpty(),
             chatModel = prefs[chatModelKey] ?: Config.buildChatModel,
-            connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet(),
-            mafiosoGameEnabled = prefs[mafiosoEnabledKey] ?: false
+            connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet()
         )
-    }
-
-    suspend fun setUseHttpBackend(enabled: Boolean) {
-        context.dataStore.edit { it[useHttpBackendKey] = enabled }
-    }
-
-    suspend fun setApiBaseUrl(baseUrl: String) {
-        context.dataStore.edit { it[apiBaseUrlKey] = baseUrl }
     }
 
     suspend fun setChatModel(model: String) {
@@ -174,8 +155,8 @@ class UserPrefsRepository(private val context: Context) {
         context.dataStore.edit { it[connectedIntegrationsKey] = current }
     }
 
-    suspend fun setMafiosoGameEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[mafiosoEnabledKey] = enabled }
+    suspend fun setFirebaseSyncEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[firebaseSyncEnabledKey] = enabled }
     }
 
     suspend fun updateLastOpenedAt(timestamp: Long) {
@@ -238,7 +219,6 @@ class UserPrefsRepository(private val context: Context) {
             prefs[realtimeClientSecretEndpointKey] = snapshot.realtimeClientSecretEndpoint
             prefs[chatModelKey] = snapshot.chatModel
             prefs[connectedIntegrationsKey] = snapshot.connectedIntegrations
-            prefs[mafiosoEnabledKey] = snapshot.mafiosoGameEnabled
         }
     }
 
@@ -269,6 +249,5 @@ data class PrefsSnapshot(
     val lastUpdateCheckAt: Long,
     val realtimeClientSecretEndpoint: String,
     val chatModel: String,
-    val connectedIntegrations: Set<String>,
-    val mafiosoGameEnabled: Boolean
+    val connectedIntegrations: Set<String>
 )

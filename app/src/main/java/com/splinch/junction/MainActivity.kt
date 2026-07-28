@@ -36,8 +36,6 @@ import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
-import com.splinch.junction.employment.EmploymentRepository
-import com.splinch.junction.follow.FollowRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
@@ -78,8 +76,6 @@ class MainActivity : ComponentActivity() {
                 val roomStore = remember { RoomConversationStore(database.chatDao()) }
                 val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
                 val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
-                val followRepository = remember { FollowRepository(database.followDao()) }
-                val employmentRepository = remember { EmploymentRepository(database.employmentDao()) }
                 val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
                 val chatManager = remember {
                     ChatManager(
@@ -91,6 +87,7 @@ class MainActivity : ComponentActivity() {
                         updateState = updateState
                     )
                 }
+                val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
                 val sessionId by chatManager.sessionId.collectAsState()
@@ -100,10 +97,6 @@ class MainActivity : ComponentActivity() {
 
                 LaunchedEffect(Unit) {
                     runCatching {
-                        authManager.start()
-                        chatSyncManager.start()
-                        feedSyncManager.start()
-                        prefsSyncManager.start()
                         chatManager.initialize()
                         lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
                         prefs.setNotificationListenerEnabled(
@@ -124,14 +117,29 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                LaunchedEffect(firebaseSyncEnabled) {
+                    if (firebaseSyncEnabled) {
+                        runCatching {
+                            authManager.start()
+                            chatSyncManager.start()
+                            feedSyncManager.start()
+                            prefsSyncManager.start()
+                        }.onFailure { ex ->
+                            Log.e(TAG, "Firebase sync initialization failed", ex)
+                        }
+                    } else {
+                        authManager.stop()
+                    }
+                }
+
                 LaunchedEffect(sessionId) {
-                    if (sessionId.isNotBlank()) {
+                    if (sessionId.isNotBlank() && firebaseSyncEnabled) {
                         chatSyncManager.setActiveConversation(sessionId)
                     }
                 }
 
                 LaunchedEffect(sessionId, speechModeEnabled, agentToolsEnabled) {
-                    if (sessionId.isNotBlank()) {
+                    if (sessionId.isNotBlank() && firebaseSyncEnabled) {
                         chatSyncManager.updateConversationMetadata(
                             conversationId = sessionId,
                             speechModeEnabled = speechModeEnabled,
@@ -156,8 +164,6 @@ class MainActivity : ComponentActivity() {
                 JunctionApp(
                     chatManager = chatManager,
                     feedRepository = feedRepository,
-                    followRepository = followRepository,
-                    employmentRepository = employmentRepository,
                     prefs = prefs,
                     authManager = authManager,
                     updateState = updateState,
@@ -224,8 +230,6 @@ private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
 private fun JunctionApp(
     chatManager: ChatManager,
     feedRepository: FeedRepository,
-    followRepository: FollowRepository,
-    employmentRepository: EmploymentRepository,
     prefs: UserPrefsRepository,
     authManager: AuthManager,
     updateState: MutableStateFlow<UpdateInfo?>,
@@ -238,9 +242,7 @@ private fun JunctionApp(
     val feedItems by feedRepository.feedFlow.collectAsState(initial = emptyList())
 
     LaunchedEffect(chatToken) {
-        if (chatToken > 0) {
-            selectedTab = JunctionTab.CHAT
-        }
+        if (chatToken > 0) selectedTab = JunctionTab.CHAT
     }
 
     LaunchedEffect(voiceToken) {
@@ -297,14 +299,11 @@ private fun JunctionApp(
             )
             JunctionTab.CHAT -> ChatScreen(
                 chatManager = chatManager,
-                authManager = authManager,
                 modifier = Modifier.padding(padding)
             )
             JunctionTab.SETTINGS -> SettingsScreen(
                 userPrefs = prefs,
                 feedRepository = feedRepository,
-                followRepository = followRepository,
-                employmentRepository = employmentRepository,
                 authManager = authManager,
                 modifier = Modifier.padding(padding)
             )

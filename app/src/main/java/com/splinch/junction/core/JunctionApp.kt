@@ -5,7 +5,6 @@ import android.util.Log
 import com.splinch.junction.scheduler.NotificationHelper
 import com.splinch.junction.scheduler.Scheduler
 import com.splinch.junction.settings.UserPrefsRepository
-import com.splinch.junction.sync.firebase.FirebaseProvider
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,8 +22,6 @@ class JunctionApp : Application() {
         super.onCreate()
         runCatching { NotificationHelper.createChannels(this) }
             .onFailure { Log.e(TAG, "Failed to create notification channels", it) }
-        runCatching { FirebaseProvider.initialize(this) }
-            .onFailure { Log.e(TAG, "Failed to initialize Firebase", it) }
 
         val prefsRepository = UserPrefsRepository(this)
 

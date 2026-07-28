@@ -1,4 +1,4 @@
-﻿package com.splinch.junction.sync.firebase
+package com.splinch.junction.sync.firebase
 
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
@@ -91,8 +91,7 @@ private fun PrefsSnapshot.toFirestoreMap(): Map<String, Any?> {
         "lastUpdateCheckAt" to lastUpdateCheckAt,
         "realtimeClientSecretEndpoint" to realtimeClientSecretEndpoint,
         "chatModel" to chatModel,
-        "connectedIntegrations" to connectedIntegrations.toList(),
-        "mafiosoGameEnabled" to mafiosoGameEnabled
+        "connectedIntegrations" to connectedIntegrations.toList()
     )
 }
 
@@ -113,7 +112,6 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
     val chatModel = data["chatModel"] as? String ?: BuildConfig.JUNCTION_CHAT_MODEL
     val connectedIntegrations = (data["connectedIntegrations"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
         ?: emptySet()
-    val mafiosoGameEnabled = data["mafiosoGameEnabled"] as? Boolean ?: false
     return PrefsSnapshot(
         lastOpenedAt = lastOpenedAt,
         digestIntervalMinutes = digestInterval,
@@ -124,7 +122,6 @@ private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? 
         lastUpdateCheckAt = lastUpdateCheckAt,
         realtimeClientSecretEndpoint = realtimeClientSecretEndpoint,
         chatModel = chatModel,
-        connectedIntegrations = connectedIntegrations,
-        mafiosoGameEnabled = mafiosoGameEnabled
+        connectedIntegrations = connectedIntegrations
     )
 }

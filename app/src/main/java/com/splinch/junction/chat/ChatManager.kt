@@ -22,9 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import org.json.JSONObject
 
 class ChatManager(
@@ -107,17 +105,8 @@ class ChatManager(
 
         val realtimeConfigured = prefs.realtimeEndpointFlow.first().isNotBlank() ||
             prefs.realtimeClientSecretEndpointFlow.first().isNotBlank()
-        val backendEnabled = prefs.useHttpBackendFlow.first() &&
-            prefs.apiBaseUrlFlow.first().isNotBlank()
-        if (!realtimeConfigured && !backendEnabled) {
-            appendSystemMessage("No backend configured. Add a realtime endpoint or enable the HTTP backend.")
-            return
-        }
-        val user = authManager.currentUser()
-        val canUseRealtime = realtimeConfigured && user != null
-        val canUseBackend = backendEnabled
-        if (!canUseRealtime && !canUseBackend) {
-            appendSystemMessage("Sign in required to chat.")
+        if (!realtimeConfigured) {
+            appendSystemMessage("No backend configured.")
             return
         }
 
@@ -129,68 +118,15 @@ class ChatManager(
 
         val history = _messages.value
         val keepAlive = _speechModeEnabled.value && chatVisible
-        if (canUseRealtime) {
-            val connected = ensureConnected(keepAlive, history)
-            if (connected) realtime.setMicEnabled(_micEnabled.value)
-        }
+        val connected = ensureConnected(keepAlive, history)
+        if (connected) realtime.setMicEnabled(_micEnabled.value)
         if (realtime.isConnected()) {
             disconnectAfterResponse = !keepAlive
             realtime.sendUserText(processed.content)
             realtime.requestResponse()
             return
         }
-
-        val sent = if (canUseBackend) sendViaBackend(userMessage) else false
-        if (!sent) {
-            val message = if (!realtimeConfigured) {
-                "Realtime is not configured. Set a realtime endpoint or enable the HTTP backend."
-            } else {
-                "Realtime session unavailable."
-            }
-            appendSystemMessage(message)
-        }
-    }
-
-    private suspend fun sendViaBackend(userMessage: ChatMessage): Boolean {
-        val useBackend = prefs.useHttpBackendFlow.first()
-        val baseUrl = prefs.apiBaseUrlFlow.first()
-        if (!useBackend || baseUrl.isBlank()) return false
-        val chatKey = prefs.chatApiKeyFlow.first()
-        val model = prefs.chatModelFlow.first()
-        val token = authManager.currentUser()
-            ?.getIdToken(true)
-            ?.await()
-            ?.token
-        val backend = HttpBackend(
-            baseUrl = baseUrl,
-            authTokenProvider = { token },
-            chatKeyProvider = { chatKey },
-            modelProvider = { model }
-        )
-        val history = buildBackendHistory(userMessage)
-        val sessionSnapshot = session.copy(messages = history)
-        return try {
-            val response = backend.generateResponse(sessionSnapshot, userMessage)
-            store.appendMessage(session.sessionId, response)
-            true
-        } catch (ex: Exception) {
-            val message = ex.message ?: "Backend request failed"
-            if (token.isNullOrBlank() && message.contains("401")) {
-                appendSystemMessage("Sign in required to use the HTTP backend.")
-            } else {
-                appendSystemMessage(message)
-            }
-            false
-        }
-    }
-
-    private fun buildBackendHistory(userMessage: ChatMessage): List<ChatMessage> {
-        val current = _messages.value
-        return if (current.lastOrNull()?.id == userMessage.id) {
-            current
-        } else {
-            current + userMessage
-        }
+        appendSystemMessage("Realtime session unavailable.")
     }
 
     suspend fun clearSession() {
@@ -232,7 +168,15 @@ class ChatManager(
 
     fun setMicEnabled(enabled: Boolean) {
         _micEnabled.value = enabled
-        realtime.setMicEnabled(enabled)
+        if (enabled && _speechModeEnabled.value && chatVisible && !realtime.isConnected()) {
+            val history = _messages.value
+            scope.launch {
+                val connected = ensureConnected(keepAlive = true, history = history)
+                if (connected) realtime.setMicEnabled(true)
+            }
+        } else {
+            realtime.setMicEnabled(enabled)
+        }
     }
 
     suspend fun stopResponse() {
@@ -354,7 +298,7 @@ class ChatManager(
             is CommandResult.Stats -> appendSystemMessage(buildStatsText())
             is CommandResult.Export -> appendSystemMessage(exportConversation(command.format))
             is CommandResult.MemorySearch -> appendSystemMessage("Memory search is not enabled yet")
-            is CommandResult.Who -> appendSystemMessage("Participants: You, JunctionGPT")
+            is CommandResult.Who -> appendSystemMessage("Participants: You, Junction")
             is CommandResult.Set -> appendSystemMessage("Setting '${command.option}' is not supported yet")
             is CommandResult.Error -> appendSystemMessage(command.message)
         }
@@ -513,32 +457,6 @@ class ChatManager(
                     }
                 )
             }
-            "use_http_backend" -> {
-                val previous = prefs.useHttpBackendFlow.first()
-                val enabled = value.toString().toBooleanStrictOrNull() ?: previous
-                prefs.setUseHttpBackend(enabled)
-                ToolApplyResult(
-                    confirmation = "HTTP backend ${if (enabled) "enabled" else "disabled"}.",
-                    toolOutput = successOutput(key, enabled.toString()),
-                    undo = UndoAction("Undo HTTP backend") {
-                        prefs.setUseHttpBackend(previous)
-                        "Reverted HTTP backend setting."
-                    }
-                )
-            }
-            "api_base_url" -> {
-                val previous = prefs.apiBaseUrlFlow.first()
-                val url = value?.toString()?.trim().orEmpty()
-                prefs.setApiBaseUrl(url)
-                ToolApplyResult(
-                    confirmation = "API base URL updated.",
-                    toolOutput = successOutput(key, url),
-                    undo = UndoAction("Undo API URL") {
-                        prefs.setApiBaseUrl(previous)
-                        "Reverted API base URL."
-                    }
-                )
-            }
             "realtime_endpoint" -> {
                 val previous = prefs.realtimeEndpointFlow.first()
                 val url = value?.toString()?.trim().orEmpty()
@@ -562,7 +480,7 @@ class ChatManager(
         return when (name) {
             "set_speech_mode" -> "Set speech mode to ${args.optBoolean("enabled", false)}"
             "set_feed_filter" -> "Set feed filter ${args.optString("packageName")} = ${args.optBoolean("enabled", true)}"
-            "archive_feed_item" -> "Archive feed item ${args.optString("id")}" 
+            "archive_feed_item" -> "Archive feed item ${args.optString("id")}"
             "check_for_updates" -> "Check for updates"
             "set_setting" -> "Set ${args.optString("key")}"
             else -> name

@@ -35,10 +35,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".ui.MafiosoGameActivity"
-            android:exported="false" />
-
         <service
             android:name=".notifications.JunctionNotificationListenerService"
             android:label="Junction Notification Listener"
