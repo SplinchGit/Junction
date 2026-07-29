@@ -53,8 +53,8 @@ class ModelCatalogTest {
 
     @Test
     fun `estimateCostUsd matches a known model and falls back for unknown ones`() {
-        val known = ModelCatalog.estimateCostUsd("claude-haiku-4-5-20251001", 1_000_000, 1_000_000)
-        assertEquals(0.80 + 4.0, known!!, 0.0001)
+        val known = ModelCatalog.estimateCostUsd("claude-haiku-4-5", 1_000_000, 1_000_000)
+        assertEquals(1.0 + 5.0, known!!, 0.0001)
 
         val unknown = ModelCatalog.estimateCostUsd("some-model-nobody-heard-of", 1_000_000, 1_000_000)
         assertEquals(1.0 + 3.0, unknown!!, 0.0001)
@@ -64,8 +64,8 @@ class ModelCatalogTest {
 
     @Test
     fun `findModelByReportedName matches by substring`() {
-        val match = ModelCatalog.findModelByReportedName("claude-haiku-4-5-20251001-extra-suffix")
-        assertEquals("claude-haiku-4-5-20251001", match?.id)
+        val match = ModelCatalog.findModelByReportedName("claude-haiku-4-5-extra-suffix")
+        assertEquals("claude-haiku-4-5", match?.id)
         assertNull(ModelCatalog.findModelByReportedName(null))
         assertNull(ModelCatalog.findModelByReportedName(""))
     }

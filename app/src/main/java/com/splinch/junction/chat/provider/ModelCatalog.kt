@@ -14,7 +14,15 @@ data class ModelEntry(
     val blurb: String,
     val inputPerMillionUsd: Double,
     val outputPerMillionUsd: Double,
-    val supportsVision: Boolean = false
+    val supportsVision: Boolean = false,
+    /**
+     * True for Anthropic models on the adaptive-thinking API surface (Claude 4.6
+     * and later). Those models think by default and count thinking against
+     * max_tokens, so requests need extra output headroom; older ones reject the
+     * `thinking: {type: "adaptive"}` / `output_config.effort` fields outright,
+     * which is why this can't just be assumed.
+     */
+    val supportsAdaptiveThinking: Boolean = false
 )
 
 data class ProviderDefinition(
@@ -38,11 +46,11 @@ object ModelCatalog {
             recommendationDetail = "Best balance of quality and cost for everyday use.",
             apiKeyUrl = "https://console.anthropic.com/settings/keys",
             baseUrl = "https://api.anthropic.com/v1",
-            defaultModelId = "claude-haiku-4-5-20251001",
+            defaultModelId = "claude-sonnet-5",
             models = listOf(
-                ModelEntry("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive — great default for everyday chat.", 0.80, 4.0, supportsVision = true),
-                ModelEntry("claude-sonnet-4-6", "Claude Sonnet 4.6", "$$ Balanced", "Strong reasoning at a moderate cost — good frontier escalation target.", 3.0, 15.0, supportsVision = true),
-                ModelEntry("claude-opus-4-6", "Claude Opus 4.6", "$$$ Most capable", "Anthropic's most capable model, for the hardest tasks.", 15.0, 75.0, supportsVision = true)
+                ModelEntry("claude-haiku-4-5", "Claude Haiku 4.5", "$ Cheap", "Fastest and cheapest Claude — good for quick voice replies.", 1.0, 5.0, supportsVision = true),
+                ModelEntry("claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Near-flagship quality at Sonnet cost — the best everyday default.", 3.0, 15.0, supportsVision = true, supportsAdaptiveThinking = true),
+                ModelEntry("claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — deep reasoning and long agentic work.", 5.0, 25.0, supportsVision = true, supportsAdaptiveThinking = true)
             )
         ),
         ProviderDefinition(
@@ -128,12 +136,19 @@ object ModelCatalog {
             id = "openrouter",
             displayName = "OpenRouter",
             recommendationTag = "Most choice",
-            recommendationDetail = "One key, dozens of underlying models routed automatically.",
+            recommendationDetail = "One key, many underlying models — including Claude, without a separate Anthropic account.",
             apiKeyUrl = "https://openrouter.ai/keys",
             baseUrl = "https://openrouter.ai/api/v1",
             defaultModelId = "openrouter/auto",
+            // Prices are OpenRouter's published per-million rates (verified against
+            // its /v1/models endpoint), so the spend estimate stays honest whichever
+            // underlying model the owner picks.
             models = listOf(
-                ModelEntry("openrouter/auto", "Auto (best match)", "$$ Varies", "Lets OpenRouter pick the best available model for your prompt.", 1.0, 3.0, supportsVision = true)
+                ModelEntry("openrouter/auto", "Auto (best match)", "$$ Varies", "Lets OpenRouter pick the best available model for your prompt.", 1.0, 3.0, supportsVision = true),
+                ModelEntry("anthropic/claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Strong all-rounder — the best balance of quality and cost for everyday use.", 2.0, 10.0, supportsVision = true),
+                ModelEntry("anthropic/claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — best for hard reasoning and long agentic tasks.", 5.0, 25.0, supportsVision = true),
+                ModelEntry("anthropic/claude-haiku-4.5", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive Claude — good for quick voice replies.", 1.0, 5.0, supportsVision = true),
+                ModelEntry("openai/gpt-5.6-terra", "GPT-5.6 Terra", "$$ Balanced", "OpenAI's current flagship, via your OpenRouter key — no separate OpenAI billing.", 1.25, 7.50, supportsVision = true)
             )
         ),
         ProviderDefinition(
