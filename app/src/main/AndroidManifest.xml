@@ -65,6 +65,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Fires a source app's captured PendingIntent on tap; see NotificationTapReceiver. -->
+        <receiver
+            android:name=".notifications.NotificationTapReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.splinch.junction.action.OPEN_NOTIFICATION_SOURCE" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".notifications.JunctionNotificationListenerService"
             android:label="Junction Notification Listener"

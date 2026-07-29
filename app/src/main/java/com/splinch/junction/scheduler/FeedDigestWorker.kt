@@ -43,6 +43,14 @@ class FeedDigestWorker(
                 val withinCooldown = now - lastDigestAt < DIGEST_COOLDOWN_MS
                 if (hasNewItems && !(unchanged && withinCooldown)) {
                     NotificationHelper.showDigest(applicationContext, summary)
+                    // Per-item notifications ride under the digest as a group, so
+                    // each one can tap straight through to the app that raised it.
+                    // Newest first, since that's what the owner is most likely to
+                    // still care about opening.
+                    NotificationHelper.showFeedItems(
+                        applicationContext,
+                        items.filter { it.status == FeedStatus.NEW }.sortedByDescending { it.timestamp }
+                    )
                     prefs.updateDigest(summary, now)
                 }
             } else {

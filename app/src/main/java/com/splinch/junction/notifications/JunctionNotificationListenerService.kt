@@ -201,12 +201,19 @@ class JunctionNotificationListenerService : NotificationListenerService() {
         private val recentKeys = LinkedHashMap<String, Long>()
         private val systemLock = Any()
         private const val DEDUP_WINDOW_MS = 8_000L
-        private const val SYSTEM_MIN_INTERVAL_MS = 30 * 60 * 1000L
         private const val SYSTEM_GENERIC_COOLDOWN_MS = 2 * 60 * 60 * 1000L
-        private val batteryThresholds = listOf(15, 30, 50, 80, 100)
-        private val batteryPercentRegex = Regex("(\\d{1,3})%")
-        private var lastSystemBatteryPercent: Int? = null
-        private var lastSystemCharging: Boolean? = null
+
+        /** Substrings that mark a system notification as pure power/charge noise. */
+        private val BATTERY_NOISE = listOf(
+            "battery",
+            "charging",
+            "charged",
+            "until full",
+            "power saving",
+            "battery saver",
+            "plugged in"
+        )
+        private val batteryPercentRegex = Regex("\\d{1,3}%")
         private var lastSystemNotifyAt: Long = 0L
 
         private val messagingApps = setOf(
@@ -279,50 +286,25 @@ class JunctionNotificationListenerService : NotificationListenerService() {
 
         private fun shouldKeepSystemNotification(title: String, body: String?, now: Long): Boolean {
             val combined = listOfNotNull(title, body).joinToString(" ").lowercase()
-            val percent = batteryPercentRegex.find(combined)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toIntOrNull()
-                ?.coerceIn(0, 100)
-            val charging = combined.contains("charging") || combined.contains("charged")
-            val batteryRelated = combined.contains("battery") || percent != null || charging
+
+            // Battery and charging updates are dropped outright rather than
+            // throttled. They carry no information the owner can act on -- the
+            // OS already shows charge state in the status bar -- so previously
+            // letting a threshold-crossing trickle through just meant the digest
+            // periodically filled up with "33% (5 h 26 m until full)".
+            if (BATTERY_NOISE.any { combined.contains(it) } ||
+                batteryPercentRegex.containsMatchIn(combined)
+            ) {
+                return false
+            }
 
             synchronized(systemLock) {
-                if (batteryRelated) {
-                    val lastPercent = lastSystemBatteryPercent
-                    val lastCharging = lastSystemCharging
-                    val crossed = percent != null &&
-                        lastPercent != null &&
-                        crossedThreshold(lastPercent, percent)
-                    val stateChanged = lastCharging != null && charging != lastCharging
-                    val bigMove = percent != null &&
-                        lastPercent != null &&
-                        kotlin.math.abs(percent - lastPercent) >= 10
-                    val timePassed = now - lastSystemNotifyAt >= SYSTEM_MIN_INTERVAL_MS
-                    val shouldKeep = lastSystemNotifyAt == 0L || crossed || stateChanged || bigMove || timePassed
-                    if (shouldKeep) {
-                        if (percent != null) {
-                            lastSystemBatteryPercent = percent
-                        }
-                        lastSystemCharging = charging
-                        lastSystemNotifyAt = now
-                    }
-                    return shouldKeep
-                }
-
                 val timePassed = now - lastSystemNotifyAt >= SYSTEM_GENERIC_COOLDOWN_MS
                 if (timePassed) {
                     lastSystemNotifyAt = now
                 }
                 return timePassed
             }
-        }
-
-        private fun crossedThreshold(previous: Int, current: Int): Boolean {
-            if (previous == current) return false
-            val low = kotlin.math.min(previous, current) + 1
-            val high = kotlin.math.max(previous, current)
-            return batteryThresholds.any { it in low..high }
         }
     }
 }
