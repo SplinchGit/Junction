@@ -35,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -62,6 +61,7 @@ import com.splinch.junction.chat.Step
 import com.splinch.junction.chat.StepStatus
 import com.splinch.junction.chat.realtime.RealtimeConnectionState
 import com.splinch.junction.chat.tools.RiskTier
+import com.splinch.junction.ui.components.JunctionTextField
 import java.time.Instant
 import kotlinx.coroutines.launch
 
@@ -333,14 +333,15 @@ fun ChatInputRow(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Bottom
     ) {
-        OutlinedTextField(
+        JunctionTextField(
             value = text,
             onValueChange = onTextChange,
             modifier = Modifier
                 .weight(1f)
                 .heightIn(min = 56.dp, max = 160.dp),
-            maxLines = 6,
-            singleLine = false
+            placeholder = "Message Junction…",
+            singleLine = false,
+            maxLines = 6
         )
 
         Spacer(Modifier.width(8.dp))

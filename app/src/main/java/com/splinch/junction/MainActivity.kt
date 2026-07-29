@@ -9,7 +9,16 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.filled.DynamicFeed
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -24,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
@@ -38,7 +48,9 @@ import com.splinch.junction.chat.provider.ProviderRegistry
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
+import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.UserPrefsRepository
+import com.splinch.junction.settings.resolveOnboardingCompleted
 import com.splinch.junction.sync.firebase.AuditSyncManager
 import com.splinch.junction.sync.firebase.AuthManager
 import com.splinch.junction.sync.firebase.ChatSyncManager
@@ -47,6 +59,7 @@ import com.splinch.junction.sync.firebase.PrefsSyncManager
 import com.splinch.junction.ui.ChatScreen
 import com.splinch.junction.ui.FeedScreen
 import com.splinch.junction.ui.AuditScreen
+import com.splinch.junction.ui.OnboardingScreen
 import com.splinch.junction.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
 import com.splinch.junction.update.UpdateChecker
@@ -257,6 +270,7 @@ private fun JunctionApp(
     memoryFactDao: com.splinch.junction.data.MemoryFactDao
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(JunctionTab.FEED) }
     val feedItems by feedRepository.feedFlow.collectAsState(initial = emptyList())
 
@@ -272,31 +286,52 @@ private fun JunctionApp(
         }
     }
 
+    val keyStorage = remember { KeyStorage(context) }
+    var migrationChecked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        resolveOnboardingCompleted(prefs, keyStorage)
+        migrationChecked = true
+    }
+
+    if (!migrationChecked) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    val onboardingCompleted by prefs.onboardingCompletedFlow.collectAsState(initial = true)
+    if (!onboardingCompleted) {
+        OnboardingScreen(userPrefs = prefs, onFinished = {})
+        return
+    }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.FEED,
                     onClick = { selectedTab = JunctionTab.FEED },
-                    icon = { Text("Feed") },
+                    icon = { Icon(Icons.Default.DynamicFeed, contentDescription = null) },
                     label = { Text("Feed") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.CHAT,
                     onClick = { selectedTab = JunctionTab.CHAT },
-                    icon = { Text("Chat") },
+                    icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
                     label = { Text("Chat") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.AUDIT,
                     onClick = { selectedTab = JunctionTab.AUDIT },
-                    icon = { Text("Audit") },
+                    icon = { Icon(Icons.AutoMirrored.Filled.FactCheck, contentDescription = null) },
                     label = { Text("Audit") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.SETTINGS,
                     onClick = { selectedTab = JunctionTab.SETTINGS },
-                    icon = { Text("Settings") },
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                     label = { Text("Settings") }
                 )
             }

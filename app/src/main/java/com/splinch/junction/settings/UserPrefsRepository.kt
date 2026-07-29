@@ -51,6 +51,7 @@ class UserPrefsRepository(private val context: Context) {
     private val allowedWebDomainsKey = stringSetPreferencesKey("allowed_web_domains")
     private val alwaysAllowedToolsKey = stringSetPreferencesKey("always_allowed_tools")
     private val voiceBackendKey = stringPreferencesKey("voice_backend")
+    private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
 
     val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[firebaseSyncEnabledKey] ?: false
@@ -59,6 +60,11 @@ class UserPrefsRepository(private val context: Context) {
     /** Explicit owner opt-in before Junction can request or use Shizuku permission. */
     val shizukuEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[shizukuEnabledKey] ?: false
+    }
+
+    /** Whether the first-run provider setup wizard has been completed (or skipped). */
+    val onboardingCompletedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[onboardingCompletedKey] ?: false
     }
 
     /** Provider config (without API key — that lives in KeyStorage). */
@@ -285,6 +291,10 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setShizukuEnabled(enabled: Boolean) {
         context.dataStore.edit { it[shizukuEnabledKey] = enabled }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.dataStore.edit { it[onboardingCompletedKey] = completed }
     }
 
     suspend fun setProviderConfig(config: ProviderConfig) {

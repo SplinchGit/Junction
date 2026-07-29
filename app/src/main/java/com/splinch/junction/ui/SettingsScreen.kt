@@ -17,7 +17,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,8 +36,6 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.splinch.junction.BuildConfig
@@ -53,6 +50,7 @@ import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
+import com.splinch.junction.ui.components.JunctionTextField
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -103,7 +101,6 @@ fun SettingsScreen(
     var providerWorkhorseInput by remember { mutableStateOf(providerConfig.workhorseModel) }
     var providerFrontierInput by remember { mutableStateOf(providerConfig.frontierModel) }
     var providerBaseUrlInput by remember { mutableStateOf(providerConfig.baseUrl) }
-    var providerKeyVisible by remember { mutableStateOf(false) }
     var providerTestStatus by remember { mutableStateOf("") }
     var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
 
@@ -212,50 +209,46 @@ fun SettingsScreen(
         item {
             Text(text = "AI Provider", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Connect an AI provider to use chat without a server.",
+                text = "Connect an AI provider to use chat without a server. " +
+                    "You can change AI providers at any time here!",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            OutlinedTextField(
+            OutlinedButton(onClick = {
+                scope.launch { userPrefs.setOnboardingCompleted(false) }
+            }) {
+                Text("Run setup wizard")
+            }
+            JunctionTextField(
                 value = providerIdInput,
                 onValueChange = { providerIdInput = it },
-                label = { Text("Provider") },
-                placeholder = { Text("anthropic / openai / deepseek / custom") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Provider",
+                placeholder = "anthropic / openai / deepseek / custom"
             )
-            OutlinedTextField(
+            JunctionTextField(
                 value = providerApiKeyInput,
                 onValueChange = { providerApiKeyInput = it },
-                label = { Text("API key") },
-                visualTransformation = if (providerKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    TextButton(onClick = { providerKeyVisible = !providerKeyVisible }) {
-                        Text(if (providerKeyVisible) "Hide" else "Show")
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
+                label = "API key",
+                isPassword = true
             )
-            OutlinedTextField(
+            JunctionTextField(
                 value = providerWorkhorseInput,
                 onValueChange = { providerWorkhorseInput = it },
-                label = { Text("Workhorse model") },
-                placeholder = { Text("e.g. claude-haiku-4-5-20251001") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Workhorse model",
+                placeholder = "e.g. claude-haiku-4-5-20251001"
             )
-            OutlinedTextField(
+            JunctionTextField(
                 value = providerFrontierInput,
                 onValueChange = { providerFrontierInput = it },
-                label = { Text("Frontier model (optional)") },
-                placeholder = { Text("e.g. claude-sonnet-4-6") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Frontier model (optional)",
+                placeholder = "e.g. claude-sonnet-4-6"
             )
             if (providerIdInput == "custom") {
-                OutlinedTextField(
+                JunctionTextField(
                     value = providerBaseUrlInput,
                     onValueChange = { providerBaseUrlInput = it },
-                    label = { Text("Base URL") },
-                    placeholder = { Text("https://api.example.com/v1") },
-                    modifier = Modifier.fillMaxWidth()
+                    label = "Base URL",
+                    placeholder = "https://api.example.com/v1"
                 )
             }
             Row(
@@ -343,24 +336,22 @@ fun SettingsScreen(
 
         item {
             Text(text = "Realtime", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
+            JunctionTextField(
                 value = realtimeEndpointInput,
                 onValueChange = { realtimeEndpointInput = it },
-                label = { Text("Realtime SDP endpoint") },
-                placeholder = { Text("https://<region>-<project>.cloudfunctions.net/realtimeSdpExchange") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Realtime SDP endpoint",
+                placeholder = "https://<region>-<project>.cloudfunctions.net/realtimeSdpExchange"
             )
             Button(onClick = {
                 scope.launch { userPrefs.setRealtimeEndpoint(realtimeEndpointInput.trim()) }
             }) {
                 Text("Save realtime endpoint")
             }
-            OutlinedTextField(
+            JunctionTextField(
                 value = realtimeClientSecretInput,
                 onValueChange = { realtimeClientSecretInput = it },
-                label = { Text("Realtime client secret endpoint") },
-                placeholder = { Text("https://<region>-<project>.cloudfunctions.net/realtimeClientSecret") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Realtime client secret endpoint",
+                placeholder = "https://<region>-<project>.cloudfunctions.net/realtimeClientSecret"
             )
             Button(onClick = {
                 scope.launch { userPrefs.setRealtimeClientSecretEndpoint(realtimeClientSecretInput.trim()) }
@@ -376,12 +367,11 @@ fun SettingsScreen(
                     "You'll be prompted to grant access the first time it's used.",
                 style = MaterialTheme.typography.bodySmall
             )
-            OutlinedTextField(
+            JunctionTextField(
                 value = gmailAccountEmailInput,
                 onValueChange = { gmailAccountEmailInput = it },
-                label = { Text("Gmail account email") },
-                placeholder = { Text("you@gmail.com") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Gmail account email",
+                placeholder = "you@gmail.com"
             )
             Button(onClick = {
                 scope.launch { userPrefs.setGmailAccountEmail(gmailAccountEmailInput.trim()) }
@@ -397,13 +387,13 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            OutlinedTextField(
+            JunctionTextField(
                 value = allowedWebDomainsInput,
                 onValueChange = { allowedWebDomainsInput = it },
-                label = { Text("Allowed domains") },
-                placeholder = { Text("calendar.google.com\napp.slack.com") },
-                minLines = 3,
-                modifier = Modifier.fillMaxWidth()
+                label = "Allowed domains",
+                placeholder = "calendar.google.com\napp.slack.com",
+                singleLine = false,
+                minLines = 3
             )
             Button(onClick = {
                 scope.launch {
@@ -585,16 +575,16 @@ fun SettingsScreen(
             }
             if (digestQuietHours.enabled) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    JunctionTextField(
                         value = quietStartInput,
                         onValueChange = { quietStartInput = it },
-                        label = { Text("Quiet from (0-23)") },
+                        label = "Quiet from (0-23)",
                         modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
+                    JunctionTextField(
                         value = quietEndInput,
                         onValueChange = { quietEndInput = it },
-                        label = { Text("Quiet until (0-23)") },
+                        label = "Quiet until (0-23)",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -610,11 +600,11 @@ fun SettingsScreen(
                     Text("Apply quiet hours")
                 }
             }
-            OutlinedTextField(
+            JunctionTextField(
                 value = intervalInput,
                 onValueChange = { intervalInput = it },
-                label = { Text("Digest interval (minutes)") },
-                modifier = Modifier.fillMaxWidth()
+                label = "Digest interval (minutes)",
+                placeholder = "e.g. 30"
             )
             Button(onClick = {
                 val parsed = intervalInput.toIntOrNull() ?: 30
