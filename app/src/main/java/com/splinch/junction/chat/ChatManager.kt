@@ -356,7 +356,7 @@ class ChatManager(
                                 accumulatedText += event.delta
                             }
                             is LlmEvent.TextDone -> {
-                                val final = event.text.ifBlank { accumulatedText }
+                                val final = stripLeakedEnvelope(event.text.ifBlank { accumulatedText })
                                 if (final.isNotBlank()) {
                                     appendMessage(
                                         ChatMessage(
@@ -677,6 +677,23 @@ class ChatManager(
             .replace(CONTEXT_CLOSE, "<escaped:END_JUNCTION_CONTEXT_V1>")
     }
 
+    /**
+     * Defensive strip for the rare case the model echoes the internal context
+     * envelope format (built by renderContextEnvelope, seen for every prior
+     * turn in its own context) into its own reply instead of just answering
+     * in plain text -- observed in the wild, never something a user should see.
+     */
+    private fun stripLeakedEnvelope(text: String): String {
+        val trimmed = text.trim()
+        if (!trimmed.startsWith(CONTEXT_OPEN)) return text
+        val contentMarker = "content:\n"
+        val contentStart = trimmed.indexOf(contentMarker)
+        if (contentStart == -1) return text
+        val afterContent = trimmed.substring(contentStart + contentMarker.length)
+        val closeIndex = afterContent.indexOf(CONTEXT_CLOSE)
+        return (if (closeIndex == -1) afterContent else afterContent.substring(0, closeIndex)).trim()
+    }
+
     private suspend fun appendMessage(message: ChatMessage) {
         store.appendMessage(session.sessionId, message)
         trustGate.recordContextBlock(message.provenance, message.sourceRef ?: "chat_message:${message.id}")
@@ -857,7 +874,9 @@ class ChatManager(
     }
 
     override fun onTextDone(itemId: String, text: String) {
-        val content = if (text.isNotBlank()) text else _streamingAssistant.value?.content.orEmpty()
+        val content = stripLeakedEnvelope(
+            if (text.isNotBlank()) text else _streamingAssistant.value?.content.orEmpty()
+        )
         if (content.isNotBlank()) {
             scope.launch {
                 appendMessage(

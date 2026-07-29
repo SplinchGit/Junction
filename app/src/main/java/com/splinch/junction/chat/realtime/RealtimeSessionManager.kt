@@ -534,10 +534,12 @@ class RealtimeSessionManager(
             localAudioSource = peerConnectionFactory?.createAudioSource(MediaConstraints())
             localAudioTrack = peerConnectionFactory?.createAudioTrack("JUNCTION_AUDIO", localAudioSource)
             localAudioTrack?.setEnabled(false)
-            val stream = peerConnectionFactory?.createLocalMediaStream("JUNCTION_STREAM")
-            if (stream != null && localAudioTrack != null) {
-                stream.addTrack(localAudioTrack)
-                peerConnection?.addStream(stream)
+            // PeerConnection defaults to Unified Plan SdpSemantics, which does not support the
+            // legacy addStream(MediaStream) API (RTC_CHECK failure: "AddStream is not available
+            // with Unified Plan SdpSemantics" -- a native, fatal crash, not a catchable exception).
+            // addTrack(track, streamIds) is the Unified Plan equivalent.
+            localAudioTrack?.let { track ->
+                peerConnection?.addTrack(track, listOf("JUNCTION_STREAM"))
             }
         }
 

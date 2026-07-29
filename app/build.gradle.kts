@@ -246,7 +246,12 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
-    implementation("com.infobip:google-webrtc:1.0.45036")
+    // WebRTC for Realtime voice (chat/realtime/RealtimeSessionManager.kt). Google doesn't
+    // publish an official Android WebRTC AAR, so this uses GetStream's actively-maintained
+    // repackaging -- the com.infobip:google-webrtc build previously used here was missing
+    // the org.webrtc.Environment class (an incomplete BUILD.gn target on their end), which
+    // crashed PeerConnectionFactory.initialize() with NoClassDefFoundError on every attempt.
+    implementation("io.getstream:stream-webrtc-android:1.3.9")
     implementation("androidx.security:security-crypto:1.1.0-alpha07")
     implementation("dev.rikka.shizuku:api:13.1.5")
 
