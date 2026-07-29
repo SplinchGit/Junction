@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -25,6 +26,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -32,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
@@ -44,11 +48,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -82,6 +86,7 @@ import com.splinch.junction.chat.provider.ProviderDefinition
 import com.splinch.junction.chat.tools.RiskTier
 import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.ProviderConfig
+import com.splinch.junction.ui.components.BluetoothThrower
 import com.splinch.junction.ui.components.JunctionTextField
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
@@ -149,45 +154,43 @@ fun ChatScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "JunctionGPT",
-                style = MaterialTheme.typography.titleLarge
+                text = "Chat",
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
                 ProviderSwitcher(
                     providerConfig = providerConfig,
                     onSwitch = { id, modelId -> scope.launch { chatManager.switchProvider(id, modelId) } }
                 )
+                BluetoothThrower()
                 ConnectionPill(state = connectionState)
             }
         }
 
+        // Single compact toolbar replaces four stacked toggle rows -- keeps the
+        // message list from being squeezed to nothing when the keyboard opens.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Column {
-                Text(text = "Speech mode", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = if (speechModeEnabled) "Continuous voice" else "Text only",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = speechModeEnabled,
-                onCheckedChange = { enabled ->
-                    if (enabled) {
+            FilterChip(
+                selected = speechModeEnabled,
+                onClick = {
+                    if (!speechModeEnabled) {
                         val granted = ContextCompat.checkSelfPermission(
                             context,
                             Manifest.permission.RECORD_AUDIO
@@ -201,43 +204,26 @@ fun ChatScreen(
                     } else {
                         scope.launch { chatManager.setSpeechMode(false) }
                     }
+                },
+                label = { Text("Voice") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (speechModeEnabled) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             )
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(text = "Agent tools", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    text = if (agentToolsEnabled) "Actions with confirmation" else "Tools disabled",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = agentToolsEnabled,
-                onCheckedChange = { enabled ->
-                    scope.launch { chatManager.setAgentToolsEnabled(enabled) }
-                }
+            FilterChip(
+                selected = agentToolsEnabled,
+                onClick = { scope.launch { chatManager.setAgentToolsEnabled(!agentToolsEnabled) } },
+                label = { Text("Tools") },
+                leadingIcon = { Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(18.dp)) }
             )
-        }
-
-        if (speechModeEnabled) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = {
+            if (speechModeEnabled) {
+                FilterChip(
+                    selected = micEnabled,
+                    onClick = {
                         val granted = ContextCompat.checkSelfPermission(
                             context,
                             Manifest.permission.RECORD_AUDIO
@@ -249,25 +235,23 @@ fun ChatScreen(
                         } else {
                             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                    }) {
+                    },
+                    label = { Text(if (micEnabled) "Mic on" else "Mic muted") },
+                    leadingIcon = {
                         Icon(
                             imageVector = if (micEnabled) Icons.Default.Mic else Icons.Default.MicOff,
-                            contentDescription = if (micEnabled) "Mute mic" else "Unmute mic"
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
-                    Text(
-                        text = if (micEnabled) "Mic on" else "Mic muted",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    IconButton(onClick = { scope.launch { chatManager.stopResponse() } }) {
-                        Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
-                    }
-                    IconButton(onClick = { scope.launch { chatManager.regenerateResponse() } }) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Regenerate")
-                    }
-                }
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { scope.launch { chatManager.stopResponse() } }, modifier = Modifier.size(36.dp)) {
+                Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
+            }
+            IconButton(onClick = { scope.launch { chatManager.regenerateResponse() } }, modifier = Modifier.size(36.dp)) {
+                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Regenerate")
             }
         }
 
@@ -344,26 +328,6 @@ fun ChatScreen(
                 modifier = Modifier.padding(top = 6.dp)
             ) {
                 Text(lastUndo?.label ?: "Undo")
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = { scope.launch { chatManager.stopResponse() } },
-                enabled = true
-            ) {
-                Text("Stop")
-            }
-            OutlinedButton(
-                onClick = { scope.launch { chatManager.regenerateResponse() } },
-                enabled = true
-            ) {
-                Text("Regenerate")
             }
         }
 
@@ -555,18 +519,28 @@ private fun ProviderSwitcher(
     }
 
     val currentProvider = ModelCatalog.providerById(providerConfig.providerId)
-    val currentModel = currentProvider?.models?.find { it.id == providerConfig.modelId }
-        ?: currentProvider?.models?.find { it.id == currentProvider.defaultModelId }
-    val currentLabel = when {
-        currentProvider != null && currentModel != null -> "${currentProvider.displayName} — ${currentModel.displayName}"
-        currentProvider != null -> currentProvider.displayName
-        else -> providerConfig.providerId.ifBlank { "Choose AI" }
-    }
+    // Header pill stays short (provider name only) so it never crowds out the
+    // screen title; the full "Provider — Model" detail still appears in the
+    // dropdown below and in the switch-confirmation chat message.
+    val currentLabel = currentProvider?.displayName ?: providerConfig.providerId.ifBlank { "Choose AI" }
 
     Box(modifier = modifier) {
-        OutlinedButton(onClick = { expanded = true }) {
-            Text(currentLabel, style = MaterialTheme.typography.labelLarge)
-            Icon(Icons.Default.ArrowDropDown, contentDescription = "Switch AI provider")
+        OutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = currentLabel,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 96.dp)
+            )
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = "Switch AI provider",
+                modifier = Modifier.size(18.dp)
+            )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             if (configuredProviders.isEmpty()) {

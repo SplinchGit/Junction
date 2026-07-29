@@ -74,7 +74,9 @@ function buildSessionConfig() {
   // intentional, matching server/index.js's equivalent function.
   return {
     type: "realtime",
-    model: process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
+    // gpt-4o-realtime-preview was retired (404 model_not_found); the current
+    // realtime model is gpt-realtime-1.5. Override via OPENAI_REALTIME_MODEL.
+    model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-1.5",
     modalities: ["text", "audio"],
     voice: "alloy",
     turn_detection: {
@@ -85,6 +87,19 @@ function buildSessionConfig() {
     tool_choice: "none",
     tools: []
   };
+}
+
+/**
+ * Reads a plain-text request body. On 2nd-gen (Cloud Run) firebase-functions
+ * pre-parses the body before Express runs, so a non-JSON content type like
+ * application/sdp arrives as a Buffer and express.text() skips it -- meaning a
+ * plain `typeof req.body === "string"` check silently drops a valid offer.
+ */
+function readTextBody(req) {
+  const body = req.body;
+  if (typeof body === "string") return body.trim();
+  if (Buffer.isBuffer(body)) return body.toString("utf8").trim();
+  return "";
 }
 
 async function verifyAuth(req, res, next) {
@@ -115,50 +130,74 @@ app.post("/", verifyAuth, async (req, res) => {
     return;
   }
 
-  const offerSdp = typeof req.body === "string" ? req.body.trim() : "";
+  const offerSdp = readTextBody(req);
   if (!offerSdp) {
+    console.error("Missing SDP offer", {
+      bodyType: typeof req.body,
+      isBuffer: Buffer.isBuffer(req.body),
+      contentType: req.get("Content-Type") || ""
+    });
     res.status(400).json({ error: "Missing SDP offer" });
     return;
   }
 
-  const payload = {
-    sdp: offerSdp,
-    session: buildSessionConfig()
-  };
+  // /v1/realtime/calls takes the raw SDP offer as an application/sdp body --
+  // session config rides along as a `session` query param, and the answer comes
+  // back as plain SDP text (not JSON).
+  // `model` must ride on the query string -- the API rejects the call with
+  // missing_model if it's only present inside the session JSON.
+  const session = buildSessionConfig();
+  const callUrl =
+    "https://api.openai.com/v1/realtime/calls?model=" +
+    encodeURIComponent(session.model) +
+    "&session=" +
+    encodeURIComponent(JSON.stringify(session));
 
   try {
-    const response = await fetch("https://api.openai.com/v1/realtime/calls", {
+    // SDP is a line-oriented format whose parser expects a terminating newline;
+    // without it the offer fails to unmarshal with an EOF error.
+    const offerBody = offerSdp.endsWith("\n") ? offerSdp : `${offerSdp}\r\n`;
+    const response = await fetch(callUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openAiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/sdp"
       },
-      body: JSON.stringify(payload)
+      body: offerBody
     });
 
     if (!response.ok) {
       const errText = await response.text();
+      console.error(
+        "OpenAI realtime rejected offer",
+        response.status,
+        errText,
+        "offerChars=" + offerSdp.length,
+        "offerHead=" + JSON.stringify(offerSdp.slice(0, 60))
+      );
       res.status(502).json({ error: "OpenAI error", detail: errText });
       return;
     }
 
-    const payload = await response.json();
-    const answerSdp =
-      payload.answer ||
-      payload.sdp ||
-      (payload.data ? payload.data.answer : "");
+    const answerSdp = (await response.text()).trim();
     if (!answerSdp) {
+      console.error("Empty answer SDP from OpenAI");
       res.status(502).json({ error: "Missing answer SDP" });
       return;
     }
     res.set("Content-Type", "text/plain");
     res.status(200).send(answerSdp);
   } catch (err) {
-    res.status(500).json({ error: "Realtime exchange failed" });
+    console.error("Realtime exchange failed", err && (err.stack || err.message || err));
+    res.status(500).json({ error: "Realtime exchange failed", detail: String(err && (err.message || err)) });
   }
 });
 
-exports.realtimeSdpExchange = onRequest({ secrets: [openAiKeySecret] }, app);
+// invoker: "public" — 2nd-gen functions default to IAM-gated Cloud Run, which
+// rejects our Firebase ID tokens as invalid *IAM* tokens before the request
+// ever reaches verifyAuth. Auth is enforced in-app by verifyAuth below, which
+// still 401s anything without a valid Firebase ID token.
+exports.realtimeSdpExchange = onRequest({ secrets: [openAiKeySecret], invoker: "public" }, app);
 
 const chatApp = express();
 chatApp.use(cors({ origin: true }));
@@ -316,4 +355,4 @@ clientSecretApp.post("/", verifyAuth, async (req, res) => {
   }
 });
 
-exports.realtimeClientSecret = onRequest({ secrets: [openAiKeySecret] }, clientSecretApp);
+exports.realtimeClientSecret = onRequest({ secrets: [openAiKeySecret], invoker: "public" }, clientSecretApp);

@@ -116,8 +116,10 @@ class AuthManager(private val context: Context) {
             auth.signInWithCredential(credential).await()
             Result.success(Unit)
         } catch (ex: GetCredentialException) {
+            Log.e("Auth", "GetCredentialException during sign-in", ex)
             Result.failure(ex)
         } catch (ex: Exception) {
+            Log.e("Auth", "signInWithCredential failed", ex)
             Result.failure(ex)
         }
     }

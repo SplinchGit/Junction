@@ -1,5 +1,7 @@
 package com.splinch.junction.ui
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
@@ -549,10 +551,25 @@ fun SettingsScreen(
             if (firebaseSyncEnabled) {
                 if (user == null) {
                     Text(
-                        text = "Sign in with Google to enable sync.",
+                        text = "Sign in with Google to enable sync and voice mode.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Button(onClick = {
+                        val activity = context.findActivity()
+                        if (activity == null) {
+                            Toast.makeText(context, "Can't sign in from this screen", Toast.LENGTH_SHORT).show()
+                        } else {
+                            scope.launch {
+                                val result = authManager.signInWithGoogle(activity)
+                                result.onFailure { ex ->
+                                    Toast.makeText(context, "Sign-in failed: ${ex.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }) {
+                        Text("Sign in with Google")
+                    }
                 } else {
                     Text(
                         text = "Signed in as ${user?.email}",
@@ -1161,4 +1178,13 @@ private suspend fun startIntegration(
             Result.failure(ex)
         }
     }
+}
+
+private fun android.content.Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }

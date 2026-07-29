@@ -97,8 +97,18 @@ class RealtimeSdpService(
                 .build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
+                    // Surface the backend's own explanation (e.g. an upstream
+                    // quota/billing message) rather than a bare status code the
+                    // owner can't act on.
+                    val detail = describeSdpFailure(response.body?.string())
                     return@withContext Result.failure(
-                        IllegalStateException("Realtime SDP exchange failed (${response.code})")
+                        IllegalStateException(
+                            if (detail.isBlank()) {
+                                "Voice unavailable (${response.code})"
+                            } else {
+                                "Voice unavailable: $detail"
+                            }
+                        )
                     )
                 }
                 val answer = response.body?.string().orEmpty().trim()
@@ -109,6 +119,25 @@ class RealtimeSdpService(
                 }
             }
         }
+    }
+
+    /**
+     * Pulls a human-readable reason out of the backend's JSON error body. The
+     * backend forwards the upstream provider's own message in `detail`, which
+     * is usually the actionable part (quota exhausted, model retired, ...).
+     */
+    private fun describeSdpFailure(body: String?): String {
+        if (body.isNullOrBlank()) return ""
+        val json = runCatching { org.json.JSONObject(body) }.getOrNull() ?: return ""
+        val detail = json.optString("detail")
+        val nested = runCatching {
+            org.json.JSONObject(detail).optJSONObject("error")?.optString("message")
+        }.getOrNull()
+        return when {
+            !nested.isNullOrBlank() -> nested
+            detail.isNotBlank() -> detail
+            else -> json.optString("error")
+        }.take(200)
     }
 
     private suspend fun exchangeWithClientSecret(

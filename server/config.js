@@ -15,7 +15,8 @@ const config = {
   chatApiKey: env.JUNCTION_CHAT_API_KEY || "",
   openAiAllowedModels: toList(env.OPENAI_ALLOWED_MODELS),
   openAiChatModel: env.OPENAI_CHAT_MODEL || "gpt-4.1-mini",
-  openAiRealtimeModel: env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
+  // gpt-4o-realtime-preview was retired (404 model_not_found).
+  openAiRealtimeModel: env.OPENAI_REALTIME_MODEL || "gpt-realtime-1.5",
   openAiRealtimeClientSecretTtl: parseInt(env.OPENAI_REALTIME_CLIENT_SECRET_TTL || "600", 10),
   adminEmail: env.ADMIN_EMAIL || "",
   publicBaseUrl: (env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, ""),
