@@ -121,6 +121,11 @@ fun SettingsScreen(
     var quietStartInput by remember { mutableStateOf(digestQuietHours.startHour.toString()) }
     var quietEndInput by remember { mutableStateOf(digestQuietHours.endHour.toString()) }
     var realtimeEndpointInput by remember { mutableStateOf(realtimeEndpoint) }
+    // Pre-filled from storage so the owner can see a key is already set (masked)
+    // rather than facing an empty box that looks unconfigured.
+    var azureSpeechKeyInput by remember {
+        mutableStateOf(keyStorage.getApiKey(com.splinch.junction.chat.voice.AzureNeuralVoice.KEY_ID))
+    }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
     var gmailAccountEmailInput by remember { mutableStateOf(gmailAccountEmail) }
     var allowedWebDomainsInput by remember { mutableStateOf(allowedWebDomains.joinToString("\n")) }
@@ -394,6 +399,66 @@ fun SettingsScreen(
                     }
                 )
             }
+        }
+
+        item {
+            Text(text = "Voice quality", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "This phone's built-in voice is free but sounds robotic. Add an Azure Speech key " +
+                    "for natural neural voices — Azure's free tier covers 500,000 characters a month, " +
+                    "far more than normal use. Your speech is still recognised on-device either way, so " +
+                    "no recording of your voice ever leaves the phone.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            JunctionTextField(
+                value = azureSpeechKeyInput,
+                onValueChange = { azureSpeechKeyInput = it },
+                label = "Azure Speech key",
+                placeholder = "Paste KEY 1 from your Speech resource",
+                isPassword = true
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            keyStorage.setApiKey(
+                                com.splinch.junction.chat.voice.AzureNeuralVoice.KEY_ID,
+                                azureSpeechKeyInput.trim()
+                            )
+                        }
+                        Toast.makeText(
+                            context,
+                            if (azureSpeechKeyInput.isBlank()) {
+                                "Cleared — using this phone's built-in voice"
+                            } else {
+                                "Saved — Junction will speak with an Azure neural voice"
+                            },
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }) {
+                    Text("Save voice key")
+                }
+                OutlinedButton(onClick = {
+                    // Deep-links to the Keys and Endpoint page of the resource so
+                    // the owner doesn't have to hunt through the portal for it.
+                    val uri = "https://portal.azure.com/#browse/Microsoft.CognitiveServices%2Faccounts".toUri()
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                        .onFailure {
+                            Toast.makeText(context, "Couldn't open a browser", Toast.LENGTH_SHORT).show()
+                        }
+                }) {
+                    Text("Get a key")
+                }
+            }
+            Text(
+                text = "In the Azure portal: open your Speech resource → Resource Management → " +
+                    "Keys and Endpoint → copy KEY 1.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         item {

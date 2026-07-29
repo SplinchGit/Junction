@@ -17,8 +17,10 @@ import com.splinch.junction.chat.realtime.RealtimeConnectionState
 import com.splinch.junction.chat.realtime.RealtimeEventListener
 import com.splinch.junction.chat.realtime.RealtimeSessionManager
 import com.splinch.junction.chat.realtime.ToolCall
+import com.splinch.junction.chat.voice.AzureNeuralVoice
 import com.splinch.junction.chat.voice.LocalVoiceListener
 import com.splinch.junction.chat.voice.LocalVoiceSession
+import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.chat.tools.PostConditionVerifier
 import com.splinch.junction.chat.tools.ToolRegistry
 import com.splinch.junction.data.ActionLogDao
@@ -94,7 +96,20 @@ class ChatManager(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val realtime = RealtimeSessionManager(appContext, prefs, authManager, this)
-    private val localVoice = LocalVoiceSession(appContext, this)
+    // Passed as a supplier, not a value: the key is read at each utterance so
+    // adding it in Settings takes effect immediately rather than after an app
+    // restart. No key configured means the on-device engine is used, as before.
+    private val localVoice = LocalVoiceSession(appContext, this, { resolveCloudVoice() })
+
+    /**
+     * Builds the Azure neural voice from the stored key, or null when none is
+     * set so speech falls back to Android's on-device engine.
+     */
+    private fun resolveCloudVoice(): AzureNeuralVoice? {
+        val key = KeyStorage(appContext).getApiKey(AzureNeuralVoice.KEY_ID)
+        if (key.isBlank()) return null
+        return AzureNeuralVoice(appContext, key)
+    }
     private var voiceBackend: VoiceBackend = VoiceBackend.REALTIME
 
     private val verifier = PostConditionVerifier(
