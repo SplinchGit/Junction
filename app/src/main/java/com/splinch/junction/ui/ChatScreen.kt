@@ -22,8 +22,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -31,6 +34,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,7 +65,11 @@ import com.splinch.junction.chat.Sender
 import com.splinch.junction.chat.Step
 import com.splinch.junction.chat.StepStatus
 import com.splinch.junction.chat.realtime.RealtimeConnectionState
+import com.splinch.junction.chat.provider.ProviderCatalog
+import com.splinch.junction.chat.provider.ProviderCatalogEntry
 import com.splinch.junction.chat.tools.RiskTier
+import com.splinch.junction.settings.KeyStorage
+import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.ui.components.JunctionTextField
 import java.time.Instant
 import kotlinx.coroutines.launch
@@ -120,7 +129,14 @@ fun ChatScreen(
                 text = "JunctionGPT",
                 style = MaterialTheme.typography.titleLarge
             )
-            ConnectionPill(state = connectionState)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
+                ProviderSwitcher(
+                    providerConfig = providerConfig,
+                    onSwitch = { id -> scope.launch { chatManager.switchProvider(id) } }
+                )
+                ConnectionPill(state = connectionState)
+            }
         }
 
         Row(
@@ -225,7 +241,13 @@ fun ChatScreen(
             }
         }
 
+        val listState = rememberLazyListState()
+        LaunchedEffect(messages.size, streaming?.content) {
+            listState.animateScrollToItem(messages.size)
+        }
+
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -382,6 +404,56 @@ private fun ConnectionPill(state: RealtimeConnectionState) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/** Quick switcher between providers the owner has already stored a key for — full setup lives in Settings. */
+@Composable
+private fun ProviderSwitcher(
+    providerConfig: ProviderConfig,
+    onSwitch: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val keyStorage = remember { KeyStorage(context) }
+    var expanded by remember { mutableStateOf(false) }
+    var configuredEntries by remember { mutableStateOf(emptyList<ProviderCatalogEntry>()) }
+
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            configuredEntries = ProviderCatalog.entries.filter { keyStorage.getApiKey(it.id).isNotBlank() }
+        }
+    }
+
+    val currentName = ProviderCatalog.byId(providerConfig.providerId)?.displayName
+        ?: providerConfig.providerId.ifBlank { "Choose AI" }
+
+    Box(modifier = modifier) {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(currentName, style = MaterialTheme.typography.labelLarge)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "Switch AI provider")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (configuredEntries.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("No providers configured — add one in Settings") },
+                    onClick = { expanded = false },
+                    enabled = false
+                )
+            }
+            configuredEntries.forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.displayName) },
+                    leadingIcon = if (entry.id == providerConfig.providerId) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
+                    onClick = {
+                        expanded = false
+                        onSwitch(entry.id)
+                    }
+                )
+            }
+        }
     }
 }
 

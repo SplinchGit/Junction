@@ -30,6 +30,7 @@ import com.splinch.junction.data.PlanDao
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.scheduler.Scheduler
+import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.notifications.JunctionNotificationListenerService
 import com.splinch.junction.sync.firebase.AuthManager
@@ -41,6 +42,7 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -148,6 +150,9 @@ class ChatManager(
 
     private val _voiceBackend = MutableStateFlow(VoiceBackend.REALTIME)
     val voiceBackendState: StateFlow<VoiceBackend> = _voiceBackend.asStateFlow()
+
+    /** The currently configured text-chat provider, for a quick switcher UI. */
+    val providerConfigFlow: Flow<ProviderConfig> = prefs.providerConfigFlow
 
     private val _localVoiceListening = MutableStateFlow(false)
     val localVoiceListening: StateFlow<Boolean> = _localVoiceListening.asStateFlow()
@@ -747,6 +752,16 @@ class ChatManager(
         voiceBackend = backend
         _voiceBackend.value = backend
         prefs.setVoiceBackend(if (backend == VoiceBackend.LOCAL) "local" else "realtime")
+    }
+
+    /**
+     * Quick-switches the active text-chat provider (the API key for [providerId] must
+     * already be stored). Resets workhorse/frontier model overrides so the new
+     * provider's own defaults apply, rather than carrying over a model name that
+     * belonged to the previous provider.
+     */
+    suspend fun switchProvider(providerId: String) {
+        prefs.setProviderConfig(ProviderConfig(providerId = providerId))
     }
 
     suspend fun setSpeechMode(enabled: Boolean) {
