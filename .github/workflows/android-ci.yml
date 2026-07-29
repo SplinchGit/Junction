@@ -29,19 +29,54 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      # Optional build inputs. All of them are optional by design (spec 0.4): the app
+      # must build and run with no Google account and no google-services.json, so a
+      # missing secret produces a blank BuildConfig field rather than a build failure.
+      - name: Write local.properties from secrets
+        run: |
+          : > local.properties
+          for VAR in JUNCTION_WEB_CLIENT_ID JUNCTION_REALTIME_ENDPOINT \
+                     JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT JUNCTION_API_BASE_URL; do
+            VALUE="${!VAR}"
+            if [ -n "$VALUE" ]; then
+              echo "$VAR=$VALUE" >> local.properties
+            else
+              echo "Note: $VAR not configured; feature will report as unconfigured at runtime"
+            fi
+          done
+        env:
+          JUNCTION_WEB_CLIENT_ID: ${{ secrets.JUNCTION_WEB_CLIENT_ID }}
+          JUNCTION_REALTIME_ENDPOINT: ${{ secrets.JUNCTION_REALTIME_ENDPOINT }}
+          JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT: ${{ secrets.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT }}
+          JUNCTION_API_BASE_URL: ${{ secrets.JUNCTION_API_BASE_URL }}
+
+      # The ubuntu-latest image ships an Android SDK at $ANDROID_HOME; install only the
+      # pieces this project actually needs, matched to compileSdk/targetSdk in app/build.gradle.kts.
+      - name: Install Android SDK components
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Install Android SDK components and accept licenses
-        run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
-          yes | sdkmanager --licenses || true
+      # The injection test suite (spec 1.6) runs here. A regression fails the build.
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
       - name: Build (assembleDebug)
-        run: ./gradlew clean assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
 
       - name: Upload APK
         if: success()

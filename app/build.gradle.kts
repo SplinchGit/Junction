@@ -21,6 +21,17 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+/*
+Firebase is opt-in (spec 0.4): the app must build and run with no Google account
+and no google-services.json. The Google plugins are therefore applied only when
+that file is actually present, so a clean checkout builds without it.
+*/
+val googleServicesFile = file("google-services.json")
+if (googleServicesFile.exists()) {
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 /* ---------- helpers (Gradle-safe Kotlin ONLY) ---------- */
 
 fun loadLocalProps(root: File): Properties {
@@ -30,15 +41,6 @@ fun loadLocalProps(root: File): Properties {
         f.inputStream().use { props.load(it) }
     }
     return props
-}
-
-fun Project.requireProp(name: String, localProps: Properties): String {
-    return (
-            findProperty(name)?.toString()
-                ?: localProps.getProperty(name)
-                ?: System.getenv(name)
-            )?.takeIf { it.isNotBlank() }
-        ?: error("Missing required property: $name (local.properties or env var)")
 }
 
 /* ---------- Android config ---------- */
@@ -159,6 +161,12 @@ configure<ApplicationExtension> {
             "JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT",
             "\"$clientSecretEndpoint\""
         )
+
+        buildConfigField(
+            "boolean",
+            "JUNCTION_FIREBASE_CONFIGURED",
+            googleServicesFile.exists().toString()
+        )
     }
 
     buildFeatures {
@@ -169,6 +177,12 @@ configure<ApplicationExtension> {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+        }
     }
 
     packaging {
@@ -217,6 +231,10 @@ dependencies {
     implementation(composeBom)
     androidTestImplementation(composeBom)
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    // android.jar stubs org.json for unit tests; a real implementation lets the
+    // injection suite exercise the same JSON parsing the app uses at runtime.
+    testImplementation("org.json:json:20250107")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("junit:junit:4.13.2")
