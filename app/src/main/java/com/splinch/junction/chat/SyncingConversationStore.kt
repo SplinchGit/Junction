@@ -32,7 +32,9 @@ class SyncingConversationStore(
             sessionId = sessionId,
             timestamp = timestamp.toEpochMilli(),
             sender = sender.name,
-            content = content
+            content = content,
+            provenance = provenance.name,
+            sourceRef = sourceRef
         )
     }
 }

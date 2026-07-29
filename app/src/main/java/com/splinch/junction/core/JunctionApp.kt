@@ -27,7 +27,8 @@ class JunctionApp : Application() {
 
         appScope.launch {
             val interval = prefsRepository.digestIntervalMinutesFlow.first().coerceAtLeast(15)
-            Scheduler.scheduleFeedDigest(this@JunctionApp, interval.toLong())
+            val enabled = prefsRepository.digestEnabledFlow.first()
+            Scheduler.configureFeedDigest(this@JunctionApp, enabled, interval.toLong())
         }
     }
 

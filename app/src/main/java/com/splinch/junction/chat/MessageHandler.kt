@@ -87,6 +87,7 @@ Available Commands:
   /memory [query]  - Search memory for information
   /who             - Show participant information
   /set <option> <value> - Change settings
+  /frontier <msg>  - Force this message onto the frontier model lane
 
 Chat Features:
   - Single assistant conversation (JunctionGPT)

@@ -35,7 +35,8 @@ data class FeedItemEntity(
     val actionHint: String?,
     // Used when we collapse many events into one "app widget" item.
     val aggregateCount: Int = 1,
-    val updatedAt: Long = timestamp
+    val updatedAt: Long = timestamp,
+    val provenance: String = "UNTRUSTED"
 )
 
 data class FeedItem(

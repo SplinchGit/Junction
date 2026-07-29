@@ -1,8 +1,12 @@
 package com.splinch.junction.notifications
 
 import android.app.Notification
+import android.app.RemoteInput
+import android.content.Intent
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import com.splinch.junction.chat.Provenance
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.feed.model.FeedCategory
@@ -13,11 +17,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import java.util.concurrent.ConcurrentHashMap
 
 class JunctionNotificationListenerService : NotificationListenerService() {
     private val scope = CoroutineScope(Dispatchers.IO)
 
     override fun onListenerConnected() {
+        instance = this
         scope.launch {
             val prefs = UserPrefsRepository(applicationContext)
             prefs.setNotificationListenerEnabled(true)
@@ -25,17 +31,27 @@ class JunctionNotificationListenerService : NotificationListenerService() {
                 prefs.setNotificationAccessAcknowledged(true)
             }
         }
-        activeNotifications?.forEach { enqueueNotification(it) }
+        activeNotifications?.forEach { sbn ->
+            liveNotifications[sbn.key] = sbn
+            enqueueNotification(sbn)
+        }
     }
 
     override fun onListenerDisconnected() {
+        instance = null
+        liveNotifications.clear()
         scope.launch {
             UserPrefsRepository(applicationContext).setNotificationListenerEnabled(false)
         }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        liveNotifications[sbn.key] = sbn
         enqueueNotification(sbn)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        liveNotifications.remove(sbn.key)
     }
 
     private fun enqueueNotification(sbn: StatusBarNotification) {
@@ -121,7 +137,11 @@ class JunctionNotificationListenerService : NotificationListenerService() {
                 status = FeedStatus.NEW,
                 threadKey = bucketKey,
                 actionHint = "open",
-                aggregateCount = nextCount
+                aggregateCount = nextCount,
+                // §1.3 explicit at the point of capture: notification text is
+                // owner-uninitiated, third-party content, always UNTRUSTED —
+                // never inferred from a default that could silently change.
+                provenance = Provenance.UNTRUSTED.name
             )
             repository.add(item)
             repository.archiveByPackageAndCategoryExcept(packageName, category, bucketKey)
@@ -141,6 +161,43 @@ class JunctionNotificationListenerService : NotificationListenerService() {
     }
 
     companion object {
+        private val liveNotifications = ConcurrentHashMap<String, StatusBarNotification>()
+        private var instance: JunctionNotificationListenerService? = null
+
+        fun replyToNotification(key: String, text: String): Boolean {
+            val sbn = liveNotifications[key] ?: return false
+            val actions = sbn.notification.actions ?: return false
+            val replyAction = actions.firstOrNull { action ->
+                action.remoteInputs?.any { it.allowFreeFormInput } == true
+            } ?: return false
+            val remoteInput = replyAction.remoteInputs.first { it.allowFreeFormInput }
+            val replyIntent = Intent()
+            val bundle = Bundle()
+            bundle.putCharSequence(remoteInput.resultKey, text)
+            RemoteInput.addResultsToIntent(arrayOf(remoteInput), replyIntent, bundle)
+            return try {
+                replyAction.actionIntent.send(instance, 0, replyIntent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        /** §2.2 post-condition support: keys of notifications currently live on the device. */
+        fun activeKeys(): Set<String> = liveNotifications.keys.toSet()
+
+        fun dismissNotification(key: String): Boolean {
+            val svc = instance ?: return false
+            if (!liveNotifications.containsKey(key)) return false
+            return try {
+                svc.cancelNotification(key)
+                liveNotifications.remove(key)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         private val recentKeys = LinkedHashMap<String, Long>()
         private val systemLock = Any()
         private const val DEDUP_WINDOW_MS = 8_000L

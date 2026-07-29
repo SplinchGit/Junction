@@ -1,4 +1,5 @@
-const functions = require("firebase-functions");
+const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const express = require("express");
 const cors = require("cors");
@@ -6,18 +7,23 @@ const fetch = require("node-fetch");
 
 admin.initializeApp();
 
+const openAiKeySecret = defineSecret("OPENAI_API_KEY");
+
 const app = express();
 app.use(cors({ origin: true }));
 app.use(express.text({ type: "*/*" }));
 
 function getOpenAiKey() {
-  const configKey = functions.config()?.openai?.key;
-  return process.env.OPENAI_API_KEY || configKey;
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  try {
+    return openAiKeySecret.value();
+  } catch (_err) {
+    return "";
+  }
 }
 
 function getAdminEmail() {
-  const configEmail = functions.config()?.admin?.email;
-  return process.env.ADMIN_EMAIL || configEmail || "";
+  return process.env.ADMIN_EMAIL || "";
 }
 
 function normalizeEmail(email) {
@@ -206,7 +212,7 @@ app.post("/", verifyAuth, async (req, res) => {
   }
 });
 
-exports.realtimeSdpExchange = functions.https.onRequest(app);
+exports.realtimeSdpExchange = onRequest({ secrets: [openAiKeySecret] }, app);
 
 const chatApp = express();
 chatApp.use(cors({ origin: true }));
@@ -220,7 +226,7 @@ function normalizeRole(role) {
 }
 
 function buildChatMessages(body) {
-  const messages = [{ role: "system", content: BASE_INSTRUCTIONS }];
+  const messages = [];
   if (Array.isArray(body.messages)) {
     body.messages.forEach((msg) => {
       if (!msg) return;
@@ -237,6 +243,26 @@ function buildChatMessages(body) {
   return messages;
 }
 
+function extractResponseText(data) {
+  if (!data) return "";
+  if (typeof data.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+  const output = Array.isArray(data.output) ? data.output : [];
+  const chunks = [];
+  output.forEach((item) => {
+    if (!item || item.type !== "message") return;
+    const content = Array.isArray(item.content) ? item.content : [];
+    content.forEach((part) => {
+      if (!part) return;
+      if ((part.type === "output_text" || part.type === "text") && part.text) {
+        chunks.push(String(part.text));
+      }
+    });
+  });
+  return chunks.join("").trim();
+}
+
 chatApp.post("/", verifyAuth, async (req, res) => {
   const openAiKey = getOpenAiKey();
   if (!openAiKey) {
@@ -244,20 +270,23 @@ chatApp.post("/", verifyAuth, async (req, res) => {
     return;
   }
 
-  const messages = buildChatMessages(req.body || {});
-  if (messages.length < 2) {
+  const input = buildChatMessages(req.body || {});
+  if (input.length < 1) {
     res.status(400).json({ error: "Missing chat messages" });
     return;
   }
 
+  const requestedModel =
+    typeof req.body?.model === "string" ? req.body.model.trim() : "";
+  const model = requestedModel || process.env.OPENAI_CHAT_MODEL || "gpt-4.1-mini";
   const payload = {
-    model: process.env.OPENAI_CHAT_MODEL || "gpt-5.2",
-    messages,
-    temperature: 0.7
+    model,
+    input,
+    instructions: BASE_INSTRUCTIONS
   };
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openAiKey}`,
@@ -273,7 +302,7 @@ chatApp.post("/", verifyAuth, async (req, res) => {
     }
 
     const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content?.trim();
+    const reply = extractResponseText(data);
     if (!reply) {
       res.status(502).json({ error: "Missing reply" });
       return;
@@ -284,7 +313,7 @@ chatApp.post("/", verifyAuth, async (req, res) => {
   }
 });
 
-exports.chat = functions.https.onRequest(chatApp);
+exports.chat = onRequest({ secrets: [openAiKeySecret] }, chatApp);
 
 const clientSecretApp = express();
 clientSecretApp.use(cors({ origin: true }));
@@ -341,4 +370,4 @@ clientSecretApp.post("/", verifyAuth, async (req, res) => {
   }
 });
 
-exports.realtimeClientSecret = functions.https.onRequest(clientSecretApp);
+exports.realtimeClientSecret = onRequest({ secrets: [openAiKeySecret] }, clientSecretApp);

@@ -11,6 +11,10 @@ import java.util.concurrent.TimeUnit
 object Scheduler {
     private const val FEED_DIGEST_WORK = "junction_feed_digest"
 
+    fun configureFeedDigest(context: Context, enabled: Boolean, intervalMinutes: Long) {
+        if (enabled) scheduleFeedDigest(context, intervalMinutes) else cancelFeedDigest(context)
+    }
+
     fun scheduleFeedDigest(context: Context, intervalMinutes: Long = 30) {
         val safeInterval = intervalMinutes.coerceAtLeast(15)
         val constraints = Constraints.Builder()
@@ -26,5 +30,9 @@ object Scheduler {
             ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
+    }
+
+    fun cancelFeedDigest(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(FEED_DIGEST_WORK)
     }
 }

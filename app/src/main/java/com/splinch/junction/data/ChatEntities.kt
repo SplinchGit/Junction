@@ -17,5 +17,7 @@ data class ChatMessageEntity(
     val sessionId: String,
     val timestamp: Long,
     val sender: String,
-    val content: String
+    val content: String,
+    val provenance: String = "UNTRUSTED",
+    val sourceRef: String? = null
 )

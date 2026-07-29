@@ -9,7 +9,7 @@ import {
   addDoc,
   collection,
   doc,
-  getDoc,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -63,9 +63,18 @@ type PendingToolCall = {
   summary: string;
 };
 
-type UndoAction = {
-  label: string;
-  run: () => Promise<string>;
+// §4.3 read-only audit mirror. Deliberately excludes argumentsJson/planText —
+// the companion mirrors outcomes for visibility, not the sensitive payloads
+// of what ran. There is no write path for this collection from the web
+// client; it is populated only by the Android app's AuditSyncManager.
+type AuditLogEntry = {
+  id: string;
+  timestamp: number;
+  toolName: string;
+  decision: string;
+  outcome?: string;
+  riskTier: string;
+  blockReason?: string;
 };
 
 type RealtimeSession = {
@@ -93,6 +102,7 @@ export default function App() {
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [input, setInput] = useState("");
   const [tab, setTab] = useState<"feed" | "chat">("feed");
   const [speechModes, setSpeechModes] = useState<Record<string, boolean>>({});
@@ -100,7 +110,6 @@ export default function App() {
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [streamingText, setStreamingText] = useState("");
   const [pendingToolCalls, setPendingToolCalls] = useState<PendingToolCall[]>([]);
-  const [lastUndo, setLastUndo] = useState<UndoAction | null>(null);
   const [realtimeError, setRealtimeError] = useState<RealtimeError | null>(null);
 
   const rtcRef = useRef<RealtimeSession | null>(null);
@@ -126,7 +135,6 @@ export default function App() {
       setSpeechModes({});
       setMicMuted(true);
       setPendingToolCalls([]);
-      setLastUndo(null);
       setRealtimeError(null);
       disconnectRealtime();
       return;
@@ -165,7 +173,6 @@ export default function App() {
       return;
     }
     setPendingToolCalls([]);
-    setLastUndo(null);
     const msgRef = collection(
       db,
       "users",
@@ -211,6 +218,25 @@ export default function App() {
         status: docSnap.data().status ?? "NEW",
       }));
       setFeedItems(data);
+    });
+    return () => unsub();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const auditRef = collection(db, "users", user.uid, "audit_log");
+    const auditQuery = query(auditRef, orderBy("timestamp", "desc"), limit(50));
+    const unsub = onSnapshot(auditQuery, (snap: { docs: any[] }) => {
+      const data = snap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        timestamp: docSnap.data().timestamp ?? Date.now(),
+        toolName: docSnap.data().toolName ?? "unknown",
+        decision: docSnap.data().decision ?? "",
+        outcome: docSnap.data().outcome,
+        riskTier: docSnap.data().riskTier ?? "",
+        blockReason: docSnap.data().blockReason,
+      }));
+      setAuditLog(data);
     });
     return () => unsub();
   }, [user]);
@@ -307,6 +333,8 @@ export default function App() {
       role,
       content,
       createdAt: serverTimestamp(),
+      provenance: "UNTRUSTED",
+      sourceRef: "companion:web",
     });
     await setDoc(
       doc(db, "users", user.uid, "conversations", conversationId),
@@ -621,144 +649,20 @@ export default function App() {
   }
 
   async function applyTool(call: PendingToolCall) {
-    const result = await applyToolAction(call);
-    if (!result) return;
     setPendingToolCalls((prev) => prev.filter((c) => c.id !== call.id));
-    if (result.summary) {
-      await appendMessage("system", result.summary);
-    }
-    setLastUndo(result.undo || null);
+    await appendMessage("system", `Blocked on PC companion: ${call.summary}. Actions must be approved and executed in the Android app.`);
     sendEvent({
       type: "conversation.item.create",
       item: {
         type: "function_call_output",
         call_id: call.id,
-        output: result.outputJson,
+        output: JSON.stringify({
+          status: "blocked",
+          message: "The PC companion cannot execute actions. Use the Android app for approved actions."
+        }),
       },
     });
     sendEvent({ type: "response.create" });
-  }
-
-  async function cancelTool(call: PendingToolCall) {
-    setPendingToolCalls((prev) => prev.filter((c) => c.id !== call.id));
-    sendEvent({
-      type: "conversation.item.create",
-      item: {
-        type: "function_call_output",
-        call_id: call.id,
-        output: JSON.stringify({ status: "cancelled", message: "User cancelled" }),
-      },
-    });
-    sendEvent({ type: "response.create" });
-  }
-
-  async function runUndo() {
-    if (!lastUndo) return;
-    const message = await lastUndo.run();
-    await appendMessage("system", message);
-    setLastUndo(null);
-  }
-
-  async function applyToolAction(call: PendingToolCall) {
-    if (!user) return null;
-    const uid = user.uid;
-    const prefsRef = doc(db, "users", uid, "preferences", "main");
-
-    switch (call.name) {
-      case "set_speech_mode": {
-        const enabled = !!call.args.enabled;
-        const previous = speechMode;
-        setSpeechModeForConversation(enabled);
-        return {
-          summary: `Speech mode ${enabled ? "enabled" : "disabled"}.`,
-          outputJson: JSON.stringify({ status: "applied", enabled }),
-          undo: {
-            label: "Undo speech mode",
-            run: async () => {
-              setSpeechModeForConversation(previous);
-              return "Reverted speech mode.";
-            },
-          },
-        };
-      }
-      case "set_feed_filter": {
-        const packageName = call.args.packageName;
-        const enabled = !!call.args.enabled;
-        if (!packageName) return null;
-        const snap = await getDoc(prefsRef);
-        const disabled = new Set<string>((snap.data()?.disabledPackages as string[]) || []);
-        const prev = !disabled.has(packageName);
-        if (enabled) disabled.delete(packageName);
-        else disabled.add(packageName);
-        await setDoc(
-          prefsRef,
-          { disabledPackages: Array.from(disabled) },
-          { merge: true }
-        );
-        return {
-          summary: `Feed filter updated for ${packageName}.`,
-          outputJson: JSON.stringify({ status: "applied", packageName, enabled }),
-          undo: {
-            label: "Undo feed filter",
-            run: async () => {
-              if (prev) disabled.delete(packageName);
-              else disabled.add(packageName);
-              await setDoc(
-                prefsRef,
-                { disabledPackages: Array.from(disabled) },
-                { merge: true }
-              );
-              return `Reverted feed filter for ${packageName}.`;
-            },
-          },
-        };
-      }
-      case "archive_feed_item": {
-        const id = call.args.id;
-        if (!id) return null;
-        const itemRef = doc(db, "users", uid, "feed_items", id);
-        const snapshot = await getDoc(itemRef);
-        const previous = snapshot.data()?.status;
-        await setDoc(itemRef, { status: "ARCHIVED" }, { merge: true });
-        return {
-          summary: "Archived feed item.",
-          outputJson: JSON.stringify({ status: "applied", id }),
-          undo: previous
-            ? {
-                label: "Undo archive",
-                run: async () => {
-                  await setDoc(itemRef, { status: previous }, { merge: true });
-                  return "Restored feed item.";
-                },
-              }
-            : undefined,
-        };
-      }
-      case "check_for_updates": {
-        return {
-          summary: "Update check requested.",
-          outputJson: JSON.stringify({ status: "applied" }),
-        };
-      }
-      case "set_setting": {
-        const key = call.args.key;
-        const value = call.args.value;
-        if (!key) return null;
-        const mappedKey =
-          key === "digest_interval_minutes" ? "digestIntervalMinutes" : key;
-        const parsedValue =
-          mappedKey === "digestIntervalMinutes"
-            ? Number(value)
-            : value;
-        await setDoc(prefsRef, { [mappedKey]: parsedValue }, { merge: true });
-        return {
-          summary: `Setting ${key} updated.`,
-          outputJson: JSON.stringify({ status: "applied", key }),
-        };
-      }
-      default:
-        return null;
-    }
   }
 
   function safeJson(raw: any) {
@@ -888,6 +792,29 @@ export default function App() {
                 </div>
               </div>
             ))}
+            {user && auditLog.length > 0 && (
+              <div className="feed-group">
+                <div className="feed-header">
+                  <h2>Audit log (read-only)</h2>
+                  <span>{auditLog.length} recent</span>
+                </div>
+                <div className="feed-list">
+                  {auditLog.map((entry) => (
+                    <article key={entry.id} className="feed-card">
+                      <div className="feed-meta">
+                        <span>{entry.toolName}</span>
+                        <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <p>
+                        {entry.decision}
+                        {entry.outcome ? ` · ${entry.outcome}` : ""}
+                        {entry.blockReason ? ` · blocked: ${entry.blockReason}` : ""}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         )}
 
@@ -953,19 +880,13 @@ export default function App() {
                           <div className="tool-title">Proposed change</div>
                           <div className="tool-summary">{call.summary}</div>
                           <div className="tool-actions">
-                            <button onClick={() => applyTool(call)}>Apply</button>
-                            <button className="ghost" onClick={() => cancelTool(call)}>
-                              Cancel
+                            <button onClick={() => applyTool(call)}>
+                              Decline on PC
                             </button>
                           </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                  {lastUndo && (
-                    <button className="ghost" onClick={runUndo}>
-                      {lastUndo.label}
-                    </button>
                   )}
                   {showRealtimeMissing && (
                     <div className="banner warn">

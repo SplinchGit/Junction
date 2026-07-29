@@ -34,16 +34,19 @@ import androidx.lifecycle.lifecycleScope
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
+import com.splinch.junction.chat.provider.ProviderRegistry
 import com.splinch.junction.data.JunctionDatabase
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.notifications.NotificationAccessHelper
 import com.splinch.junction.settings.UserPrefsRepository
+import com.splinch.junction.sync.firebase.AuditSyncManager
 import com.splinch.junction.sync.firebase.AuthManager
 import com.splinch.junction.sync.firebase.ChatSyncManager
 import com.splinch.junction.sync.firebase.FeedSyncManager
 import com.splinch.junction.sync.firebase.PrefsSyncManager
 import com.splinch.junction.ui.ChatScreen
 import com.splinch.junction.ui.FeedScreen
+import com.splinch.junction.ui.AuditScreen
 import com.splinch.junction.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
 import com.splinch.junction.update.UpdateChecker
@@ -73,10 +76,12 @@ class MainActivity : ComponentActivity() {
                 val chatSyncManager = remember { ChatSyncManager(database.chatDao(), authManager) }
                 val feedSyncManager = remember { FeedSyncManager(database.feedDao(), authManager) }
                 val prefsSyncManager = remember { PrefsSyncManager(prefs, authManager) }
+                val auditSyncManager = remember { AuditSyncManager(database.actionLogDao(), authManager) }
                 val roomStore = remember { RoomConversationStore(database.chatDao()) }
                 val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
                 val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
                 val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
+                val providerRegistry = remember { ProviderRegistry(context, prefs) }
                 val chatManager = remember {
                     ChatManager(
                         context = context,
@@ -84,7 +89,12 @@ class MainActivity : ComponentActivity() {
                         feedRepository = feedRepository,
                         prefs = prefs,
                         authManager = authManager,
-                        updateState = updateState
+                        updateState = updateState,
+                        providerRegistry = providerRegistry,
+                        actionLogDao = database.actionLogDao(),
+                        modelUsageDao = database.modelUsageDao(),
+                        planDao = database.planDao(),
+                        memoryFactDao = database.memoryFactDao()
                     )
                 }
                 val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
@@ -124,11 +134,13 @@ class MainActivity : ComponentActivity() {
                             chatSyncManager.start()
                             feedSyncManager.start()
                             prefsSyncManager.start()
+                            auditSyncManager.start()
                         }.onFailure { ex ->
                             Log.e(TAG, "Firebase sync initialization failed", ex)
                         }
                     } else {
                         authManager.stop()
+                        auditSyncManager.stop()
                     }
                 }
 
@@ -169,7 +181,10 @@ class MainActivity : ComponentActivity() {
                     updateState = updateState,
                     lastOpenedAt = lastOpenedAt,
                     voiceToken = voiceToken,
-                    chatToken = chatToken
+                    chatToken = chatToken,
+                    actionLogDao = database.actionLogDao(),
+                    modelUsageDao = database.modelUsageDao(),
+                    memoryFactDao = database.memoryFactDao()
                 )
             }
         }
@@ -213,6 +228,7 @@ class MainActivity : ComponentActivity() {
 private enum class JunctionTab {
     FEED,
     CHAT,
+    AUDIT,
     SETTINGS
 }
 
@@ -235,7 +251,10 @@ private fun JunctionApp(
     updateState: MutableStateFlow<UpdateInfo?>,
     lastOpenedAt: Long,
     voiceToken: Int,
-    chatToken: Int
+    chatToken: Int,
+    actionLogDao: com.splinch.junction.data.ActionLogDao,
+    modelUsageDao: com.splinch.junction.data.ModelUsageDao,
+    memoryFactDao: com.splinch.junction.data.MemoryFactDao
 ) {
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(JunctionTab.FEED) }
@@ -269,6 +288,12 @@ private fun JunctionApp(
                     label = { Text("Chat") }
                 )
                 NavigationBarItem(
+                    selected = selectedTab == JunctionTab.AUDIT,
+                    onClick = { selectedTab = JunctionTab.AUDIT },
+                    icon = { Text("Audit") },
+                    label = { Text("Audit") }
+                )
+                NavigationBarItem(
                     selected = selectedTab == JunctionTab.SETTINGS,
                     onClick = { selectedTab = JunctionTab.SETTINGS },
                     icon = { Text("Settings") },
@@ -283,9 +308,10 @@ private fun JunctionApp(
                 lastOpenedAt = lastOpenedAt,
                 feedRepository = feedRepository,
                 updateInfo = updateState.collectAsState().value,
-                onAskChat = { voice ->
+                onAskChat = { item, voice ->
                     selectedTab = JunctionTab.CHAT
                     scope.launch {
+                        chatManager.reviewFeedItem(item)
                         if (voice) {
                             chatManager.setSpeechMode(true)
                             chatManager.setMicEnabled(true)
@@ -301,10 +327,18 @@ private fun JunctionApp(
                 chatManager = chatManager,
                 modifier = Modifier.padding(padding)
             )
+            JunctionTab.AUDIT -> AuditScreen(
+                actionLogDao = actionLogDao,
+                modelUsageDao = modelUsageDao,
+                modifier = Modifier.padding(padding)
+            )
             JunctionTab.SETTINGS -> SettingsScreen(
                 userPrefs = prefs,
                 feedRepository = feedRepository,
                 authManager = authManager,
+                chatManager = chatManager,
+                actionLogDao = actionLogDao,
+                memoryFactDao = memoryFactDao,
                 modifier = Modifier.padding(padding)
             )
         }

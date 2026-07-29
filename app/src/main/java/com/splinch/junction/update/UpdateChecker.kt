@@ -8,7 +8,9 @@ import org.json.JSONObject
 
 data class UpdateInfo(
     val version: String,
-    val url: String
+    val url: String,
+    val apkUrl: String? = null,
+    val sha256Url: String? = null
 )
 
 class UpdateChecker(
@@ -30,7 +32,25 @@ class UpdateChecker(
                 if (tag.isBlank() || url.isBlank()) return@withContext null
                 val latestVersion = tag.removePrefix("v")
                 if (isNewer(latestVersion, currentVersion)) {
-                    return@withContext UpdateInfo(version = latestVersion, url = url)
+                    val assets = json.optJSONArray("assets")
+                    var apkUrl: String? = null
+                    var sha256Url: String? = null
+                    for (index in 0 until (assets?.length() ?: 0)) {
+                        val asset = assets?.optJSONObject(index) ?: continue
+                        val name = asset.optString("name").lowercase()
+                        val downloadUrl = asset.optString("browser_download_url").trim()
+                        if (downloadUrl.isBlank()) continue
+                        when {
+                            name.endsWith(".apk") -> apkUrl = downloadUrl
+                            name.endsWith(".sha256") || name.endsWith(".sha256sum") -> sha256Url = downloadUrl
+                        }
+                    }
+                    return@withContext UpdateInfo(
+                        version = latestVersion,
+                        url = url,
+                        apkUrl = apkUrl,
+                        sha256Url = sha256Url
+                    )
                 }
             }
             null

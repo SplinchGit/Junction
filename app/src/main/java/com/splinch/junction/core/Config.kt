@@ -12,9 +12,6 @@ object Config {
     val buildRealtimeClientSecretEndpoint: String
         get() = BuildConfig.JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT.trim()
 
-    val buildApiBaseUrl: String
-        get() = BuildConfig.JUNCTION_API_BASE_URL.trim()
-
     val buildChatModel: String
         get() = BuildConfig.JUNCTION_CHAT_MODEL.trim()
 

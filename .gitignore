@@ -6,9 +6,16 @@
 *.iml
 .DS_Store
 app/google-services.json
+google-services.json
+app/debug.keystore
+app/release.keystore
+*.keystore
+logcat_*.txt
 web/.env
 web/.env.local
 web/.env.*.local
+web/dist/
+web/*.tsbuildinfo
 **/node_modules/
 
 .vscode/

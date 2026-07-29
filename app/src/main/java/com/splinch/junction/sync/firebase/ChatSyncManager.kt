@@ -68,7 +68,9 @@ class ChatSyncManager(
                     "id" to message.id,
                     "role" to message.sender,
                     "content" to message.content,
-                    "createdAt" to message.timestamp
+                    "createdAt" to message.timestamp,
+                    "provenance" to "UNTRUSTED",
+                    "sourceRef" to "companion:android:${message.id}"
                 ),
                 SetOptions.merge()
             )
@@ -120,7 +122,9 @@ class ChatSyncManager(
                             sessionId = conversationId,
                             timestamp = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                             sender = senderFromString(data["role"] as? String).name,
-                            content = data["content"] as? String ?: ""
+                            content = data["content"] as? String ?: "",
+                            provenance = "UNTRUSTED",
+                            sourceRef = "companion:firestore:$id"
                         )
                         chatDao.insertMessage(message)
                     }

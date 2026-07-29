@@ -2,6 +2,7 @@ package com.splinch.junction.sync.firebase
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetCredentialResponse
@@ -26,9 +27,11 @@ class AuthManager(private val context: Context) {
 
     private var authListener: com.google.firebase.auth.FirebaseAuth.AuthStateListener? = null
 
-    init {
-        FirebaseProvider.initialize(context)
-    }
+    // Deliberately no eager init here (Phase 0.4): Firebase must not touch the
+    // network or register with Google until the owner opts in via the
+    // "Enable Firebase sync" toggle (defaults off) or explicitly signs in.
+    // start() and signInWithGoogle() below both call FirebaseProvider.initialize()
+    // lazily, only when actually invoked.
 
     fun start() {
         if (!FirebaseProvider.initialize(context)) {
@@ -89,6 +92,8 @@ class AuthManager(private val context: Context) {
                 )
             )
         }
+
+        Log.w("Auth", "WEB_CLIENT_ID=$webClientId")
 
         return try {
             val credentialManager = CredentialManager.create(context)

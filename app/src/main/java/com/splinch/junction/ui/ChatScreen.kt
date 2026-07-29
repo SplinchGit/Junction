@@ -12,17 +12,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,40 +52,37 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.ChatMessage
-import com.splinch.junction.chat.PendingToolCall
+import com.splinch.junction.chat.Plan
 import com.splinch.junction.chat.Sender
+import com.splinch.junction.chat.Step
+import com.splinch.junction.chat.StepStatus
 import com.splinch.junction.chat.realtime.RealtimeConnectionState
-import com.splinch.junction.sync.firebase.AuthManager
+import com.splinch.junction.chat.tools.RiskTier
 import java.time.Instant
 import kotlinx.coroutines.launch
 
 @Composable
 fun ChatScreen(
     chatManager: ChatManager,
-    authManager: AuthManager,
     modifier: Modifier = Modifier
 ) {
     val messages by chatManager.messages.collectAsState()
     val streaming by chatManager.streamingAssistant.collectAsState()
-    val pendingTools by chatManager.pendingToolCalls.collectAsState()
+    val activePlan by chatManager.activePlan.collectAsState()
     val connectionState by chatManager.connectionState.collectAsState()
     val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
     val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
     val micEnabled by chatManager.micEnabled.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
-    val user by authManager.userFlow.collectAsState()
-
     var input by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val activity = context as? android.app.Activity
     var pendingSpeechEnable by remember { mutableStateOf(false) }
-    var authError by remember { mutableStateOf<String?>(null) }
+    val sendEnabled = input.isNotBlank()
 
     DisposableEffect(Unit) {
         chatManager.setChatVisible(true)
@@ -220,45 +225,6 @@ fun ChatScreen(
             }
         }
 
-        if (user == null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Sign in to sync and use Realtime. Text can use the HTTP backend if enabled.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center
-                )
-                Button(
-                    onClick = {
-                        if (activity != null) {
-                            authError = null
-                            scope.launch {
-                                val result = authManager.signInWithGoogle(activity)
-                                if (result.isFailure) {
-                                    authError = result.exceptionOrNull()?.message ?: "Sign-in failed"
-                                }
-                            }
-                        }
-                    },
-                    modifier = Modifier.padding(top = 8.dp)
-                ) {
-                    Text("Sign in with Google")
-                }
-                if (!authError.isNullOrBlank()) {
-                    Text(
-                        text = authError.orEmpty(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                }
-            }
-        }
-
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -283,21 +249,29 @@ fun ChatScreen(
             }
         }
 
-        if (pendingTools.isNotEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                pendingTools.forEach { call ->
-                    PendingToolCard(
-                        call = call,
-                        onApply = { scope.launch { chatManager.applyToolCall(call.callId) } },
-                        onCancel = { scope.launch { chatManager.cancelToolCall(call.callId) } }
-                    )
-                }
-            }
+        val plan = activePlan
+        if (plan != null) {
+            val alwaysAllowedTools by chatManager.alwaysAllowedTools.collectAsState()
+            var selectedForAlwaysAllow by remember(plan.id) { mutableStateOf(setOf<String>()) }
+            PlanCard(
+                plan = plan,
+                alwaysAllowedTools = alwaysAllowedTools,
+                selectedForAlwaysAllow = selectedForAlwaysAllow,
+                onToggleAlwaysAllow = { tool, checked ->
+                    selectedForAlwaysAllow = if (checked) {
+                        selectedForAlwaysAllow + tool
+                    } else {
+                        selectedForAlwaysAllow - tool
+                    }
+                },
+                onApprove = {
+                    scope.launch {
+                        selectedForAlwaysAllow.forEach { tool -> chatManager.grantAlwaysAllow(tool) }
+                        chatManager.approvePlan()
+                    }
+                },
+                onCancel = { scope.launch { chatManager.cancelPlan() } }
+            )
         }
 
         if (lastUndo != null) {
@@ -313,16 +287,8 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Type a message") },
-                enabled = true
-            )
             OutlinedButton(
                 onClick = { scope.launch { chatManager.stopResponse() } },
                 enabled = true
@@ -335,18 +301,56 @@ fun ChatScreen(
             ) {
                 Text("Regenerate")
             }
-            Button(
-                onClick = {
-                    val trimmed = input.trim()
-                    if (trimmed.isNotEmpty()) {
-                        scope.launch { chatManager.sendUserMessage(trimmed) }
-                        input = ""
-                    }
-                },
-                enabled = input.trim().isNotEmpty()
-            ) {
-                Text("Send")
-            }
+        }
+
+        ChatInputRow(
+            text = input,
+            onTextChange = { input = it },
+            onSend = {
+                val trimmed = input.trim()
+                if (trimmed.isNotEmpty() && sendEnabled) {
+                    scope.launch { chatManager.sendUserMessage(trimmed) }
+                    input = ""
+                }
+            },
+            sendEnabled = sendEnabled
+        )
+    }
+}
+
+@Composable
+fun ChatInputRow(
+    text: String,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
+    sendEnabled: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = onTextChange,
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 56.dp, max = 160.dp),
+            maxLines = 6,
+            singleLine = false
+        )
+
+        Spacer(Modifier.width(8.dp))
+
+        IconButton(
+            onClick = onSend,
+            enabled = sendEnabled,
+            modifier = Modifier.size(56.dp)
+        ) {
+            Icon(Icons.Default.Send, contentDescription = "Send")
         }
     }
 }
@@ -380,12 +384,21 @@ private fun ConnectionPill(state: RealtimeConnectionState) {
     }
 }
 
+/**
+ * §2.1 plan-level confirmation with per-step disclosure: the owner sees
+ * every step in the plan (including anything TrustGate already blocked)
+ * before a single Approve/Cancel decision is made for the whole plan.
+ */
 @Composable
-private fun PendingToolCard(
-    call: PendingToolCall,
-    onApply: () -> Unit,
+private fun PlanCard(
+    plan: Plan,
+    alwaysAllowedTools: Set<String>,
+    selectedForAlwaysAllow: Set<String>,
+    onToggleAlwaysAllow: (tool: String, checked: Boolean) -> Unit,
+    onApprove: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val runnableSteps = plan.steps.count { it.status != StepStatus.BLOCKED }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -393,17 +406,102 @@ private fun PendingToolCard(
             .background(MaterialTheme.colorScheme.secondaryContainer)
             .padding(12.dp)
     ) {
-        Text(text = "Proposed change", style = MaterialTheme.typography.labelLarge)
-        Text(text = call.summary, style = MaterialTheme.typography.bodyMedium)
+        Text(text = "Proposed plan", style = MaterialTheme.typography.labelLarge)
+        Text(text = plan.goal, style = MaterialTheme.typography.bodyMedium)
+        if (plan.tainted) {
+            Text(
+                text = "⚠️ Untrusted content entered context recently — treat with extra care.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+            if (!plan.taintSource.isNullOrBlank()) {
+                Text(
+                    text = "Source: ${plan.taintSource}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            plan.steps.forEach { step -> PlanStepRow(step, showResolvedPayload = plan.tainted) }
+        }
+        // §1.5 always-allow promotion: only offered on an untainted plan, one
+        // checkbox per distinct tool in it. Granted tools are excluded since
+        // there's nothing left to promote.
+        if (!plan.tainted) {
+            val promotable = plan.steps
+                .filter { it.status != StepStatus.BLOCKED }
+                .map { it.tool }
+                .distinct()
+                .filter { it !in alwaysAllowedTools }
+            if (promotable.isNotEmpty()) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    Text(
+                        text = "Always allow without confirming next time:",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    promotable.forEach { tool ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = tool in selectedForAlwaysAllow,
+                                onCheckedChange = { checked -> onToggleAlwaysAllow(tool, checked) }
+                            )
+                            Text(text = tool, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(onClick = onApply) { Text("Apply") }
+            Button(onClick = onApprove, enabled = runnableSteps > 0) { Text("Approve plan") }
             OutlinedButton(onClick = onCancel) { Text("Cancel") }
         }
+    }
+}
+
+@Composable
+private fun PlanStepRow(step: Step, showResolvedPayload: Boolean) {
+    val (label, color) = when (step.status) {
+        StepStatus.BLOCKED -> "Blocked" to MaterialTheme.colorScheme.error
+        StepStatus.SKIPPED -> "Skipped" to MaterialTheme.colorScheme.onSurfaceVariant
+        StepStatus.FAILED -> "Failed" to MaterialTheme.colorScheme.error
+        StepStatus.DONE -> "Done" to MaterialTheme.colorScheme.primary
+        StepStatus.RUNNING -> "Running" to MaterialTheme.colorScheme.tertiary
+        StepStatus.PENDING -> step.riskTier.name to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = step.summary,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color
+        )
+    }
+    if (step.status == StepStatus.PENDING &&
+        (showResolvedPayload || step.riskTier == RiskTier.OUTBOUND || step.riskTier == RiskTier.DESTRUCTIVE)
+    ) {
+        Text(
+            text = "Payload: ${step.arguments}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

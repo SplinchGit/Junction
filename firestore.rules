@@ -1,0 +1,49 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function ownsUser(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow read, write: if ownsUser(userId);
+
+      match /conversations/{conversationId} {
+        allow read, write: if ownsUser(userId);
+
+        match /messages/{messageId} {
+          allow read, delete: if ownsUser(userId);
+          allow create, update: if ownsUser(userId)
+            && request.resource.data.keys().hasOnly([
+              'id', 'role', 'content', 'createdAt', 'provenance', 'sourceRef'
+            ])
+            && request.resource.data.role in ['USER', 'ASSISTANT', 'SYSTEM', 'user', 'assistant', 'system']
+            && request.resource.data.content is string
+            && request.resource.data.provenance == 'UNTRUSTED'
+            && request.resource.data.sourceRef is string;
+        }
+      }
+
+      match /feed_items/{itemId} {
+        allow read, write: if ownsUser(userId);
+      }
+
+      // §4.3 read-only audit mirror: field-limited (no argumentsJson/planText
+      // ever leaves the device) and append-only — never deletable, matching
+      // the local action_log's own append-only contract.
+      match /audit_log/{entryId} {
+        allow read: if ownsUser(userId);
+        allow create, update: if ownsUser(userId)
+          && request.resource.data.keys().hasOnly([
+            'id', 'timestamp', 'toolName', 'decision', 'outcome', 'riskTier', 'blockReason'
+          ]);
+        allow delete: if false;
+      }
+
+      match /preferences/{preferenceId} {
+        allow read, write: if ownsUser(userId);
+      }
+    }
+  }
+}

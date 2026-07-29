@@ -6,9 +6,11 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -20,6 +22,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,13 +33,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.splinch.junction.BuildConfig
+import com.splinch.junction.accessibility.JunctionAccessibilityService
+import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.core.Config
 import com.splinch.junction.feed.FeedRepository
+import com.splinch.junction.platform.ShizukuCapability
+import com.splinch.junction.platform.ShizukuStatus
 import com.splinch.junction.scheduler.Scheduler
+import com.splinch.junction.settings.KeyStorage
+import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +69,9 @@ fun SettingsScreen(
     userPrefs: UserPrefsRepository,
     feedRepository: FeedRepository,
     authManager: AuthManager,
+    chatManager: ChatManager,
+    actionLogDao: com.splinch.junction.data.ActionLogDao,
+    memoryFactDao: com.splinch.junction.data.MemoryFactDao,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -62,27 +79,64 @@ fun SettingsScreen(
 
     val chatModel by userPrefs.chatModelFlow.collectAsState(initial = Config.buildChatModel)
     val chatApiKey by userPrefs.chatApiKeyFlow.collectAsState(initial = "")
+    val providerConfig by userPrefs.providerConfigFlow.collectAsState(initial = ProviderConfig())
     val digestInterval by userPrefs.digestIntervalMinutesFlow.collectAsState(initial = 30)
+    val digestEnabled by userPrefs.digestEnabledFlow.collectAsState(initial = false)
+    val digestQuietHours by userPrefs.digestQuietHoursFlow.collectAsState(initial = com.splinch.junction.scheduler.DigestQuietHours(false, 22, 7))
+    val digestProfile by userPrefs.digestProfileFlow.collectAsState(initial = com.splinch.junction.scheduler.DigestProfile.ALL)
     val realtimeEndpoint by userPrefs.realtimeEndpointFlow.collectAsState(initial = "")
     val realtimeClientSecretEndpoint by userPrefs.realtimeClientSecretEndpointFlow.collectAsState(initial = "")
+    val gmailAccountEmail by userPrefs.gmailAccountEmailFlow.collectAsState(initial = "")
+    val allowedWebDomains by userPrefs.allowedWebDomainsFlow.collectAsState(initial = emptySet())
     val notificationAck by userPrefs.notificationAccessAcknowledgedFlow.collectAsState(initial = false)
     val listenerEnabled by userPrefs.notificationListenerEnabledFlow.collectAsState(initial = false)
     val junctionOnlyNotifications by userPrefs.junctionOnlyNotificationsFlow.collectAsState(initial = false)
     val disabledPackages by userPrefs.disabledPackagesFlow.collectAsState(initial = emptySet())
     val connectedIntegrations by userPrefs.connectedIntegrationsFlow.collectAsState(initial = emptySet())
     val firebaseSyncEnabled by userPrefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
+    val shizukuEnabled by userPrefs.shizukuEnabledFlow.collectAsState(initial = false)
     val user by authManager.userFlow.collectAsState()
+
+    val keyStorage = remember { KeyStorage(context) }
+    var providerIdInput by remember { mutableStateOf(providerConfig.providerId) }
+    var providerApiKeyInput by remember { mutableStateOf("") }
+    var providerWorkhorseInput by remember { mutableStateOf(providerConfig.workhorseModel) }
+    var providerFrontierInput by remember { mutableStateOf(providerConfig.frontierModel) }
+    var providerBaseUrlInput by remember { mutableStateOf(providerConfig.baseUrl) }
+    var providerKeyVisible by remember { mutableStateOf(false) }
+    var providerTestStatus by remember { mutableStateOf("") }
+    var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
+
+    LaunchedEffect(shizukuEnabled) {
+        shizukuStatus = ShizukuCapability.status(shizukuEnabled)
+    }
 
     var chatModelInput by remember { mutableStateOf(chatModel) }
     var chatApiKeyInput by remember { mutableStateOf(chatApiKey) }
     var intervalInput by remember { mutableStateOf(digestInterval.toString()) }
+    var quietStartInput by remember { mutableStateOf(digestQuietHours.startHour.toString()) }
+    var quietEndInput by remember { mutableStateOf(digestQuietHours.endHour.toString()) }
     var realtimeEndpointInput by remember { mutableStateOf(realtimeEndpoint) }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
+    var gmailAccountEmailInput by remember { mutableStateOf(gmailAccountEmail) }
+    var allowedWebDomainsInput by remember { mutableStateOf(allowedWebDomains.joinToString("\n")) }
     var understandChecked by remember { mutableStateOf(false) }
     var packages by remember { mutableStateOf(emptyList<String>()) }
     val httpClient = remember { OkHttpClient() }
     var clientSecretStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
     var chatSmokeStatus by remember { mutableStateOf(ConnectionState(ConnectionStatus.IDLE)) }
+    var accessibilityEnabled by remember { mutableStateOf(JunctionAccessibilityService.isEnabled(context)) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityEnabled = JunctionAccessibilityService.isEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val integrations = remember(connectedIntegrations) {
         listOf(
@@ -121,11 +175,25 @@ fun SettingsScreen(
         )
     }
 
+    LaunchedEffect(providerConfig) {
+        providerIdInput = providerConfig.providerId
+        providerWorkhorseInput = providerConfig.workhorseModel
+        providerFrontierInput = providerConfig.frontierModel
+        providerBaseUrlInput = providerConfig.baseUrl
+        providerApiKeyInput = keyStorage.getApiKey(providerConfig.providerId)
+    }
+
     LaunchedEffect(chatModel) { chatModelInput = chatModel }
     LaunchedEffect(chatApiKey) { chatApiKeyInput = chatApiKey }
     LaunchedEffect(digestInterval) { intervalInput = digestInterval.toString() }
+    LaunchedEffect(digestQuietHours) {
+        quietStartInput = digestQuietHours.startHour.toString()
+        quietEndInput = digestQuietHours.endHour.toString()
+    }
     LaunchedEffect(realtimeEndpoint) { realtimeEndpointInput = realtimeEndpoint }
     LaunchedEffect(realtimeClientSecretEndpoint) { realtimeClientSecretInput = realtimeClientSecretEndpoint }
+    LaunchedEffect(gmailAccountEmail) { gmailAccountEmailInput = gmailAccountEmail }
+    LaunchedEffect(allowedWebDomains) { allowedWebDomainsInput = allowedWebDomains.sorted().joinToString("\n") }
 
     LaunchedEffect(Unit) {
         packages = feedRepository.getDistinctPackages()
@@ -139,6 +207,138 @@ fun SettingsScreen(
     ) {
         item {
             Text(text = "Settings", style = MaterialTheme.typography.titleLarge)
+        }
+
+        item {
+            Text(text = "AI Provider", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Connect an AI provider to use chat without a server.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = providerIdInput,
+                onValueChange = { providerIdInput = it },
+                label = { Text("Provider") },
+                placeholder = { Text("anthropic / openai / deepseek / custom") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = providerApiKeyInput,
+                onValueChange = { providerApiKeyInput = it },
+                label = { Text("API key") },
+                visualTransformation = if (providerKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    TextButton(onClick = { providerKeyVisible = !providerKeyVisible }) {
+                        Text(if (providerKeyVisible) "Hide" else "Show")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = providerWorkhorseInput,
+                onValueChange = { providerWorkhorseInput = it },
+                label = { Text("Workhorse model") },
+                placeholder = { Text("e.g. claude-haiku-4-5-20251001") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = providerFrontierInput,
+                onValueChange = { providerFrontierInput = it },
+                label = { Text("Frontier model (optional)") },
+                placeholder = { Text("e.g. claude-sonnet-4-6") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (providerIdInput == "custom") {
+                OutlinedTextField(
+                    value = providerBaseUrlInput,
+                    onValueChange = { providerBaseUrlInput = it },
+                    label = { Text("Base URL") },
+                    placeholder = { Text("https://api.example.com/v1") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(onClick = {
+                    scope.launch {
+                        val config = ProviderConfig(
+                            providerId = providerIdInput.trim(),
+                            apiKey = "",
+                            workhorseModel = providerWorkhorseInput.trim(),
+                            frontierModel = providerFrontierInput.trim(),
+                            baseUrl = providerBaseUrlInput.trim()
+                        )
+                        userPrefs.setProviderConfig(config)
+                        if (providerApiKeyInput.isNotBlank()) {
+                            keyStorage.setApiKey(providerIdInput.trim(), providerApiKeyInput)
+                        }
+                        providerTestStatus = "Saved."
+                    }
+                }) {
+                    Text("Save")
+                }
+                OutlinedButton(onClick = {
+                    providerTestStatus = "Testing..."
+                    scope.launch {
+                        // Basic connectivity check: just verify we have a key
+                        val key = keyStorage.getApiKey(providerIdInput.trim())
+                        providerTestStatus = if (key.isBlank()) "No API key set." else "Key present. Send a message to test."
+                    }
+                }) {
+                    Text("Test")
+                }
+            }
+            if (providerTestStatus.isNotBlank()) {
+                Text(
+                    text = providerTestStatus,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            // §Cost control: "you cannot control what you don't measure" —
+            // a running total of today's estimated spend, computed from the
+            // same audit rows that back the Audit tab.
+            val startOfToday = remember {
+                java.time.LocalDate.now()
+                    .atStartOfDay(java.time.ZoneId.systemDefault())
+                    .toInstant()
+                    .toEpochMilli()
+            }
+            val todaysCost by actionLogDao.totalCostSinceFlow(startOfToday).collectAsState(initial = null)
+            Text(
+                text = "Estimated spend today: ${"$%.4f".format(todaysCost ?: 0.0)} (approximate, from token usage)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            val voiceBackend by chatManager.voiceBackendState.collectAsState()
+            Text(text = "Voice backend", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Realtime uses OpenAI's low-latency voice API (needs the endpoint below). " +
+                    "On-device uses this phone's own speech recognition and text-to-speech, routed through " +
+                    "whichever text provider is configured above — works with any provider, higher latency.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "On-device (provider-agnostic)", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.width(8.dp))
+                Switch(
+                    checked = voiceBackend == com.splinch.junction.chat.VoiceBackend.LOCAL,
+                    onCheckedChange = { useLocal ->
+                        scope.launch {
+                            chatManager.setVoiceBackend(
+                                if (useLocal) com.splinch.junction.chat.VoiceBackend.LOCAL
+                                else com.splinch.junction.chat.VoiceBackend.REALTIME
+                            )
+                        }
+                    }
+                )
+            }
         }
 
         item {
@@ -166,6 +366,53 @@ fun SettingsScreen(
                 scope.launch { userPrefs.setRealtimeClientSecretEndpoint(realtimeClientSecretInput.trim()) }
             }) {
                 Text("Save client secret endpoint")
+            }
+        }
+
+        item {
+            Text(text = "Gmail", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Configure the Gmail account Junction may use for inbox triage and unsubscribe actions. " +
+                    "You'll be prompted to grant access the first time it's used.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            OutlinedTextField(
+                value = gmailAccountEmailInput,
+                onValueChange = { gmailAccountEmailInput = it },
+                label = { Text("Gmail account email") },
+                placeholder = { Text("you@gmail.com") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = {
+                scope.launch { userPrefs.setGmailAccountEmail(gmailAccountEmailInput.trim()) }
+            }) {
+                Text("Save Gmail account")
+            }
+        }
+
+        item {
+            Text(text = "Web destinations", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Junction may open HTTPS links only for domains you list here. One domain per line.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = allowedWebDomainsInput,
+                onValueChange = { allowedWebDomainsInput = it },
+                label = { Text("Allowed domains") },
+                placeholder = { Text("calendar.google.com\napp.slack.com") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(onClick = {
+                scope.launch {
+                    userPrefs.setAllowedWebDomains(
+                        allowedWebDomainsInput.lines().map { it.trim() }.filter { it.isNotBlank() }.toSet()
+                    )
+                }
+            }) {
+                Text("Save allowed domains")
             }
         }
 
@@ -270,6 +517,99 @@ fun SettingsScreen(
 
         item {
             Text(text = "Digest", style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Proactive digest", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "Show scheduled summaries of new feed items.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = digestEnabled,
+                    onCheckedChange = { enabled ->
+                        scope.launch {
+                            userPrefs.setDigestEnabled(enabled)
+                            Scheduler.configureFeedDigest(context, enabled, digestInterval.toLong())
+                        }
+                    }
+                )
+            }
+            Text(text = "Digest profile", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.splinch.junction.scheduler.DigestProfile.entries.forEach { profile ->
+                    if (profile == digestProfile) {
+                        Button(onClick = {}) { Text(profile.label) }
+                    } else {
+                        OutlinedButton(onClick = {
+                            scope.launch { userPrefs.setDigestProfile(profile) }
+                        }) { Text(profile.label) }
+                    }
+                }
+            }
+            Text(
+                text = "Focus includes work, projects, and system items. Personal includes conversations and communities.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "Quiet hours", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "Suppress digest notifications during a local time window.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = digestQuietHours.enabled,
+                    onCheckedChange = { enabled ->
+                        scope.launch {
+                            userPrefs.setDigestQuietHours(
+                                enabled,
+                                quietStartInput.toIntOrNull() ?: digestQuietHours.startHour,
+                                quietEndInput.toIntOrNull() ?: digestQuietHours.endHour
+                            )
+                        }
+                    }
+                )
+            }
+            if (digestQuietHours.enabled) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = quietStartInput,
+                        onValueChange = { quietStartInput = it },
+                        label = { Text("Quiet from (0-23)") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = quietEndInput,
+                        onValueChange = { quietEndInput = it },
+                        label = { Text("Quiet until (0-23)") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        userPrefs.setDigestQuietHours(
+                            enabled = true,
+                            startHour = quietStartInput.toIntOrNull() ?: digestQuietHours.startHour,
+                            endHour = quietEndInput.toIntOrNull() ?: digestQuietHours.endHour
+                        )
+                    }
+                }) {
+                    Text("Apply quiet hours")
+                }
+            }
             OutlinedTextField(
                 value = intervalInput,
                 onValueChange = { intervalInput = it },
@@ -281,7 +621,7 @@ fun SettingsScreen(
                 val safe = parsed.coerceAtLeast(15)
                 scope.launch {
                     userPrefs.setDigestIntervalMinutes(safe)
-                    Scheduler.scheduleFeedDigest(context, safe.toLong())
+                    Scheduler.configureFeedDigest(context, digestEnabled, safe.toLong())
                 }
             }) {
                 Text("Apply digest interval")
@@ -363,6 +703,138 @@ fun SettingsScreen(
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                 }) {
                     Text("Manage notification access")
+                }
+            }
+        }
+
+        item {
+            Text(text = "Screen automation", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Lets Junction read the screen and tap/type on your behalf when you ask it to " +
+                    "(e.g. \"reply to this thread\"). Every action still requires your confirmation in chat.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = if (accessibilityEnabled) "Accessibility service is enabled." else "Accessibility service is not enabled yet.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Button(onClick = {
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }) {
+                Text(if (accessibilityEnabled) "Manage accessibility access" else "Enable accessibility access")
+            }
+        }
+
+        item {
+            val alwaysAllowedTools by chatManager.alwaysAllowedTools.collectAsState()
+            Text(text = "Always-allow tools", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Tools you've promoted to auto-execute without a per-call confirmation. " +
+                    "Suspended automatically for any turn where untrusted content entered context.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (alwaysAllowedTools.isEmpty()) {
+                Text(
+                    text = "Nothing promoted yet — check the box on a plan step in chat to promote it.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                alwaysAllowedTools.sorted().forEach { tool ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(text = tool, style = MaterialTheme.typography.bodyMedium)
+                        TextButton(onClick = { scope.launch { chatManager.revokeAlwaysAllow(tool) } }) {
+                            Text("Revoke")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            val facts by memoryFactDao.allFlow().collectAsState(initial = emptyList())
+            Text(text = "Memory", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Facts Junction has remembered about you (max 200), built forward from conversation. " +
+                    "Deleting one here is permanent.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "${facts.size} / 200 remembered",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (facts.isEmpty()) {
+                Text(
+                    text = "Nothing remembered yet.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                facts.forEach { fact ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "[${fact.category}] ${fact.content}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { scope.launch { memoryFactDao.delete(fact.id) } }) {
+                            Text("Delete")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text(text = "Privileged access", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Connect to the owner-run Shizuku service. This does not enable any additional Junction actions until a capability is explicitly added and approved.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = "Enable Shizuku access", style = MaterialTheme.typography.bodyMedium)
+                Switch(
+                    checked = shizukuEnabled,
+                    onCheckedChange = { enabled ->
+                        scope.launch { userPrefs.setShizukuEnabled(enabled) }
+                    }
+                )
+            }
+            Text(
+                text = when (shizukuStatus) {
+                    ShizukuStatus.DISABLED -> "Shizuku access is disabled."
+                    ShizukuStatus.NOT_RUNNING -> "Shizuku is not running on this device."
+                    ShizukuStatus.PERMISSION_REQUIRED -> "Shizuku is running and needs your permission."
+                    ShizukuStatus.AVAILABLE -> "Shizuku permission is available."
+                },
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED) {
+                Button(onClick = {
+                    if (!ShizukuCapability.requestPermission(shizukuEnabled)) {
+                        Toast.makeText(context, "Shizuku permission request could not be started.", Toast.LENGTH_SHORT).show()
+                    }
+                    shizukuStatus = ShizukuCapability.status(shizukuEnabled)
+                }) {
+                    Text("Grant Shizuku permission")
+                }
+            }
+            if (shizukuEnabled && shizukuStatus != ShizukuStatus.PERMISSION_REQUIRED) {
+                TextButton(onClick = {
+                    shizukuStatus = ShizukuCapability.status(shizukuEnabled)
+                }) {
+                    Text("Refresh Shizuku status")
                 }
             }
         }

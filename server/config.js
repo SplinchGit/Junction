@@ -14,7 +14,7 @@ const config = {
   openAiApiKey: env.OPENAI_API_KEY || "",
   chatApiKey: env.JUNCTION_CHAT_API_KEY || "",
   openAiAllowedModels: toList(env.OPENAI_ALLOWED_MODELS),
-  openAiChatModel: env.OPENAI_CHAT_MODEL || "gpt-5.2",
+  openAiChatModel: env.OPENAI_CHAT_MODEL || "gpt-4.1-mini",
   openAiRealtimeModel: env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
   openAiRealtimeClientSecretTtl: parseInt(env.OPENAI_REALTIME_CLIENT_SECRET_TTL || "600", 10),
   adminEmail: env.ADMIN_EMAIL || "",

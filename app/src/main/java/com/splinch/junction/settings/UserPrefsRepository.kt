@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.splinch.junction.core.Config
+import com.splinch.junction.scheduler.DigestQuietHours
+import com.splinch.junction.scheduler.DigestProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -20,6 +22,11 @@ class UserPrefsRepository(private val context: Context) {
     private val chatModelKey = stringPreferencesKey("chat_model")
     private val chatApiKeyKey = stringPreferencesKey("chat_api_key")
     private val digestIntervalKey = intPreferencesKey("digest_interval_minutes")
+    private val digestEnabledKey = booleanPreferencesKey("digest_enabled")
+    private val digestQuietHoursEnabledKey = booleanPreferencesKey("digest_quiet_hours_enabled")
+    private val digestQuietHoursStartKey = intPreferencesKey("digest_quiet_hours_start")
+    private val digestQuietHoursEndKey = intPreferencesKey("digest_quiet_hours_end")
+    private val digestProfileKey = stringPreferencesKey("digest_profile")
     private val realtimeEndpointKey = stringPreferencesKey("realtime_endpoint")
     private val realtimeClientSecretEndpointKey = stringPreferencesKey("realtime_client_secret_endpoint")
     private val webClientIdOverrideKey = stringPreferencesKey("web_client_id_override")
@@ -35,9 +42,34 @@ class UserPrefsRepository(private val context: Context) {
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
     private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
     private val firebaseSyncEnabledKey = booleanPreferencesKey("firebase_sync_enabled")
+    private val shizukuEnabledKey = booleanPreferencesKey("shizuku_enabled")
+    private val providerIdKey = stringPreferencesKey("provider_id")
+    private val providerWorkhorseModelKey = stringPreferencesKey("provider_workhorse_model")
+    private val providerFrontierModelKey = stringPreferencesKey("provider_frontier_model")
+    private val providerBaseUrlKey = stringPreferencesKey("provider_base_url")
+    private val gmailAccountEmailKey = stringPreferencesKey("gmail_account_email")
+    private val allowedWebDomainsKey = stringSetPreferencesKey("allowed_web_domains")
+    private val alwaysAllowedToolsKey = stringSetPreferencesKey("always_allowed_tools")
+    private val voiceBackendKey = stringPreferencesKey("voice_backend")
 
     val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[firebaseSyncEnabledKey] ?: false
+    }
+
+    /** Explicit owner opt-in before Junction can request or use Shizuku permission. */
+    val shizukuEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[shizukuEnabledKey] ?: false
+    }
+
+    /** Provider config (without API key — that lives in KeyStorage). */
+    val providerConfigFlow: Flow<ProviderConfig> = context.dataStore.data.map { prefs ->
+        ProviderConfig(
+            providerId = prefs[providerIdKey] ?: "anthropic",
+            apiKey = "",  // API key is stored in KeyStorage, not here
+            workhorseModel = prefs[providerWorkhorseModelKey] ?: "",
+            frontierModel = prefs[providerFrontierModelKey] ?: "",
+            baseUrl = prefs[providerBaseUrlKey] ?: ""
+        )
     }
 
     val chatModelFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -52,6 +84,24 @@ class UserPrefsRepository(private val context: Context) {
         prefs[digestIntervalKey] ?: 30
     }
 
+    /** Explicit owner opt-in for proactive digest notifications. */
+    val digestEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[digestEnabledKey] ?: false
+    }
+
+    val digestQuietHoursFlow: Flow<DigestQuietHours> = context.dataStore.data.map { prefs ->
+        DigestQuietHours(
+            enabled = prefs[digestQuietHoursEnabledKey] ?: false,
+            startHour = prefs[digestQuietHoursStartKey] ?: 22,
+            endHour = prefs[digestQuietHoursEndKey] ?: 7
+        )
+    }
+
+    val digestProfileFlow: Flow<DigestProfile> = context.dataStore.data.map { prefs ->
+        runCatching { DigestProfile.valueOf(prefs[digestProfileKey] ?: DigestProfile.ALL.name) }
+            .getOrDefault(DigestProfile.ALL)
+    }
+
     val realtimeEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[realtimeEndpointKey] ?: Config.buildRealtimeEndpoint
     }
@@ -62,6 +112,35 @@ class UserPrefsRepository(private val context: Context) {
 
     val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[webClientIdOverrideKey] ?: ""
+    }
+
+    /** Gmail account explicitly configured by the owner for triage/unsubscribe tools (device-scoped; not synced). */
+    val gmailAccountEmailFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[gmailAccountEmailKey] ?: ""
+    }
+
+    /** Owner-managed HTTPS destinations permitted for app-open and VIEW intent tools. */
+    val allowedWebDomainsFlow: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[allowedWebDomainsKey] ?: emptySet()
+    }
+
+    /**
+     * §1.5 tools the owner has promoted to auto-execute without per-call
+     * confirmation. Persisted so the promotion survives app restarts;
+     * TrustGate still suspends these unconditionally whenever the session
+     * is tainted (§1.5/1.4), regardless of what's stored here.
+     */
+    val alwaysAllowedToolsFlow: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[alwaysAllowedToolsKey] ?: emptySet()
+    }
+
+    /** §3.1 "realtime" (OpenAI WebRTC) or "local" (on-device SpeechRecognizer/TextToSpeech). */
+    val voiceBackendFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[voiceBackendKey] ?: "realtime"
+    }
+
+    suspend fun setVoiceBackend(backend: String) {
+        context.dataStore.edit { it[voiceBackendKey] = backend }
     }
 
     val lastOpenedAtFlow: Flow<Long> = context.dataStore.data.map { prefs ->
@@ -133,6 +212,22 @@ class UserPrefsRepository(private val context: Context) {
         context.dataStore.edit { it[digestIntervalKey] = minutes }
     }
 
+    suspend fun setDigestEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[digestEnabledKey] = enabled }
+    }
+
+    suspend fun setDigestQuietHours(enabled: Boolean, startHour: Int, endHour: Int) {
+        context.dataStore.edit {
+            it[digestQuietHoursEnabledKey] = enabled
+            it[digestQuietHoursStartKey] = startHour.coerceIn(0, 23)
+            it[digestQuietHoursEndKey] = endHour.coerceIn(0, 23)
+        }
+    }
+
+    suspend fun setDigestProfile(profile: DigestProfile) {
+        context.dataStore.edit { it[digestProfileKey] = profile.name }
+    }
+
     suspend fun setRealtimeEndpoint(url: String) {
         context.dataStore.edit { it[realtimeEndpointKey] = url }
     }
@@ -143,6 +238,35 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setWebClientIdOverride(value: String) {
         context.dataStore.edit { it[webClientIdOverrideKey] = value }
+    }
+
+    suspend fun setGmailAccountEmail(email: String) {
+        context.dataStore.edit { it[gmailAccountEmailKey] = email }
+    }
+
+    suspend fun grantAlwaysAllowTool(toolName: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[alwaysAllowedToolsKey] ?: emptySet()
+            prefs[alwaysAllowedToolsKey] = current + toolName
+        }
+    }
+
+    suspend fun revokeAlwaysAllowTool(toolName: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[alwaysAllowedToolsKey] ?: emptySet()
+            prefs[alwaysAllowedToolsKey] = current - toolName
+        }
+    }
+
+    suspend fun setAllowedWebDomains(domains: Set<String>) {
+        val normalized = domains.mapNotNull { domain ->
+            domain.trim().lowercase()
+                .removePrefix("https://")
+                .removePrefix("http://")
+                .substringBefore('/')
+                .takeIf { it.matches(Regex("[a-z0-9.-]+")) }
+        }.toSet()
+        context.dataStore.edit { it[allowedWebDomainsKey] = normalized }
     }
 
     suspend fun setIntegrationConnected(provider: String, connected: Boolean) {
@@ -157,6 +281,20 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setFirebaseSyncEnabled(enabled: Boolean) {
         context.dataStore.edit { it[firebaseSyncEnabledKey] = enabled }
+    }
+
+    suspend fun setShizukuEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[shizukuEnabledKey] = enabled }
+    }
+
+    suspend fun setProviderConfig(config: ProviderConfig) {
+        context.dataStore.edit {
+            it[providerIdKey] = config.providerId
+            it[providerWorkhorseModelKey] = config.workhorseModel
+            it[providerFrontierModelKey] = config.frontierModel
+            it[providerBaseUrlKey] = config.baseUrl
+            // apiKey intentionally excluded — stored in KeyStorage
+        }
     }
 
     suspend fun updateLastOpenedAt(timestamp: Long) {

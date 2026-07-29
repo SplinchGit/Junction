@@ -7,6 +7,7 @@ import android.os.Build
 import android.util.Log
 import com.splinch.junction.chat.ChatMessage
 import com.splinch.junction.chat.Sender
+import com.splinch.junction.chat.provider.ToolDefinition
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
 import java.nio.ByteBuffer
@@ -210,6 +211,7 @@ class RealtimeSessionManager(
     private var dataChannel: DataChannel? = null
     private var localAudioSource: AudioSource? = null
     private var localAudioTrack: AudioTrack? = null
+    private var remoteAudioTrack: AudioTrack? = null
     private var audioManager: AudioManager? = null
     private var awaitingIce = CompletableDeferred<Unit>()
     private var dataChannelOpen = CompletableDeferred<Unit>()
@@ -261,6 +263,34 @@ class RealtimeSessionManager(
 
     fun setMicEnabled(enabled: Boolean) {
         localAudioTrack?.setEnabled(enabled)
+    }
+
+    /**
+     * §1.2 tool schemas are authored once, client-side, in ToolRegistry — the
+     * server only needs *a* tool list to stand the session up. Overwriting it
+     * here right after connect makes ToolRegistry the single source of truth
+     * for what the realtime (voice) lane can call, matching the text lane.
+     */
+    suspend fun sendToolDefinitions(tools: List<ToolDefinition>) {
+        awaitDataChannel()
+        val toolsArray = JSONArray()
+        for (tool in tools) {
+            toolsArray.put(
+                JSONObject().apply {
+                    put("type", "function")
+                    put("name", tool.name)
+                    put("description", tool.description)
+                    put("parameters", JSONObject(tool.parametersJson))
+                }
+            )
+        }
+        val event = JSONObject()
+        event.put("type", "session.update")
+        val sessionUpdate = JSONObject()
+        sessionUpdate.put("tools", toolsArray)
+        sessionUpdate.put("tool_choice", if (tools.isEmpty()) "none" else "auto")
+        event.put("session", sessionUpdate)
+        sendEvent(event)
     }
 
     suspend fun seedConversation(history: List<ChatMessage>) {
@@ -363,7 +393,13 @@ class RealtimeSessionManager(
 
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
 
-    override fun onAddStream(stream: MediaStream?) = Unit
+    override fun onAddStream(stream: MediaStream?) {
+        val track = stream?.audioTracks?.firstOrNull()
+        if (track != null) {
+            remoteAudioTrack = track
+            track.setEnabled(true)
+        }
+    }
 
     override fun onRemoveStream(stream: MediaStream?) = Unit
 
@@ -374,7 +410,19 @@ class RealtimeSessionManager(
 
     override fun onRenegotiationNeeded() = Unit
 
-    override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) = Unit
+    override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+        val track = receiver?.track() as? AudioTrack
+        if (track != null) {
+            remoteAudioTrack = track
+            track.setEnabled(true)
+        } else if (!streams.isNullOrEmpty()) {
+            val streamTrack = streams.firstOrNull()?.audioTracks?.firstOrNull()
+            if (streamTrack != null) {
+                remoteAudioTrack = streamTrack
+                streamTrack.setEnabled(true)
+            }
+        }
+    }
 
     override fun onCreateSuccess(sessionDescription: SessionDescription?) {
         if (sessionDescription == null) return
@@ -582,6 +630,8 @@ class RealtimeSessionManager(
         dataChannel?.unregisterObserver()
         dataChannel?.close()
         dataChannel = null
+        remoteAudioTrack?.setEnabled(false)
+        remoteAudioTrack = null
         localAudioTrack?.dispose()
         localAudioSource?.dispose()
         localAudioTrack = null

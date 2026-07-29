@@ -24,6 +24,8 @@ data class ChatMessage(
     val timestamp: Instant = Instant.now(),
     val sender: Sender,
     val content: String,
+    val provenance: Provenance = Provenance.OWNER,
+    val sourceRef: String? = null,
     val metadata: Map<String, String> = emptyMap()
 )
 

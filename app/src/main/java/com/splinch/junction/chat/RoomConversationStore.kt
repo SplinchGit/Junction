@@ -50,7 +50,9 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             id = id,
             timestamp = Instant.ofEpochMilli(timestamp),
             sender = senderFromString(sender),
-            content = content
+            content = content,
+            provenance = runCatching { Provenance.valueOf(provenance) }.getOrDefault(Provenance.UNTRUSTED),
+            sourceRef = sourceRef
         )
     }
 
@@ -60,7 +62,9 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             sessionId = sessionId,
             timestamp = timestamp.toEpochMilli(),
             sender = sender.name,
-            content = content
+            content = content,
+            provenance = provenance.name,
+            sourceRef = sourceRef
         )
     }
 }

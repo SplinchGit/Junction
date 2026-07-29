@@ -19,8 +19,6 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
-    id("com.google.gms.google-services")
-    id("com.google.firebase.crashlytics")
 }
 
 /* ---------- helpers (Gradle-safe Kotlin ONLY) ---------- */
@@ -50,6 +48,55 @@ configure<ApplicationExtension> {
     namespace = "com.splinch.junction"
     compileSdk = 36
 
+    val debugKeystore = file("debug.keystore")
+    val localProps = loadLocalProps(rootProject.projectDir)
+    val releaseStoreFile =
+        findProperty("JUNCTION_RELEASE_STORE_FILE")?.toString()
+            ?: localProps.getProperty("JUNCTION_RELEASE_STORE_FILE")
+            ?: System.getenv("JUNCTION_RELEASE_STORE_FILE")
+    val releaseStorePassword =
+        findProperty("JUNCTION_RELEASE_STORE_PASSWORD")?.toString()
+            ?: localProps.getProperty("JUNCTION_RELEASE_STORE_PASSWORD")
+            ?: System.getenv("JUNCTION_RELEASE_STORE_PASSWORD")
+    val releaseKeyAlias =
+        findProperty("JUNCTION_RELEASE_KEY_ALIAS")?.toString()
+            ?: localProps.getProperty("JUNCTION_RELEASE_KEY_ALIAS")
+            ?: System.getenv("JUNCTION_RELEASE_KEY_ALIAS")
+    val releaseKeyPassword =
+        findProperty("JUNCTION_RELEASE_KEY_PASSWORD")?.toString()
+            ?: localProps.getProperty("JUNCTION_RELEASE_KEY_PASSWORD")
+            ?: System.getenv("JUNCTION_RELEASE_KEY_PASSWORD")
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugKeystore.exists()) {
+                storeFile = debugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+        create("release") {
+            if (
+                !releaseStoreFile.isNullOrBlank() &&
+                !releaseStorePassword.isNullOrBlank() &&
+                !releaseKeyAlias.isNullOrBlank() &&
+                !releaseKeyPassword.isNullOrBlank()
+            ) {
+                storeFile = file(releaseStoreFile)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     defaultConfig {
         applicationId = "com.splinch.junction"
         minSdk = 26
@@ -65,25 +112,11 @@ configure<ApplicationExtension> {
             versionCodeValue.toString()
         )
 
-        buildConfigField(
-            "String",
-            "JUNCTION_API_BASE_URL",
-            "\"http://10.0.2.2:8787\""
-        )
-
-        buildConfigField(
-            "boolean",
-            "JUNCTION_USE_HTTP_BACKEND",
-            "false"
-        )
-
-        val localProps = loadLocalProps(rootProject.projectDir)
-
         val chatModel =
             findProperty("JUNCTION_CHAT_MODEL")?.toString()
                 ?: localProps.getProperty("JUNCTION_CHAT_MODEL")
                 ?: System.getenv("JUNCTION_CHAT_MODEL")
-                ?: "gpt-5.2"
+                ?: "gpt-4.1-mini"
 
         buildConfigField(
             "String",
@@ -91,10 +124,11 @@ configure<ApplicationExtension> {
             "\"$chatModel\""
         )
 
-        val webClientId = project.requireProp(
-            "JUNCTION_WEB_CLIENT_ID",
-            localProps
-        )
+        val webClientId =
+            findProperty("JUNCTION_WEB_CLIENT_ID")?.toString()
+                ?: localProps.getProperty("JUNCTION_WEB_CLIENT_ID")
+                ?: System.getenv("JUNCTION_WEB_CLIENT_ID")
+                ?: ""
 
         buildConfigField(
             "String",
@@ -140,6 +174,13 @@ configure<ApplicationExtension> {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            // The Gmail API stack (google-api-client-android, javax.mail) pulls
+            // in several jars that each ship their own copy of common
+            // META-INF metadata files — pure packaging duplicates with
+            // identical or irrelevant content, safe to exclude from the APK.
+            excludes += "/META-INF/DEPENDENCIES"
+            excludes += "/META-INF/LICENSE*"
+            excludes += "/META-INF/NOTICE*"
         }
     }
 }
@@ -175,6 +216,10 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.08.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("junit:junit:4.13.2")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -184,6 +229,17 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("com.infobip:google-webrtc:1.0.45036")
+    implementation("androidx.security:security-crypto:1.1.0-alpha07")
+    implementation("dev.rikka.shizuku:api:13.1.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("com.google.apis:google-api-services-gmail:v1-rev20220404-2.0.0")
+    implementation("com.google.api-client:google-api-client-android:2.6.0") {
+        exclude(group = "org.apache.httpcomponents")
+    }
+
+    // Android port of JavaMail, used by GmailCopilot to build/send MIME replies.
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
 }

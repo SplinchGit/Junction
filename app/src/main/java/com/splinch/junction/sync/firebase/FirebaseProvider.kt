@@ -22,19 +22,12 @@ object FirebaseProvider {
 
     fun isInitialized(): Boolean = initialized
 
-    private fun ensureInitialized() {
-        if (!initialized) {
-            appContext?.let { initialize(it) }
-        }
-    }
-
+    /** Firebase clients are unavailable until an explicit owner opt-in initializes the SDK. */
     fun authOrNull(): FirebaseAuth? {
-        ensureInitialized()
         return if (initialized) FirebaseAuth.getInstance() else null
     }
 
     fun firestoreOrNull(): FirebaseFirestore? {
-        ensureInitialized()
         return if (initialized) FirebaseFirestore.getInstance() else null
     }
 }

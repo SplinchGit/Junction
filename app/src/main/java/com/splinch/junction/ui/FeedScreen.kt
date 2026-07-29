@@ -30,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.feed.model.FeedStatus
 import com.splinch.junction.notifications.NotificationTapStore
 import com.splinch.junction.update.UpdateInfo
+import com.splinch.junction.update.UpdateInstaller
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import java.time.Instant
@@ -63,13 +65,14 @@ fun FeedScreen(
     lastOpenedAt: Long,
     feedRepository: FeedRepository,
     updateInfo: UpdateInfo?,
-    onAskChat: (voice: Boolean) -> Unit = {},
+    onAskChat: (item: FeedItem, voice: Boolean) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedItem by remember { mutableStateOf<FeedItem?>(null) }
+    var chatItem by remember { mutableStateOf<FeedItem?>(null) }
     var showUpdateBanner by remember { mutableStateOf(updateInfo != null) }
     var showChatChooser by remember { mutableStateOf(false) }
 
@@ -116,9 +119,32 @@ fun FeedScreen(
 
             if (updateInfo != null && showUpdateBanner) {
                 UpdateBanner(updateInfo = updateInfo, onOpen = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url))
-                    context.startActivity(intent)
+                    scope.launch {
+                        if (updateInfo.apkUrl != null && updateInfo.sha256Url != null) {
+                            UpdateInstaller(context).downloadAndRequestInstall(updateInfo).getOrElse {
+                                Toast.makeText(context, it.message ?: "Could not verify update.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url)))
+                        }
+                    }
                 })
+            }
+
+            // §4.2 one-tap rollback: only shown once an update has actually
+            // backed up the previously-installed APK.
+            var hasBackup by remember { mutableStateOf(UpdateInstaller(context).hasPreviousVersionBackup()) }
+            if (hasBackup) {
+                TextButton(onClick = {
+                    scope.launch {
+                        UpdateInstaller(context).revertToPreviousVersion().getOrElse {
+                            Toast.makeText(context, it.message ?: "Could not revert.", Toast.LENGTH_LONG).show()
+                        }
+                        hasBackup = UpdateInstaller(context).hasPreviousVersionBackup()
+                    }
+                }) {
+                    Text("Revert to previous version")
+                }
             }
 
             Text(
@@ -209,6 +235,7 @@ fun FeedScreen(
                 },
                 onAskChat = {
                     // Ask voice/text in a separate prompt so it's always explicit.
+                    chatItem = selectedItem
                     showChatChooser = true
                     selectedItem = null
                 },
@@ -243,11 +270,13 @@ fun FeedScreen(
                 Text(text = "Open JunctionGPT", style = MaterialTheme.typography.titleMedium)
                 ActionRow("Text chat") {
                     showChatChooser = false
-                    onAskChat(false)
+                    chatItem?.let { onAskChat(it, false) }
+                    chatItem = null
                 }
                 ActionRow("Voice chat") {
                     showChatChooser = false
-                    onAskChat(true)
+                    chatItem?.let { onAskChat(it, true) }
+                    chatItem = null
                 }
             }
         }
@@ -281,7 +310,11 @@ private fun UpdateBanner(updateInfo: UpdateInfo, onOpen: () -> Unit) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Text(
-                text = "Version ${updateInfo.version} is ready. Tap to view release.",
+                text = if (updateInfo.apkUrl != null && updateInfo.sha256Url != null) {
+                    "Version ${updateInfo.version} is ready. Tap to verify and install."
+                } else {
+                    "Version ${updateInfo.version} is ready. Tap to view release."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
