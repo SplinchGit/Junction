@@ -65,6 +65,13 @@ const BASE_INSTRUCTIONS = [
 ].join("\n");
 
 function buildSessionConfig() {
+  // Tool schemas are authored once, client-side, in ToolRegistry.kt -- the Android
+  // client overwrites this via a session.update sent immediately after connect
+  // (see RealtimeSessionManager.kt's sendToolDefinitions), so ToolRegistry stays
+  // the single source of truth. Standing the session up with an empty tool list
+  // here (rather than a hand-maintained duplicate that silently drifts out of
+  // sync, as the previous ~25-line list of 5 stale tools had already done) is
+  // intentional, matching server/index.js's equivalent function.
   return {
     type: "realtime",
     model: process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview",
@@ -75,69 +82,8 @@ function buildSessionConfig() {
       create_response: true,
     },
     instructions: BASE_INSTRUCTIONS,
-    tool_choice: "auto",
-    tools: [
-      {
-        type: "function",
-        name: "set_speech_mode",
-        description: "Enable or disable speech mode for the current conversation.",
-        parameters: {
-          type: "object",
-          properties: {
-            conversationId: { type: "string" },
-            enabled: { type: "boolean" }
-          },
-          required: ["enabled"]
-        }
-      },
-      {
-        type: "function",
-        name: "set_feed_filter",
-        description: "Enable or disable a package from the feed.",
-        parameters: {
-          type: "object",
-          properties: {
-            packageName: { type: "string" },
-            enabled: { type: "boolean" }
-          },
-          required: ["packageName", "enabled"]
-        }
-      },
-      {
-        type: "function",
-        name: "archive_feed_item",
-        description: "Archive a feed item by id.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string" }
-          },
-          required: ["id"]
-        }
-      },
-      {
-        type: "function",
-        name: "check_for_updates",
-        description: "Check for app updates.",
-        parameters: {
-          type: "object",
-          properties: {}
-        }
-      },
-      {
-        type: "function",
-        name: "set_setting",
-        description: "Update a settings key.",
-        parameters: {
-          type: "object",
-          properties: {
-            key: { type: "string" },
-            value: { type: "string" }
-          },
-          required: ["key", "value"]
-        }
-      }
-    ]
+    tool_choice: "none",
+    tools: []
   };
 }
 
