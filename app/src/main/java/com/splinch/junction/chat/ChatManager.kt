@@ -291,25 +291,26 @@ class ChatManager(
         appendMessage(userMessage)
 
         if (_speechModeEnabled.value) {
-            // Speech mode: use Realtime API
+            // Speech mode: use Realtime API, but never let an unconfigured or
+            // unreachable voice backend block the user's typed text from
+            // getting a real answer — fall through to the text-provider path.
             val realtimeConfigured = prefs.realtimeEndpointFlow.first().isNotBlank() ||
                 prefs.realtimeClientSecretEndpointFlow.first().isNotBlank()
-            if (!realtimeConfigured) {
-                appendSystemMessage("No realtime backend configured.")
-                return
+            var usedRealtime = false
+            if (realtimeConfigured) {
+                val history = _messages.value
+                val keepAlive = chatVisible
+                val connected = ensureConnected(keepAlive, history)
+                if (connected) realtime.setMicEnabled(_micEnabled.value)
+                if (realtime.isConnected()) {
+                    disconnectAfterResponse = !keepAlive
+                    realtime.sendUserText(processed.content)
+                    realtime.requestResponse()
+                    usedRealtime = true
+                }
             }
-            val history = _messages.value
-            val keepAlive = chatVisible
-            val connected = ensureConnected(keepAlive, history)
-            if (connected) realtime.setMicEnabled(_micEnabled.value)
-            if (realtime.isConnected()) {
-                disconnectAfterResponse = !keepAlive
-                realtime.sendUserText(processed.content)
-                realtime.requestResponse()
-                return
-            }
-            appendSystemMessage("Realtime session unavailable.")
-            return
+            if (usedRealtime) return
+            appendSystemMessage("Voice isn't available right now — replying via text instead.")
         }
 
         // Text mode: use LLM provider
@@ -325,7 +326,7 @@ class ChatManager(
         pendingFrontierEscalation = false
 
         scope.launch(Dispatchers.IO) {
-            val contextBlocks = buildContextBlocks()
+            val contextBlocks = buildContextBlocks(activeProvider)
             val tools = if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
@@ -412,7 +413,7 @@ class ChatManager(
                     fatalError = laneError
                     break
                 }
-                appendSystemMessage("${currentProvider.id} failed ($laneError); falling back to ${fallback.id}.")
+                appendSystemMessage("${currentProvider.id} failed (${cleanProviderError(laneError)}); falling back to ${fallback.id}.")
                 currentProvider = fallback
                 itemId = UUID.randomUUID().toString()
                 accumulatedText = ""
@@ -421,7 +422,7 @@ class ChatManager(
             }
 
             if (fatalError != null) {
-                appendSystemMessage("Error: $fatalError")
+                appendSystemMessage("Error: ${cleanProviderError(fatalError)}")
                 return@launch
             }
 
@@ -577,10 +578,16 @@ class ChatManager(
         realtime.sendToolResult(callId, output)
     }
 
-    private suspend fun buildContextBlocks(): List<ContextBlock> {
+    private suspend fun buildContextBlocks(
+        activeProvider: com.splinch.junction.chat.provider.LlmProvider
+    ): List<ContextBlock> {
         val systemBlock = ContextBlock(
             role = "system",
-            content = ACTOR_SYSTEM_INSTRUCTIONS,
+            content = ACTOR_SYSTEM_INSTRUCTIONS +
+                "\n\nYou are currently running on the '${activeProvider.id}' provider " +
+                "(model: ${activeProvider.workhorseModel}). If asked which AI, model, or provider " +
+                "you are, answer this directly and factually -- never guess from unrelated system " +
+                "or error messages that may appear elsewhere in this conversation.",
             provenance = Provenance.JUNCTION,
             sourceRef = "junction:actor-policy"
         )
@@ -887,7 +894,19 @@ class ChatManager(
     }
 
     override fun onError(message: String) {
-        scope.launch { appendSystemMessage(message) }
+        // Class-resolution/native-library failures are developer-facing noise,
+        // not something a user should see verbatim (and reads identically on
+        // every retry) — show one clean, stable message instead.
+        val friendly = if (message.startsWith("Failed resolution of:") || message.contains("NoClassDefFoundError")) {
+            "Voice calling isn't available on this build."
+        } else {
+            message
+        }
+        scope.launch {
+            if (_messages.value.lastOrNull()?.content != friendly) {
+                appendSystemMessage(friendly)
+            }
+        }
     }
 
     // ── LocalVoiceListener (§3.1 non-Realtime voice backend) ────────────────
@@ -955,6 +974,21 @@ class ChatManager(
                 sourceRef = "system"
             )
         )
+    }
+
+    /**
+     * Provider errors carry the raw HTTP body (e.g. Anthropic/OpenAI-style
+     * `{"error":{"message":"..."}}`) so callers can inspect it, but showing
+     * that verbatim in chat is unfriendly. Extract just the human-readable
+     * message when present; fall back to the raw string otherwise.
+     */
+    private fun cleanProviderError(raw: String?): String {
+        if (raw == null) return "Unknown error"
+        val jsonStart = raw.indexOf('{')
+        if (jsonStart == -1) return raw
+        return runCatching {
+            JSONObject(raw.substring(jsonStart)).optJSONObject("error")?.optString("message")
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: raw
     }
 
     private fun buildStatsText(): String {
