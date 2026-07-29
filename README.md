@@ -1,5 +1,9 @@
 # Junction
 
+[![Download APK](https://img.shields.io/badge/Download-APK-4f7cff?style=for-the-badge)](https://splinchgit.github.io/Junction/)
+
+Grab the latest debug build straight to your phone: **[Download APK](https://splinchgit.github.io/Junction/)** — the page rebuilds automatically on every push to `main`.
+
 An Android-native assistant that acts on your phone under trust you control and can audit. It reads
 the screen, replies to messages, manages email, and drives apps — always with a client-side trust
 gate between "the model wants to do X" and "X actually happens."
@@ -194,6 +198,11 @@ a new one, text input stays available throughout.
   egress tool call you've approved.
 
 ## Update pipeline / direct APK releases
+
+**Latest debug build:** [splinchgit.github.io/Junction](https://splinchgit.github.io/Junction/) always serves the
+most recent debug APK from `main`, rebuilt by the `publish-pages` job in `Build Android APK`
+(`.github/workflows/android-build.yml`) on every push. This is unsigned and meant for quick
+sideloading, not the signed release flow below.
 
 The `Android Release` workflow builds a signed APK + SHA-256 checksum on a `v*` tag push (repo
 secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
