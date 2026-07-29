@@ -26,7 +26,9 @@ data class ChatMessage(
     val content: String,
     val provenance: Provenance = Provenance.OWNER,
     val sourceRef: String? = null,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    // Absolute path to an app-private, pre-downscaled JPEG attached to this message.
+    val imagePath: String? = null
 )
 
 data class ChatSession(

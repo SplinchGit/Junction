@@ -2,9 +2,13 @@ package com.splinch.junction.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -23,10 +28,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -47,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +64,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -72,7 +84,9 @@ import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.ui.components.JunctionTextField
 import java.time.Instant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatScreen(
@@ -88,14 +102,30 @@ fun ChatScreen(
     val micEnabled by chatManager.micEnabled.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
     var input by remember { mutableStateOf("") }
+    var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var pendingSpeechEnable by remember { mutableStateOf(false) }
-    val sendEnabled = input.isNotBlank()
+    val sendEnabled = input.isNotBlank() || pendingImagePath != null
 
     DisposableEffect(Unit) {
         chatManager.setChatVisible(true)
         onDispose { chatManager.setChatVisible(false) }
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val path = withContext(Dispatchers.IO) { copyAndDownscaleImage(context, uri) }
+                if (path != null) {
+                    pendingImagePath = path
+                } else {
+                    Toast.makeText(context, "Couldn't load that image", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -242,8 +272,20 @@ fun ChatScreen(
         }
 
         val listState = rememberLazyListState()
+        // Only auto-follow new content if the user was already at (or very near)
+        // the bottom -- otherwise a response streaming in would keep yanking
+        // them back down every time they tried to scroll up to read history.
+        val isNearBottom by remember {
+            derivedStateOf {
+                val layoutInfo = listState.layoutInfo
+                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+                lastVisible == null || lastVisible.index >= layoutInfo.totalItemsCount - 2
+            }
+        }
         LaunchedEffect(messages.size, streaming?.content) {
-            listState.animateScrollToItem(messages.size)
+            if (isNearBottom) {
+                listState.animateScrollToItem(messages.size)
+            }
         }
 
         LazyColumn(
@@ -330,12 +372,21 @@ fun ChatScreen(
             onTextChange = { input = it },
             onSend = {
                 val trimmed = input.trim()
-                if (trimmed.isNotEmpty() && sendEnabled) {
-                    scope.launch { chatManager.sendUserMessage(trimmed) }
+                if (sendEnabled) {
+                    val imagePath = pendingImagePath
+                    scope.launch { chatManager.sendUserMessage(trimmed, imagePath) }
                     input = ""
+                    pendingImagePath = null
                 }
             },
-            sendEnabled = sendEnabled
+            sendEnabled = sendEnabled,
+            pendingImagePath = pendingImagePath,
+            onAttachImage = {
+                photoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onRemoveImage = { pendingImagePath = null }
         )
     }
 }
@@ -345,37 +396,115 @@ fun ChatInputRow(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    sendEnabled: Boolean
+    sendEnabled: Boolean,
+    pendingImagePath: String? = null,
+    onAttachImage: () -> Unit = {},
+    onRemoveImage: () -> Unit = {}
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .imePadding()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        JunctionTextField(
-            value = text,
-            onValueChange = onTextChange,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 56.dp, max = 160.dp),
-            placeholder = "Message Junction…",
-            singleLine = false,
-            maxLines = 6
-        )
-
-        Spacer(Modifier.width(8.dp))
-
-        IconButton(
-            onClick = onSend,
-            enabled = sendEnabled,
-            modifier = Modifier.size(56.dp)
+        if (pendingImagePath != null) {
+            val bitmap = remember(pendingImagePath) {
+                BitmapFactory.decodeFile(pendingImagePath)?.asImageBitmap()
+            }
+            if (bitmap != null) {
+                Box(modifier = Modifier.padding(bottom = 8.dp)) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Attached image",
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                    IconButton(
+                        onClick = onRemoveImage,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .align(Alignment.TopEnd)
+                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Remove image",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom
         ) {
-            Icon(Icons.Default.Send, contentDescription = "Send")
+            IconButton(onClick = onAttachImage, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.Image, contentDescription = "Attach image")
+            }
+
+            Spacer(Modifier.width(4.dp))
+
+            JunctionTextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 56.dp, max = 160.dp),
+                placeholder = "Message Junction…",
+                singleLine = false,
+                maxLines = 6
+            )
+
+            Spacer(Modifier.width(8.dp))
+
+            IconButton(
+                onClick = onSend,
+                enabled = sendEnabled,
+                modifier = Modifier.size(56.dp)
+            ) {
+                Icon(Icons.Default.Send, contentDescription = "Send")
+            }
         }
     }
+}
+
+/**
+ * Copies a picked photo into app-private storage as a downscaled JPEG --
+ * never keeps a reference to the original content:// URI, since the Photo
+ * Picker only grants temporary read access to it.
+ */
+private fun copyAndDownscaleImage(context: android.content.Context, uri: android.net.Uri): String? {
+    return runCatching {
+        val original = context.contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream)
+        } ?: return null
+
+        val maxDimension = 1568
+        val largestSide = maxOf(original.width, original.height)
+        val scale = if (largestSide > maxDimension) maxDimension.toFloat() / largestSide else 1f
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                original,
+                (original.width * scale).toInt().coerceAtLeast(1),
+                (original.height * scale).toInt().coerceAtLeast(1),
+                true
+            )
+        } else {
+            original
+        }
+
+        val dir = java.io.File(context.filesDir, "chat_images").apply { mkdirs() }
+        val file = java.io.File(dir, "${java.util.UUID.randomUUID()}.jpg")
+        java.io.FileOutputStream(file).use { out ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        }
+        file.absolutePath
+    }.getOrNull()
 }
 
 @Composable
@@ -609,14 +738,32 @@ private fun MessageBubble(message: ChatMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .sizeIn(maxWidth = 280.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(bubbleColor)
                 .padding(12.dp)
         ) {
-            Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+            message.imagePath?.let { path ->
+                val bitmap = remember(path) { BitmapFactory.decodeFile(path)?.asImageBitmap() }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Attached image",
+                        modifier = Modifier
+                            .sizeIn(maxWidth = 256.dp, maxHeight = 256.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    if (message.content.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+            if (message.content.isNotBlank()) {
+                Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

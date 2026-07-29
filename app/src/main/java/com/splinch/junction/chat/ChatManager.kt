@@ -257,7 +257,7 @@ class ChatManager(
         )
     }
 
-    suspend fun sendUserMessage(raw: String) {
+    suspend fun sendUserMessage(raw: String, imagePath: String? = null) {
         // §1.1 explicit escalation request: "/frontier <message>" forces the
         // frontier lane for this turn without being swallowed by the
         // MessageHandler's generic "/"-prefixed command dispatch.
@@ -277,7 +277,7 @@ class ChatManager(
         }
 
         val (isValid, error) = messageHandler.validateMessage(processed.content)
-        if (!isValid) {
+        if (!isValid && imagePath == null) {
             appendSystemMessage(error ?: "Invalid message")
             return
         }
@@ -286,11 +286,15 @@ class ChatManager(
             sender = Sender.USER,
             content = processed.content,
             provenance = Provenance.OWNER,
-            sourceRef = "user_message:${UUID.randomUUID()}"
+            sourceRef = "user_message:${UUID.randomUUID()}",
+            imagePath = imagePath
         )
         appendMessage(userMessage)
 
-        if (_speechModeEnabled.value) {
+        // Vision needs the text-provider API either way -- Realtime voice has
+        // no image channel in this app, so route straight past it when an
+        // image is attached rather than silently dropping the picture.
+        if (_speechModeEnabled.value && imagePath == null) {
             // Speech mode: use Realtime API, but never let an unconfigured or
             // unreachable voice backend block the user's typed text from
             // getting a real answer — fall through to the text-provider path.
@@ -594,6 +598,7 @@ class ChatManager(
         val blocks = mutableListOf(systemBlock)
         buildMemoryBlock()?.let { blocks.add(it) }
         val messageBlocks = _messages.value.map { msg ->
+            val encodedImage = msg.imagePath?.let { encodeImageForContext(it) }
             ContextBlock(
                 role = when (msg.sender) {
                     Sender.USER -> "user"
@@ -602,10 +607,21 @@ class ChatManager(
                 },
                 content = renderContextEnvelope(msg),
                 provenance = msg.provenance,
-                sourceRef = msg.sourceRef
+                sourceRef = msg.sourceRef,
+                imageBase64 = encodedImage?.first,
+                imageMimeType = encodedImage?.second
             )
         }
         return blocks + applyContextBudget(messageBlocks)
+    }
+
+    /** Reads and base64-encodes an attached image for the provider payload; called on Dispatchers.IO. */
+    private fun encodeImageForContext(path: String): Pair<String, String>? {
+        return runCatching {
+            val bytes = java.io.File(path).readBytes()
+            val base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            base64 to "image/jpeg"
+        }.getOrNull()
     }
 
     /**

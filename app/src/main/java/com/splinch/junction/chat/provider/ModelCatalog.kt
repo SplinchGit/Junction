@@ -13,7 +13,8 @@ data class ModelEntry(
     val costTier: String,
     val blurb: String,
     val inputPerMillionUsd: Double,
-    val outputPerMillionUsd: Double
+    val outputPerMillionUsd: Double,
+    val supportsVision: Boolean = false
 )
 
 data class ProviderDefinition(
@@ -39,9 +40,9 @@ object ModelCatalog {
             baseUrl = "https://api.anthropic.com/v1",
             defaultModelId = "claude-haiku-4-5-20251001",
             models = listOf(
-                ModelEntry("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive — great default for everyday chat.", 0.80, 4.0),
-                ModelEntry("claude-sonnet-4-6", "Claude Sonnet 4.6", "$$ Balanced", "Strong reasoning at a moderate cost — good frontier escalation target.", 3.0, 15.0),
-                ModelEntry("claude-opus-4-6", "Claude Opus 4.6", "$$$ Most capable", "Anthropic's most capable model, for the hardest tasks.", 15.0, 75.0)
+                ModelEntry("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive — great default for everyday chat.", 0.80, 4.0, supportsVision = true),
+                ModelEntry("claude-sonnet-4-6", "Claude Sonnet 4.6", "$$ Balanced", "Strong reasoning at a moderate cost — good frontier escalation target.", 3.0, 15.0, supportsVision = true),
+                ModelEntry("claude-opus-4-6", "Claude Opus 4.6", "$$$ Most capable", "Anthropic's most capable model, for the hardest tasks.", 15.0, 75.0, supportsVision = true)
             )
         ),
         ProviderDefinition(
@@ -53,9 +54,9 @@ object ModelCatalog {
             baseUrl = "https://api.openai.com/v1",
             defaultModelId = "gpt-4.1-mini",
             models = listOf(
-                ModelEntry("gpt-4.1-mini", "GPT-4.1 Mini", "$ Cheap", "Fast, inexpensive, good default.", 0.40, 1.60),
-                ModelEntry("gpt-4.1", "GPT-4.1", "$$ Balanced", "More capable than Mini, still efficient.", 2.0, 8.0),
-                ModelEntry("gpt-4o", "GPT-4o", "$$ Balanced", "Multimodal flagship, strong all-rounder.", 2.5, 10.0)
+                ModelEntry("gpt-4.1-mini", "GPT-4.1 Mini", "$ Cheap", "Fast, inexpensive, good default.", 0.40, 1.60, supportsVision = true),
+                ModelEntry("gpt-4.1", "GPT-4.1", "$$ Balanced", "More capable than Mini, still efficient.", 2.0, 8.0, supportsVision = true),
+                ModelEntry("gpt-4o", "GPT-4o", "$$ Balanced", "Multimodal flagship, strong all-rounder.", 2.5, 10.0, supportsVision = true)
             )
         ),
         ProviderDefinition(
@@ -106,8 +107,8 @@ object ModelCatalog {
             baseUrl = "https://api.x.ai/v1",
             defaultModelId = "grok-4-fast",
             models = listOf(
-                ModelEntry("grok-4-fast", "Grok 4 Fast", "$ Cheap", "xAI's fast, inexpensive default.", 0.20, 0.50),
-                ModelEntry("grok-4", "Grok 4", "$$$ Most capable", "xAI's flagship reasoning model.", 3.0, 15.0)
+                ModelEntry("grok-4-fast", "Grok 4 Fast", "$ Cheap", "xAI's fast, inexpensive default.", 0.20, 0.50, supportsVision = true),
+                ModelEntry("grok-4", "Grok 4", "$$$ Most capable", "xAI's flagship reasoning model.", 3.0, 15.0, supportsVision = true)
             )
         ),
         ProviderDefinition(
@@ -119,8 +120,8 @@ object ModelCatalog {
             baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
             defaultModelId = "gemini-2.5-flash",
             models = listOf(
-                ModelEntry("gemini-2.5-flash", "Gemini 2.5 Flash", "$ Cheap", "Google's fast, low-cost default.", 0.15, 0.60),
-                ModelEntry("gemini-2.5-pro", "Gemini 2.5 Pro", "$$ Balanced", "Google's most capable model, strong at long context.", 1.25, 5.0)
+                ModelEntry("gemini-2.5-flash", "Gemini 2.5 Flash", "$ Cheap", "Google's fast, low-cost default.", 0.15, 0.60, supportsVision = true),
+                ModelEntry("gemini-2.5-pro", "Gemini 2.5 Pro", "$$ Balanced", "Google's most capable model, strong at long context.", 1.25, 5.0, supportsVision = true)
             )
         ),
         ProviderDefinition(
@@ -132,7 +133,7 @@ object ModelCatalog {
             baseUrl = "https://openrouter.ai/api/v1",
             defaultModelId = "openrouter/auto",
             models = listOf(
-                ModelEntry("openrouter/auto", "Auto (best match)", "$$ Varies", "Lets OpenRouter pick the best available model for your prompt.", 1.0, 3.0)
+                ModelEntry("openrouter/auto", "Auto (best match)", "$$ Varies", "Lets OpenRouter pick the best available model for your prompt.", 1.0, 3.0, supportsVision = true)
             )
         ),
         ProviderDefinition(

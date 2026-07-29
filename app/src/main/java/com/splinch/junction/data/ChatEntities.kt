@@ -19,5 +19,9 @@ data class ChatMessageEntity(
     val sender: String,
     val content: String,
     val provenance: String = "UNTRUSTED",
-    val sourceRef: String? = null
+    val sourceRef: String? = null,
+    // Absolute path to an app-private, pre-downscaled JPEG -- never a raw
+    // content:// URI, since the Photo Picker only grants temporary read
+    // access to those.
+    val imagePath: String? = null
 )

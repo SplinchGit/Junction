@@ -42,7 +42,7 @@ class AnthropicProvider(
         for (block in context.filter { it.role != "system" }) {
             messages.put(JSONObject().apply {
                 put("role", block.role)
-                put("content", block.content)
+                put("content", buildAnthropicContent(block))
             })
         }
 
@@ -169,6 +169,27 @@ class AnthropicProvider(
             emit(LlmEvent.Done)
         }
     }.flowOn(Dispatchers.IO)
+
+    /** Plain text for a normal turn; a content-block array when an image is attached. */
+    private fun buildAnthropicContent(block: ContextBlock): Any {
+        val imageBase64 = block.imageBase64 ?: return block.content
+        val parts = JSONArray()
+        if (block.content.isNotBlank()) {
+            parts.put(JSONObject().apply {
+                put("type", "text")
+                put("text", block.content)
+            })
+        }
+        parts.put(JSONObject().apply {
+            put("type", "image")
+            put("source", JSONObject().apply {
+                put("type", "base64")
+                put("media_type", block.imageMimeType ?: "image/jpeg")
+                put("data", imageBase64)
+            })
+        })
+        return parts
+    }
 
     override suspend fun readUntrusted(content: String, sourceHint: String): ReaderOutput? {
         val systemPrompt = """You are a content reader. Analyze the provided content and return ONLY a JSON object with this exact structure:

@@ -36,7 +36,7 @@ class OpenAiCompatibleProvider(
         for (block in context) {
             messages.put(JSONObject().apply {
                 put("role", block.role)
-                put("content", block.content)
+                put("content", buildOpenAiContent(block))
             })
         }
 
@@ -163,6 +163,26 @@ class OpenAiCompatibleProvider(
             emit(LlmEvent.Done)
         }
     }.flowOn(Dispatchers.IO)
+
+    /** Plain text for a normal turn; an OpenAI-style content-part array when an image is attached. */
+    private fun buildOpenAiContent(block: ContextBlock): Any {
+        val imageBase64 = block.imageBase64 ?: return block.content
+        val parts = JSONArray()
+        if (block.content.isNotBlank()) {
+            parts.put(JSONObject().apply {
+                put("type", "text")
+                put("text", block.content)
+            })
+        }
+        val mimeType = block.imageMimeType ?: "image/jpeg"
+        parts.put(JSONObject().apply {
+            put("type", "image_url")
+            put("image_url", JSONObject().apply {
+                put("url", "data:$mimeType;base64,$imageBase64")
+            })
+        })
+        return parts
+    }
 
     override suspend fun readUntrusted(content: String, sourceHint: String): ReaderOutput? {
         val systemPrompt = """You are a content reader. Analyze the provided content and return ONLY a JSON object with this exact structure:
