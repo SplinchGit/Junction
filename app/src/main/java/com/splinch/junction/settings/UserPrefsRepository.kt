@@ -44,6 +44,7 @@ class UserPrefsRepository(private val context: Context) {
     private val firebaseSyncEnabledKey = booleanPreferencesKey("firebase_sync_enabled")
     private val shizukuEnabledKey = booleanPreferencesKey("shizuku_enabled")
     private val providerIdKey = stringPreferencesKey("provider_id")
+    private val providerModelIdKey = stringPreferencesKey("provider_model_id")
     private val providerWorkhorseModelKey = stringPreferencesKey("provider_workhorse_model")
     private val providerFrontierModelKey = stringPreferencesKey("provider_frontier_model")
     private val providerBaseUrlKey = stringPreferencesKey("provider_base_url")
@@ -72,6 +73,7 @@ class UserPrefsRepository(private val context: Context) {
         ProviderConfig(
             providerId = prefs[providerIdKey] ?: "anthropic",
             apiKey = "",  // API key is stored in KeyStorage, not here
+            modelId = prefs[providerModelIdKey] ?: "",
             workhorseModel = prefs[providerWorkhorseModelKey] ?: "",
             frontierModel = prefs[providerFrontierModelKey] ?: "",
             baseUrl = prefs[providerBaseUrlKey] ?: ""
@@ -300,6 +302,7 @@ class UserPrefsRepository(private val context: Context) {
     suspend fun setProviderConfig(config: ProviderConfig) {
         context.dataStore.edit {
             it[providerIdKey] = config.providerId
+            it[providerModelIdKey] = config.modelId
             it[providerWorkhorseModelKey] = config.workhorseModel
             it[providerFrontierModelKey] = config.frontierModel
             it[providerBaseUrlKey] = config.baseUrl

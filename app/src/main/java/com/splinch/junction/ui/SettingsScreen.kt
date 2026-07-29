@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +42,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.splinch.junction.BuildConfig
 import com.splinch.junction.accessibility.JunctionAccessibilityService
 import com.splinch.junction.chat.ChatManager
+import com.splinch.junction.chat.provider.ModelCatalog
 import com.splinch.junction.core.Config
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.platform.ShizukuCapability
@@ -51,6 +53,8 @@ import com.splinch.junction.settings.ProviderConfig
 import com.splinch.junction.settings.UserPrefsRepository
 import com.splinch.junction.sync.firebase.AuthManager
 import com.splinch.junction.ui.components.JunctionTextField
+import com.splinch.junction.ui.components.ModelCard
+import com.splinch.junction.ui.components.ProviderCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -97,11 +101,12 @@ fun SettingsScreen(
 
     val keyStorage = remember { KeyStorage(context) }
     var providerIdInput by remember { mutableStateOf(providerConfig.providerId) }
+    var providerModelIdInput by remember { mutableStateOf(providerConfig.modelId) }
     var providerApiKeyInput by remember { mutableStateOf("") }
-    var providerWorkhorseInput by remember { mutableStateOf(providerConfig.workhorseModel) }
     var providerFrontierInput by remember { mutableStateOf(providerConfig.frontierModel) }
     var providerBaseUrlInput by remember { mutableStateOf(providerConfig.baseUrl) }
     var providerTestStatus by remember { mutableStateOf("") }
+    var providerPickerExpanded by remember { mutableStateOf(false) }
     var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
 
     LaunchedEffect(shizukuEnabled) {
@@ -174,7 +179,7 @@ fun SettingsScreen(
 
     LaunchedEffect(providerConfig) {
         providerIdInput = providerConfig.providerId
-        providerWorkhorseInput = providerConfig.workhorseModel
+        providerModelIdInput = providerConfig.modelId
         providerFrontierInput = providerConfig.frontierModel
         providerBaseUrlInput = providerConfig.baseUrl
         providerApiKeyInput = keyStorage.getApiKey(providerConfig.providerId)
@@ -207,6 +212,12 @@ fun SettingsScreen(
         }
 
         item {
+            val currentProvider = remember(providerIdInput) { ModelCatalog.providerById(providerIdInput) }
+            val currentModel = remember(providerIdInput, providerModelIdInput) {
+                currentProvider?.models?.find { it.id == providerModelIdInput }
+                    ?: currentProvider?.models?.find { it.id == currentProvider.defaultModelId }
+            }
+
             Text(text = "AI Provider", style = MaterialTheme.typography.titleMedium)
             Text(
                 text = "Connect an AI provider to use chat without a server. " +
@@ -219,12 +230,61 @@ fun SettingsScreen(
             }) {
                 Text("Run setup wizard")
             }
-            JunctionTextField(
-                value = providerIdInput,
-                onValueChange = { providerIdInput = it },
-                label = "Provider",
-                placeholder = "anthropic / openai / deepseek / custom"
-            )
+            Spacer(Modifier.height(12.dp))
+
+            // Currently active provider + model, always visible, never ambiguous.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = currentProvider?.displayName ?: providerIdInput.ifBlank { "No provider selected" },
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = currentModel?.displayName ?: "Default model",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(onClick = { providerPickerExpanded = !providerPickerExpanded }) {
+                    Text(if (providerPickerExpanded) "Close" else "Change")
+                }
+            }
+
+            if (providerPickerExpanded) {
+                Spacer(Modifier.height(12.dp))
+                Text(text = "Provider", style = MaterialTheme.typography.labelLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ModelCatalog.providers.forEach { provider ->
+                        ProviderCard(
+                            provider = provider,
+                            selected = provider.id == providerIdInput,
+                            onClick = {
+                                providerIdInput = provider.id
+                                providerModelIdInput = provider.defaultModelId
+                            }
+                        )
+                    }
+                }
+                if (currentProvider != null && currentProvider.models.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(text = "Model", style = MaterialTheme.typography.labelLarge)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        currentProvider.models.forEach { model ->
+                            ModelCard(
+                                model = model,
+                                selected = model.id == providerModelIdInput,
+                                onClick = { providerModelIdInput = model.id }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             JunctionTextField(
                 value = providerApiKeyInput,
                 onValueChange = { providerApiKeyInput = it },
@@ -232,16 +292,10 @@ fun SettingsScreen(
                 isPassword = true
             )
             JunctionTextField(
-                value = providerWorkhorseInput,
-                onValueChange = { providerWorkhorseInput = it },
-                label = "Workhorse model",
-                placeholder = "e.g. claude-haiku-4-5-20251001"
-            )
-            JunctionTextField(
                 value = providerFrontierInput,
                 onValueChange = { providerFrontierInput = it },
-                label = "Frontier model (optional)",
-                placeholder = "e.g. claude-sonnet-4-6"
+                label = "Frontier model override (optional, advanced)",
+                placeholder = "e.g. claude-sonnet-4-6 -- leave blank to use the picked model for everything"
             )
             if (providerIdInput == "custom") {
                 JunctionTextField(
@@ -257,10 +311,12 @@ fun SettingsScreen(
             ) {
                 Button(onClick = {
                     scope.launch {
+                        val switched = providerIdInput.trim() != providerConfig.providerId ||
+                            providerModelIdInput.trim() != providerConfig.modelId
                         val config = ProviderConfig(
                             providerId = providerIdInput.trim(),
                             apiKey = "",
-                            workhorseModel = providerWorkhorseInput.trim(),
+                            modelId = providerModelIdInput.trim(),
                             frontierModel = providerFrontierInput.trim(),
                             baseUrl = providerBaseUrlInput.trim()
                         )
@@ -268,6 +324,10 @@ fun SettingsScreen(
                         if (providerApiKeyInput.isNotBlank()) {
                             keyStorage.setApiKey(providerIdInput.trim(), providerApiKeyInput)
                         }
+                        if (switched) {
+                            chatManager.announceProviderSwitch(config.providerId, config.modelId)
+                        }
+                        providerPickerExpanded = false
                         providerTestStatus = "Saved."
                     }
                 }) {

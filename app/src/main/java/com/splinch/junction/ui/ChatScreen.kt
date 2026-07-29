@@ -65,8 +65,8 @@ import com.splinch.junction.chat.Sender
 import com.splinch.junction.chat.Step
 import com.splinch.junction.chat.StepStatus
 import com.splinch.junction.chat.realtime.RealtimeConnectionState
-import com.splinch.junction.chat.provider.ProviderCatalog
-import com.splinch.junction.chat.provider.ProviderCatalogEntry
+import com.splinch.junction.chat.provider.ModelCatalog
+import com.splinch.junction.chat.provider.ProviderDefinition
 import com.splinch.junction.chat.tools.RiskTier
 import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.ProviderConfig
@@ -133,7 +133,7 @@ fun ChatScreen(
                 val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
                 ProviderSwitcher(
                     providerConfig = providerConfig,
-                    onSwitch = { id -> scope.launch { chatManager.switchProvider(id) } }
+                    onSwitch = { id, modelId -> scope.launch { chatManager.switchProvider(id, modelId) } }
                 )
                 ConnectionPill(state = connectionState)
             }
@@ -411,45 +411,63 @@ private fun ConnectionPill(state: RealtimeConnectionState) {
 @Composable
 private fun ProviderSwitcher(
     providerConfig: ProviderConfig,
-    onSwitch: (String) -> Unit,
+    onSwitch: (providerId: String, modelId: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val keyStorage = remember { KeyStorage(context) }
     var expanded by remember { mutableStateOf(false) }
-    var configuredEntries by remember { mutableStateOf(emptyList<ProviderCatalogEntry>()) }
+    var configuredProviders by remember { mutableStateOf(emptyList<ProviderDefinition>()) }
 
     LaunchedEffect(expanded) {
         if (expanded) {
-            configuredEntries = ProviderCatalog.entries.filter { keyStorage.getApiKey(it.id).isNotBlank() }
+            configuredProviders = ModelCatalog.providers.filter { keyStorage.getApiKey(it.id).isNotBlank() }
         }
     }
 
-    val currentName = ProviderCatalog.byId(providerConfig.providerId)?.displayName
-        ?: providerConfig.providerId.ifBlank { "Choose AI" }
+    val currentProvider = ModelCatalog.providerById(providerConfig.providerId)
+    val currentModel = currentProvider?.models?.find { it.id == providerConfig.modelId }
+        ?: currentProvider?.models?.find { it.id == currentProvider.defaultModelId }
+    val currentLabel = when {
+        currentProvider != null && currentModel != null -> "${currentProvider.displayName} — ${currentModel.displayName}"
+        currentProvider != null -> currentProvider.displayName
+        else -> providerConfig.providerId.ifBlank { "Choose AI" }
+    }
 
     Box(modifier = modifier) {
         OutlinedButton(onClick = { expanded = true }) {
-            Text(currentName, style = MaterialTheme.typography.labelLarge)
+            Text(currentLabel, style = MaterialTheme.typography.labelLarge)
             Icon(Icons.Default.ArrowDropDown, contentDescription = "Switch AI provider")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            if (configuredEntries.isEmpty()) {
+            if (configuredProviders.isEmpty()) {
                 DropdownMenuItem(
                     text = { Text("No providers configured — add one in Settings") },
                     onClick = { expanded = false },
                     enabled = false
                 )
             }
-            configuredEntries.forEach { entry ->
+            configuredProviders.forEach { provider ->
+                val model = provider.models.find { it.id == provider.defaultModelId }
                 DropdownMenuItem(
-                    text = { Text(entry.displayName) },
-                    leadingIcon = if (entry.id == providerConfig.providerId) {
+                    text = {
+                        Column {
+                            Text(provider.displayName)
+                            if (model != null) {
+                                Text(
+                                    text = "${model.displayName} · ${model.costTier}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = if (provider.id == providerConfig.providerId) {
                         { Icon(Icons.Default.Check, contentDescription = null) }
                     } else null,
                     onClick = {
                         expanded = false
-                        onSwitch(entry.id)
+                        onSwitch(provider.id, provider.defaultModelId)
                     }
                 )
             }

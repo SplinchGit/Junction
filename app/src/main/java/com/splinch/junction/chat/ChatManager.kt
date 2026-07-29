@@ -10,7 +10,7 @@ import com.splinch.junction.accessibility.ScrollDirection
 import com.splinch.junction.chat.gmail.GmailCopilot
 import com.splinch.junction.chat.provider.ContextBlock
 import com.splinch.junction.chat.provider.LlmEvent
-import com.splinch.junction.chat.provider.ModelPricing
+import com.splinch.junction.chat.provider.ModelCatalog
 import com.splinch.junction.chat.provider.ProviderRegistry
 import com.splinch.junction.chat.provider.ReaderOutput
 import com.splinch.junction.chat.realtime.RealtimeConnectionState
@@ -441,7 +441,7 @@ class ChatManager(
                         latencyMs = System.currentTimeMillis() - responseStartedAt
                     )
                 )
-                val turnCost = ModelPricing.estimateCostUsd(reported.model, reported.tokensIn, reported.tokensOut)
+                val turnCost = ModelCatalog.estimateCostUsd(reported.model, reported.tokensIn, reported.tokensOut)
                 if (turnCost != null && requestedCalls.isNotEmpty()) {
                     costEstimatePerStep = turnCost / requestedCalls.size
                 }
@@ -784,8 +784,26 @@ class ChatManager(
      * provider's own defaults apply, rather than carrying over a model name that
      * belonged to the previous provider.
      */
-    suspend fun switchProvider(providerId: String) {
-        prefs.setProviderConfig(ProviderConfig(providerId = providerId))
+    suspend fun switchProvider(providerId: String, modelId: String = "") {
+        val resolvedModelId = modelId.ifBlank { ModelCatalog.providerById(providerId)?.defaultModelId.orEmpty() }
+        prefs.setProviderConfig(ProviderConfig(providerId = providerId, modelId = resolvedModelId))
+        announceProviderSwitch(providerId, resolvedModelId)
+    }
+
+    /**
+     * Posts a visible, unmissable system message whenever the active provider/model
+     * changes -- switching is never silent, regardless of whether it happened from
+     * the chat header's quick switcher or from Settings.
+     */
+    suspend fun announceProviderSwitch(providerId: String, modelId: String) {
+        val provider = ModelCatalog.providerById(providerId)
+        val model = provider?.models?.find { it.id == modelId }
+            ?: provider?.models?.find { it.id == provider.defaultModelId }
+        val providerName = provider?.displayName ?: providerId
+        val modelName = model?.displayName ?: "its default model"
+        appendSystemMessage(
+            "Switched to $providerName ($modelName). Every message from here on uses this provider until you switch again."
+        )
     }
 
     suspend fun setSpeechMode(enabled: Boolean) {
