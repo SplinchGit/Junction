@@ -145,10 +145,37 @@ object ModelCatalog {
             // underlying model the owner picks.
             models = listOf(
                 ModelEntry("openrouter/auto", "Auto (best match)", "$$ Varies", "Lets OpenRouter pick the best available model for your prompt.", 1.0, 3.0, supportsVision = true),
-                ModelEntry("anthropic/claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Strong all-rounder — the best balance of quality and cost for everyday use.", 2.0, 10.0, supportsVision = true),
-                ModelEntry("anthropic/claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — best for hard reasoning and long agentic tasks.", 5.0, 25.0, supportsVision = true),
+
+                // Anthropic
+                ModelEntry("anthropic/claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Near-flagship quality at Sonnet cost — a strong everyday default.", 2.0, 10.0, supportsVision = true),
+                ModelEntry("anthropic/claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — deep reasoning and long agentic work.", 5.0, 25.0, supportsVision = true),
                 ModelEntry("anthropic/claude-haiku-4.5", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive Claude — good for quick voice replies.", 1.0, 5.0, supportsVision = true),
-                ModelEntry("openai/gpt-5.6-terra", "GPT-5.6 Terra", "$$ Balanced", "OpenAI's current flagship, via your OpenRouter key — no separate OpenAI billing.", 1.25, 7.50, supportsVision = true)
+
+                // OpenAI
+                ModelEntry("openai/gpt-5.6-terra", "GPT-5.6 Terra", "$$ Balanced", "OpenAI's current flagship, no separate OpenAI billing needed.", 1.25, 7.50, supportsVision = true),
+                ModelEntry("openai/gpt-5.4-mini", "GPT-5.4 Mini", "$ Cheap", "Small, fast OpenAI model for routine turns.", 0.25, 2.0, supportsVision = true),
+
+                // Google
+                ModelEntry("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro", "$$ Balanced", "Google's flagship — 1M context, handles audio and video as well as images.", 2.0, 12.0, supportsVision = true),
+                ModelEntry("google/gemini-2.5-flash", "Gemini 2.5 Flash", "$ Cheap", "Google's fast, low-cost workhorse.", 0.15, 0.60, supportsVision = true),
+
+                // xAI
+                ModelEntry("x-ai/grok-4.5", "Grok 4.5", "$$ Balanced", "xAI's flagship, 500K context.", 2.0, 6.0, supportsVision = true),
+                ModelEntry("x-ai/grok-4.20", "Grok 4.20", "$$ Balanced", "Enormous 2M-token context — good for very long material.", 1.25, 2.50, supportsVision = true),
+
+                // DeepSeek
+                ModelEntry("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "$ Cheap", "Very cheap for a 1M-context model.", 0.43, 0.87),
+                ModelEntry("deepseek/deepseek-r1", "DeepSeek R1", "$ Cheap", "Reasoning-focused and still inexpensive.", 0.70, 2.50),
+
+                // Mistral
+                ModelEntry("mistralai/mistral-medium-3-5", "Mistral Medium 3.5", "$$ Balanced", "Mistral's current flagship.", 1.50, 7.50, supportsVision = true),
+
+                // Meta
+                ModelEntry("meta-llama/llama-4-maverick", "Llama 4 Maverick", "$ Cheap", "Strong open-weight model, 1M context, very cheap.", 0.20, 0.80, supportsVision = true),
+
+                // Others worth having
+                ModelEntry("moonshotai/kimi-k3", "Kimi K3", "$$ Balanced", "Moonshot's flagship, 1M context.", 3.0, 15.0, supportsVision = true),
+                ModelEntry("qwen/qwen3.7-max", "Qwen 3.7 Max", "$$ Balanced", "Alibaba's flagship, 1M context.", 1.48, 4.42)
             )
         ),
         ProviderDefinition(
