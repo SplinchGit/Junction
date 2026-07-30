@@ -452,6 +452,7 @@ class ChatManager(
                                     // Azure voice stayed silent for anyone left on
                                     // the default Realtime setting.
                                     if (_speechModeEnabled.value) {
+                                        com.splinch.junction.chat.voice.VoiceTrace.replyReady(final.length)
                                         localVoice.speak(final)
                                     }
                                 }
@@ -1130,6 +1131,7 @@ class ChatManager(
 
     override fun onUserUtterance(text: String) {
         if (text.isBlank()) return
+        com.splinch.junction.chat.voice.VoiceTrace.dispatched()
         scope.launch { sendUserMessage(text) }
     }
 

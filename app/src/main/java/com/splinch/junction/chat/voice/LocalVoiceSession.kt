@@ -96,6 +96,7 @@ class LocalVoiceSession(
         started = true
         tts = TextToSpeech(context) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
+            VoiceTrace.ttsReady(ttsReady)
             if (ttsReady) {
                 tts?.language = Locale.getDefault()
                 // Speak anything that arrived while the engine was still starting.
@@ -109,10 +110,12 @@ class LocalVoiceSession(
         }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                VoiceTrace.speaking()
                 listener.onSpeakingStateChanged(true)
             }
 
             override fun onDone(utteranceId: String?) {
+                VoiceTrace.spokeDone()
                 listener.onSpeakingStateChanged(false)
                 // Junction has finished its reply, so the owner's turn is next.
                 applyDecision(handsFree.onReplyFinished())
@@ -134,7 +137,9 @@ class LocalVoiceSession(
             }
         })
 
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+        val recognizerAvailable = SpeechRecognizer.isRecognitionAvailable(context)
+        VoiceTrace.sessionStart(recognizerAvailable)
+        if (recognizerAvailable) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                 setRecognitionListener(recognitionListener())
             }
@@ -187,9 +192,11 @@ class LocalVoiceSession(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
         }
+        VoiceTrace.listeningArmed()
         runCatching { recognizer?.startListening(intent) }
             .onFailure {
                 handsFree.onFatalError()
+                VoiceTrace.handsFreeEnded("fatal")
                 listener.onError(it.message ?: "Failed to start listening")
                 listener.onHandsFreeEnded()
             }
@@ -207,6 +214,7 @@ class LocalVoiceSession(
                 }
             }
             is HandsFreeLoop.Decision.GiveUp -> {
+                VoiceTrace.handsFreeEnded("silence")
                 listener.onError("Stopped listening — nothing heard for a while.")
                 listener.onHandsFreeEnded()
             }
@@ -219,6 +227,7 @@ class LocalVoiceSession(
 
         val cloud = cloudVoiceProvider()
         if (cloud?.isConfigured == true) {
+            VoiceTrace.speakRequested(text.length, "cloud")
             speakJob?.cancel()
             activeCloudVoice = cloud
             speakJob = scope.launch {
@@ -243,17 +252,20 @@ class LocalVoiceSession(
 
     private fun speakOnDevice(text: String) {
         if (!ttsReady) {
+            VoiceTrace.speakRequested(text.length, "queued")
             // Hold it rather than drop it -- the engine is still initialising and will
             // flush this the moment it is ready. See [pendingUtterance].
             Log.d(TAG, "TTS not ready; queueing utterance until init completes")
             pendingUtterance.queue(text)
             return
         }
+        VoiceTrace.speakRequested(text.length, "device")
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
     private fun recognitionListener() = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            VoiceTrace.listening()
             listener.onListeningStateChanged(true)
         }
 
@@ -264,17 +276,20 @@ class LocalVoiceSession(
                 ?.firstOrNull()
                 ?.trim()
             if (!text.isNullOrBlank()) {
+                VoiceTrace.heard(text.length)
                 // Stay quiet until the reply has been spoken, then re-arm — otherwise
                 // the recogniser hears Junction's own voice and answers itself.
                 applyDecision(handsFree.onSpeechHeard())
                 listener.onUserUtterance(text)
             } else {
+                VoiceTrace.silent()
                 applyDecision(handsFree.onSilentTurn())
             }
         }
 
         override fun onError(error: Int) {
             listener.onListeningStateChanged(false)
+            VoiceTrace.asrError(error)
             when (error) {
                 // Routine: silence or unclear audio. Not worth surfacing, but the
                 // recogniser has stopped, so it still needs re-arming.
