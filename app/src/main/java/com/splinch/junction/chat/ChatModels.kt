@@ -28,7 +28,9 @@ data class ChatMessage(
     val sourceRef: String? = null,
     val metadata: Map<String, String> = emptyMap(),
     // Absolute path to an app-private, pre-downscaled JPEG attached to this message.
-    val imagePath: String? = null
+    val imagePath: String? = null,
+    /** Cached one-line description, so replays cost text not image bytes. */
+    val imageSummary: String? = null
 )
 
 data class ChatSession(

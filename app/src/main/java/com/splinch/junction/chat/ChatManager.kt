@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -305,6 +306,13 @@ class ChatManager(
             imagePath = imagePath
         )
         appendMessage(userMessage)
+
+        // Describe the image once, in the background, so it can be replayed as
+        // text on later turns. Launched rather than awaited: this turn already
+        // carries the real bytes, so there's nothing to wait for.
+        if (imagePath != null) {
+            scope.launch { summarizeAttachedImage(userMessage) }
+        }
 
         // Vision needs the text-provider API either way -- Realtime voice has
         // no image channel in this app, so route straight past it when an
@@ -612,15 +620,29 @@ class ChatManager(
         )
         val blocks = mutableListOf(systemBlock)
         buildMemoryBlock()?.let { blocks.add(it) }
+        // Only the most recent attachment is sent as image bytes. Older ones
+        // replay as their cached one-line description, because re-uploading
+        // every image on every turn made a conversation's cost grow with the
+        // number of pictures in it -- five images meant five base64 blobs per
+        // message, forever, for pictures the model had already described.
+        val newestImageId = _messages.value.lastOrNull { it.imagePath != null }?.id
         val messageBlocks = _messages.value.map { msg ->
-            val encodedImage = msg.imagePath?.let { encodeImageForContext(it) }
+            val sendBytes = msg.imagePath != null && msg.id == newestImageId
+            val encodedImage = if (sendBytes) msg.imagePath?.let { encodeImageForContext(it) } else null
+            val content = when {
+                sendBytes || msg.imagePath == null -> renderContextEnvelope(msg)
+                // Fall back to a neutral marker rather than dropping the fact an
+                // image was there, which would make the history read wrongly.
+                else -> renderContextEnvelope(msg) +
+                    "\n[Attached image: ${msg.imageSummary ?: "described earlier in this conversation"}]"
+            }
             ContextBlock(
                 role = when (msg.sender) {
                     Sender.USER -> "user"
                     Sender.ASSISTANT -> "assistant"
                     Sender.SYSTEM -> "system"
                 },
-                content = renderContextEnvelope(msg),
+                content = content,
                 provenance = msg.provenance,
                 sourceRef = msg.sourceRef,
                 imageBase64 = encodedImage?.first,
@@ -668,7 +690,13 @@ class ChatManager(
      * budget; good enough to bound cost without a tokenizer dependency.
      */
     private fun applyContextBudget(blocks: List<ContextBlock>): List<ContextBlock> {
-        var total = blocks.sumOf { it.content.length }
+        // Image bytes count toward the budget. Previously only `content.length`
+        // was measured, so a base64 image -- often larger than the entire text
+        // history -- was treated as free and could blow the real token budget
+        // while this check happily passed.
+        fun ContextBlock.cost() = content.length + (imageBase64?.length ?: 0)
+
+        var total = blocks.sumOf { it.cost() }
         if (total <= MAX_CONTEXT_CHARS) return blocks
 
         val remaining = blocks.toMutableList()
@@ -677,7 +705,7 @@ class ChatManager(
             while (total > MAX_CONTEXT_CHARS && i < remaining.size) {
                 val block = remaining[i]
                 if (block.provenance == targetProvenance) {
-                    total -= block.content.length
+                    total -= block.cost()
                     remaining.removeAt(i)
                 } else {
                     i++
@@ -728,6 +756,32 @@ class ChatManager(
     private suspend fun appendMessage(message: ChatMessage) {
         store.appendMessage(session.sessionId, message)
         trustGate.recordContextBlock(message.provenance, message.sourceRef ?: "chat_message:${message.id}")
+    }
+
+    /**
+     * Describes an attached image once and caches the result on the message, so
+     * later turns can replay it as a short line of text instead of re-uploading
+     * the bytes (see buildContextBlocks). Costs one cheap call per image for the
+     * life of the conversation, versus one image upload per image *per turn*.
+     *
+     * Uses the tool-free reader lane, so a malicious image caption can never
+     * reach the actor and trigger a tool call. Failure is non-fatal: without a
+     * summary the history just says an image was attached.
+     */
+    private suspend fun summarizeAttachedImage(message: ChatMessage) {
+        val path = message.imagePath ?: return
+        if (message.imageSummary != null) return
+
+        val provider = runCatching { providerRegistry.getActiveProvider() }.getOrNull() ?: return
+        val encoded = withContext(Dispatchers.IO) { encodeImageForContext(path) } ?: return
+        val described = runCatching {
+            provider.describeImage(encoded.first, encoded.second)
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+
+        store.appendMessage(
+            session.sessionId,
+            message.copy(imageSummary = described.take(300))
+        )
     }
 
     private fun seedTrustContextFromRecentMessages(messages: List<ChatMessage>) {

@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.splinch.junction.chat.provider.ModelCatalog
+import com.splinch.junction.chat.voice.AzureNeuralVoice
 import com.splinch.junction.chat.provider.ProviderDefinition
 import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.settings.ProviderConfig
@@ -46,7 +47,7 @@ import com.splinch.junction.ui.theme.BrandBlue
 import com.splinch.junction.ui.theme.BrandViolet
 import kotlinx.coroutines.launch
 
-private enum class OnboardingStep { WELCOME, PROVIDER_PICKER, MODEL_PICKER, API_KEY, FINISH }
+private enum class OnboardingStep { WELCOME, PROVIDER_PICKER, MODEL_PICKER, API_KEY, VOICE, FINISH }
 
 @Composable
 fun OnboardingScreen(
@@ -63,6 +64,7 @@ fun OnboardingScreen(
     var selectedModelId by remember { mutableStateOf(ModelCatalog.providerById("anthropic")?.defaultModelId.orEmpty()) }
     var apiKeyInput by remember { mutableStateOf("") }
     var baseUrlInput by remember { mutableStateOf("") }
+    var azureSpeechKeyInput by remember { mutableStateOf("") }
 
     fun completeOnboarding() {
         scope.launch {
@@ -78,6 +80,15 @@ fun OnboardingScreen(
             )
             if (apiKeyInput.isNotBlank()) {
                 keyStorage.setApiKey(selectedProviderId, apiKeyInput.trim())
+            }
+            step = OnboardingStep.VOICE
+        }
+    }
+
+    fun saveVoiceAndContinue() {
+        scope.launch {
+            if (azureSpeechKeyInput.isNotBlank()) {
+                keyStorage.setApiKey(AzureNeuralVoice.KEY_ID, azureSpeechKeyInput.trim())
             }
             step = OnboardingStep.FINISH
         }
@@ -129,6 +140,13 @@ fun OnboardingScreen(
                         val hasModels = ModelCatalog.providerById(selectedProviderId)?.models?.isNotEmpty() == true
                         step = if (hasModels) OnboardingStep.MODEL_PICKER else OnboardingStep.PROVIDER_PICKER
                     }
+                )
+                OnboardingStep.VOICE -> VoiceStep(
+                    apiKeyInput = azureSpeechKeyInput,
+                    onApiKeyChange = { azureSpeechKeyInput = it },
+                    onContinue = { saveVoiceAndContinue() },
+                    onSkip = { step = OnboardingStep.FINISH },
+                    onBack = { step = OnboardingStep.API_KEY }
                 )
                 OnboardingStep.FINISH -> FinishStep(onDone = { completeOnboarding() })
             }
@@ -325,6 +343,80 @@ private fun ApiKeyStep(
         }
         TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
             Text("Skip for now")
+        }
+    }
+}
+
+/**
+ * Optional voice-quality step. Entirely skippable — the on-device engine works
+ * without any key — so this explains what the key buys and how to get one
+ * rather than presenting it as another required field.
+ */
+@Composable
+private fun VoiceStep(
+    apiKeyInput: String,
+    onApiKeyChange: (String) -> Unit,
+    onContinue: () -> Unit,
+    onSkip: () -> Unit,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    Column(modifier = Modifier.fillMaxSize()) {
+        Text(text = "Give Junction a voice", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Junction can talk to you, and you can talk back. Your phone's built-in voice " +
+                "works right away and costs nothing — but it sounds robotic.",
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "For a natural voice, add a free Microsoft Azure Speech key. Azure's free tier " +
+                "covers 500,000 characters a month, which is far more than normal use — so in " +
+                "practice this costs nothing.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(text = "How to get one:", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "1. Create a Speech resource in the Azure portal (pick the Free F0 tier)\n" +
+                "2. Open it, then go to Resource Management → Keys and Endpoint\n" +
+                "3. Copy KEY 1 and paste it below",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(onClick = {
+            val uri = "https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices".toUri()
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+        }) {
+            Text("Open Azure to create a key")
+        }
+        Spacer(Modifier.height(16.dp))
+        JunctionTextField(
+            value = apiKeyInput,
+            onValueChange = onApiKeyChange,
+            label = "Azure Speech key (optional)",
+            placeholder = "Paste KEY 1 here",
+            isPassword = true
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Your voice is always recognised on your phone, never uploaded — only Junction's " +
+                "replies are sent to Azure to be spoken.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.weight(1f))
+        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+            Text(if (apiKeyInput.isBlank()) "Continue" else "Save & continue")
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onBack) { Text("Back") }
+            TextButton(onClick = onSkip) { Text("Use my phone's voice for now") }
         }
     }
 }

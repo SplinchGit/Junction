@@ -23,5 +23,7 @@ data class ChatMessageEntity(
     // Absolute path to an app-private, pre-downscaled JPEG -- never a raw
     // content:// URI, since the Photo Picker only grants temporary read
     // access to those.
-    val imagePath: String? = null
+    val imagePath: String? = null,
+    /** Cached one-line description, so replays cost text not image bytes. */
+    val imageSummary: String? = null
 )

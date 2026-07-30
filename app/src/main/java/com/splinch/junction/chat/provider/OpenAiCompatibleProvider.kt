@@ -184,6 +184,53 @@ class OpenAiCompatibleProvider(
         return parts
     }
 
+    override suspend fun describeImage(imageBase64: String, mimeType: String): String? {
+        val messages = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("type", "text")
+                        put("text", DESCRIBE_IMAGE_PROMPT)
+                    })
+                    put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url", "data:$mimeType;base64,$imageBase64"))
+                    })
+                })
+            })
+        }
+
+        val payload = JSONObject().apply {
+            put("model", workhorseModel)
+            put("messages", messages)
+            put("max_tokens", 300)
+            put("stream", false)
+        }
+
+        val request = Request.Builder()
+            .url("$baseUrl/chat/completions")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .build()
+
+        return try {
+            val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+            if (!response.isSuccessful) return null
+            val body = withContext(Dispatchers.IO) { response.body?.string() }.orEmpty()
+            runCatching { JSONObject(body) }.getOrNull()
+                ?.optJSONArray("choices")
+                ?.optJSONObject(0)
+                ?.optJSONObject("message")
+                ?.optString("content")
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     override suspend fun readUntrusted(content: String, sourceHint: String): ReaderOutput? {
         val systemPrompt = """You are a content reader. Analyze the provided content and return ONLY a JSON object with this exact structure:
 {

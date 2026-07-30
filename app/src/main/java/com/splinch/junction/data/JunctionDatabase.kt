@@ -22,7 +22,7 @@ import com.splinch.junction.feed.model.FeedItemEntity
         StepEntity::class,
         MemoryFactEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class)
@@ -44,7 +44,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -174,6 +174,15 @@ abstract class JunctionDatabase : RoomDatabase() {
                         `sourceRef` TEXT
                     )
                 """.trimIndent())
+            }
+        }
+
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Caches a one-line description of an attached image so older
+                // turns replay as cheap text instead of re-uploading the
+                // base64 bytes on every subsequent request.
+                db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `imageSummary` TEXT")
             }
         }
 
