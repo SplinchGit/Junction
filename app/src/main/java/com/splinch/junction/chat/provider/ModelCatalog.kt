@@ -50,7 +50,9 @@ object ModelCatalog {
             models = listOf(
                 ModelEntry("claude-haiku-4-5", "Claude Haiku 4.5", "$ Cheap", "Fastest and cheapest Claude — good for quick voice replies.", 1.0, 5.0, supportsVision = true),
                 ModelEntry("claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Near-flagship quality at Sonnet cost — the best everyday default.", 3.0, 15.0, supportsVision = true, supportsAdaptiveThinking = true),
-                ModelEntry("claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — deep reasoning and long agentic work.", 5.0, 25.0, supportsVision = true, supportsAdaptiveThinking = true)
+                ModelEntry("claude-opus-4-8", "Claude Opus 4.8", "$$$ Most capable", "Highly autonomous, strong on long agentic work and knowledge tasks.", 5.0, 25.0, supportsVision = true, supportsAdaptiveThinking = true),
+                ModelEntry("claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Deep reasoning and long-horizon agentic work, same price as 4.8.", 5.0, 25.0, supportsVision = true, supportsAdaptiveThinking = true),
+                ModelEntry("claude-fable-5", "Claude Fable 5", "$$$$ Frontier", "Anthropic's most capable model. Thinking is always on, so replies take longer.", 10.0, 50.0, supportsVision = true, supportsAdaptiveThinking = true)
             )
         ),
         ProviderDefinition(
@@ -148,7 +150,9 @@ object ModelCatalog {
 
                 // Anthropic
                 ModelEntry("anthropic/claude-sonnet-5", "Claude Sonnet 5", "$$ Balanced", "Near-flagship quality at Sonnet cost — a strong everyday default.", 2.0, 10.0, supportsVision = true),
-                ModelEntry("anthropic/claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Anthropic's flagship — deep reasoning and long agentic work.", 5.0, 25.0, supportsVision = true),
+                ModelEntry("anthropic/claude-opus-4.8", "Claude Opus 4.8", "$$$ Most capable", "Highly autonomous, strong on long agentic work and knowledge tasks.", 5.0, 25.0, supportsVision = true),
+                ModelEntry("anthropic/claude-opus-5", "Claude Opus 5", "$$$ Most capable", "Deep reasoning and long-horizon agentic work, same price as 4.8.", 5.0, 25.0, supportsVision = true),
+                ModelEntry("anthropic/claude-fable-5", "Claude Fable 5", "$$$$ Frontier", "Anthropic's most capable model, for the hardest reasoning. Priciest option.", 10.0, 50.0, supportsVision = true),
                 ModelEntry("anthropic/claude-haiku-4.5", "Claude Haiku 4.5", "$ Cheap", "Fast and inexpensive Claude — good for quick voice replies.", 1.0, 5.0, supportsVision = true),
 
                 // OpenAI

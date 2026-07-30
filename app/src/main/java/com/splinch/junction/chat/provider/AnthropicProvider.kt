@@ -108,6 +108,7 @@ class AnthropicProvider(
             var reportedTokensIn: Int? = null
             var reportedTokensOut: Int? = null
             var reportedModel = model
+            var refusalCategory: String? = null
 
             withContext(Dispatchers.IO) {
                 while (!source.exhausted()) {
@@ -155,8 +156,14 @@ class AnthropicProvider(
                         "message_delta" -> {
                             val delta = event.optJSONObject("delta") ?: continue
                             reportedTokensOut = event.optJSONObject("usage")?.optInt("output_tokens")?.takeIf { it >= 0 }
-                            if (delta.optString("stop_reason") == "end_turn" || delta.optString("stop_reason") == "tool_use") {
-                                // handled below
+                            // A safety classifier can decline a request on the
+                            // frontier models: HTTP 200, no text, stop_reason
+                            // "refusal". Without this the turn just ends silently
+                            // and reads as the app being broken.
+                            if (delta.optString("stop_reason") == "refusal") {
+                                refusalCategory = delta.optJSONObject("stop_details")
+                                    ?.optString("category")
+                                    .orEmpty()
                             }
                         }
                         "message_stop" -> {
@@ -164,6 +171,21 @@ class AnthropicProvider(
                         }
                     }
                 }
+            }
+
+            val refusal = refusalCategory
+            if (refusal != null && textAccumulator.isEmpty()) {
+                emit(
+                    LlmEvent.Error(
+                        if (refusal.isBlank()) {
+                            "The model declined to answer that request."
+                        } else {
+                            "The model declined to answer that request ($refusal)."
+                        }
+                    )
+                )
+                emit(LlmEvent.Done)
+                return@flow
             }
 
             if (textAccumulator.isNotEmpty()) {
