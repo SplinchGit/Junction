@@ -110,6 +110,82 @@ class HandsFreeLoopTest {
     }
 
     @Test
+    fun `a call is never ended by silence, however long it lasts`() {
+        val loop = HandsFreeLoop(maxSilentTurns = 3)
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        // Far past the hands-free budget. On a call the owner is entitled to think,
+        // read, or just listen without Junction hanging up on them.
+        repeat(50) {
+            assertTrue(
+                "a call must stay open through silence",
+                loop.onSilentTurn() is HandsFreeLoop.Decision.ReArmAfter
+            )
+        }
+        assertTrue("the line is still open", loop.isActive)
+    }
+
+    @Test
+    fun `call silence backs off to a ceiling instead of re-arming at full tilt`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        val first = (loop.onSilentTurn() as HandsFreeLoop.Decision.ReArmAfter).delayMillis
+        val second = (loop.onSilentTurn() as HandsFreeLoop.Decision.ReArmAfter).delayMillis
+        assertTrue("a dead recogniser must not be retried at a fixed hot rate", second > first)
+
+        // A permanently silent line must not drift into minute-long gaps, or the owner
+        // speaking up would go unheard.
+        repeat(200) { loop.onSilentTurn() }
+        val settled = (loop.onSilentTurn() as HandsFreeLoop.Decision.ReArmAfter).delayMillis
+        assertEquals(HandsFreeLoop.CALL_MAX_RETRY_DELAY_MS, settled)
+    }
+
+    @Test
+    fun `a call still ends on an unrecoverable failure`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        // Staying "open" without a microphone would be the deaf-but-lit bug again,
+        // just dressed as a call.
+        assertEquals(HandsFreeLoop.Decision.Idle, loop.onFatalError())
+        assertFalse(loop.isActive)
+    }
+
+    @Test
+    fun `hanging up ends the call and a reply in flight does not revive it`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+        loop.onSpeechHeard()
+
+        loop.stop()
+
+        assertEquals(HandsFreeLoop.Decision.Idle, loop.onReplyFinished())
+        assertFalse(loop.isActive)
+    }
+
+    @Test
+    fun `turn-taking is unchanged on a call`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        // The recogniser still must not be live while Junction is speaking, or it
+        // transcribes its own voice and answers itself.
+        assertEquals(HandsFreeLoop.Decision.Idle, loop.onSpeechHeard())
+        assertEquals(HandsFreeLoop.Decision.ReArmNow, loop.onReplyFinished())
+    }
+
+    @Test
+    fun `a plain start is still hands-free, so silence stands the mic down`() {
+        val loop = HandsFreeLoop(maxSilentTurns = 2)
+        loop.start()
+
+        assertEquals(HandsFreeLoop.Mode.HANDS_FREE, loop.mode)
+        loop.onSilentTurn()
+        assertEquals(HandsFreeLoop.Decision.GiveUp, loop.onSilentTurn())
+    }
+
+    @Test
     fun `restarting after giving up starts from a clean budget`() {
         val loop = HandsFreeLoop(maxSilentTurns = 2)
         loop.start()

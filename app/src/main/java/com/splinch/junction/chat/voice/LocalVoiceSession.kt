@@ -166,15 +166,20 @@ class LocalVoiceSession(
     /**
      * The owner turned the mic on. Barge-in: cut any current TTS playback, then
      * listen — and keep listening across turns until they turn it off again.
+     *
+     * Defaults to [HandsFreeLoop.Mode.CALL], so this opens a line rather than a single
+     * hands-free request: the owner can pause, think, or listen without Junction
+     * deciding the conversation is over and standing the mic down behind their back.
+     * The line closes when they close it, or on an unrecoverable recogniser failure.
      */
-    fun startListening() {
+    fun startListening(mode: HandsFreeLoop.Mode = HandsFreeLoop.Mode.CALL) {
         speakJob?.cancel()
         // Drop anything still queued from before the engine was ready: the owner has
         // started talking, so a reply they interrupted must not surface afterwards.
         pendingUtterance.discard()
         activeCloudVoice?.stop()
         tts?.stop()
-        handsFree.start()
+        handsFree.start(mode)
         arm()
     }
 

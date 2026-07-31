@@ -19,6 +19,21 @@ package com.splinch.junction.chat.voice
  */
 class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) {
 
+    /** How the loop should treat an owner who has gone quiet. */
+    enum class Mode {
+        /**
+         * One-off hands-free listening. Sustained silence stands the mic down, on the
+         * assumption the owner has walked away from a single request.
+         */
+        HANDS_FREE,
+
+        /**
+         * A call. The owner opened the line and only the owner closes it, so silence is
+         * a pause in a conversation rather than a reason to hang up.
+         */
+        CALL
+    }
+
     /** What the session should do once a listening or speaking turn finishes. */
     sealed interface Decision {
         /** Re-arm the recogniser immediately: the previous turn produced speech. */
@@ -37,10 +52,14 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
     var isActive: Boolean = false
         private set
 
+    var mode: Mode = Mode.HANDS_FREE
+        private set
+
     private var silentTurns = 0
 
     /** The owner turned the mic on. */
-    fun start() {
+    fun start(mode: Mode = Mode.HANDS_FREE) {
+        this.mode = mode
         isActive = true
         silentTurns = 0
     }
@@ -68,12 +87,24 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
     fun onSilentTurn(): Decision {
         if (!isActive) return Decision.Idle
         silentTurns++
+        if (mode == Mode.CALL) {
+            // A call is never ended by quiet. People pause to think, read something, or
+            // just listen, and dropping the line mid-conversation is precisely what makes
+            // voice feel broken. But a recogniser that is genuinely dead also reports
+            // silence forever, so the retry backs off instead of re-arming at full tilt:
+            // the line stays open at a battery cost that stops growing.
+            return Decision.ReArmAfter(callBackoffMillis())
+        }
         if (silentTurns >= maxSilentTurns) {
             isActive = false
             return Decision.GiveUp
         }
         return Decision.ReArmAfter(SILENT_RETRY_DELAY_MS)
     }
+
+    /** Linear backoff to a ceiling, so a quiet line still re-checks every few seconds. */
+    private fun callBackoffMillis(): Long =
+        (SILENT_RETRY_DELAY_MS * silentTurns).coerceAtMost(CALL_MAX_RETRY_DELAY_MS)
 
     /** An unrecoverable failure -- no permission, no recogniser. Never retry these. */
     fun onFatalError(): Decision {
@@ -92,5 +123,12 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
 
         /** Long enough not to spin, short enough to feel continuous. */
         const val SILENT_RETRY_DELAY_MS = 500L
+
+        /**
+         * Ceiling for the call-mode backoff. A line quiet for a long stretch still
+         * re-arms every few seconds, so the owner speaking up is picked straight back
+         * up rather than after a delay that has crept into the tens of seconds.
+         */
+        const val CALL_MAX_RETRY_DELAY_MS = 4_000L
     }
 }
