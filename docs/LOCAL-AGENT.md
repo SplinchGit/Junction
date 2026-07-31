@@ -3,9 +3,9 @@
 For a model running on the PC the phone is plugged into. It has what the cloud agent that
 wrote this did not: `adb`, and therefore the actual device.
 
-Everything below is on `main`. CI is confirmed green through `3369139` (build 58);
-`abc7b50` was still building when this was written, so **check that run before trusting the
-`propose_code_change` tool** — it is the one commit here whose compile is unverified.
+Everything below is on `main` and compiles: CI green through `abc7b50` (build 59), which is
+the last commit carrying code. Unit tests pass; `instrumentation-tests` does not run at all
+(see Known broken).
 
 **None of it has run on a phone.** That is the job.
 
