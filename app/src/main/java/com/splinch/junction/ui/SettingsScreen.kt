@@ -126,6 +126,9 @@ fun SettingsScreen(
     var azureSpeechKeyInput by remember {
         mutableStateOf(keyStorage.getApiKey(com.splinch.junction.chat.voice.AzureNeuralVoice.KEY_ID))
     }
+    var githubTokenInput by remember {
+        mutableStateOf(keyStorage.getApiKey(com.splinch.junction.selfimprove.GitHubContributor.TOKEN_ID))
+    }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
     var gmailAccountEmailInput by remember { mutableStateOf(gmailAccountEmail) }
     var allowedWebDomainsInput by remember { mutableStateOf(allowedWebDomains.joinToString("\n")) }
@@ -459,6 +462,59 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+
+        item {
+            Text(text = "Self-improvement", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "With a GitHub token, Junction can propose changes to its own source. It " +
+                    "opens a pull request for you to review and merge — it cannot push to main " +
+                    "and cannot merge, so nothing reaches your phone until you say so. Create a " +
+                    "fine-grained token limited to the Junction repository with Contents and " +
+                    "Pull requests set to read and write.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            JunctionTextField(
+                value = githubTokenInput,
+                onValueChange = { githubTokenInput = it },
+                label = "GitHub token",
+                placeholder = "github_pat_…",
+                isPassword = true
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            keyStorage.setApiKey(
+                                com.splinch.junction.selfimprove.GitHubContributor.TOKEN_ID,
+                                githubTokenInput.trim()
+                            )
+                        }
+                        Toast.makeText(
+                            context,
+                            if (githubTokenInput.isBlank()) {
+                                "Cleared — Junction can no longer propose code changes"
+                            } else {
+                                "Saved — Junction can open pull requests for your review"
+                            },
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }) {
+                    Text("Save token")
+                }
+                OutlinedButton(onClick = {
+                    val uri = "https://github.com/settings/personal-access-tokens/new".toUri()
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                        .onFailure {
+                            Toast.makeText(context, "Couldn't open a browser", Toast.LENGTH_SHORT).show()
+                        }
+                }) {
+                    Text("Create a token")
+                }
+            }
         }
 
         item {

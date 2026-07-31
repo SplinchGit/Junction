@@ -135,6 +135,21 @@ object ToolRegistry {
 
         register(
             RegisteredTool(
+                name = "propose_code_change",
+                description = "Propose a change to Junction's own source code by opening a pull " +
+                    "request. Writes one file on a new branch. Cannot push to main and cannot " +
+                    "merge: the owner reviews and merges. Requires a GitHub token in Settings.",
+                parametersJson = """{"type":"object","properties":{"path":{"type":"string","description":"Repository-relative path of the file to write, e.g. app/src/main/java/com/splinch/junction/Foo.kt"},"content":{"type":"string","description":"The complete new contents of the file"},"message":{"type":"string","description":"Commit message, also used as the pull request title"},"description":{"type":"string","description":"Pull request body explaining what changed and why"}},"required":["path","content","message"]}""",
+                // Not destructive to the device, but it writes to the repository this app is
+                // built from, and main auto-publishes to the owner's phone. Highest tier so
+                // TrustGate always puts the owner in front of it.
+                riskTier = RiskTier.DESTRUCTIVE,
+                summarize = { args -> "Open a pull request changing ${args.optString("path")}" }
+            )
+        )
+
+        register(
+            RegisteredTool(
                 name = "ask_clarification",
                 description = "Ask the user a clarifying question when the intent is ambiguous.",
                 parametersJson = """{"type":"object","properties":{"question":{"type":"string","description":"The clarifying question to ask"},"options":{"type":"array","items":{"type":"string"},"description":"Optional list of choices"}},"required":["question"]}""",

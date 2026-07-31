@@ -22,6 +22,8 @@ import com.splinch.junction.chat.voice.LocalVoiceListener
 import com.splinch.junction.chat.voice.LocalVoiceSession
 import com.splinch.junction.chat.voice.VoiceCallController
 import com.splinch.junction.chat.voice.VoiceCallService
+import com.splinch.junction.selfimprove.ContributionResult
+import com.splinch.junction.selfimprove.GitHubContributor
 import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.chat.tools.PostConditionVerifier
 import com.splinch.junction.chat.tools.ToolRegistry
@@ -1378,6 +1380,25 @@ class ChatManager(
                         "",
                         errorOutput("${result.reason}: ${result.diagnostic}")
                     )
+                }
+            }
+            "propose_code_change" -> {
+                val token = KeyStorage(appContext).getApiKey(GitHubContributor.TOKEN_ID)
+                val result = GitHubContributor(token).proposeChange(
+                    path = call.arguments.optString("path"),
+                    content = call.arguments.optString("content"),
+                    commitMessage = call.arguments.optString("message"),
+                    description = call.arguments.optString("description")
+                )
+                when (result) {
+                    is ContributionResult.Opened -> {
+                        val message = "Opened pull request #${result.number} from ${result.branch}: ${result.url}"
+                        ToolApplyResult(
+                            confirmation = message,
+                            toolOutput = successOutput("propose_code_change", message)
+                        )
+                    }
+                    is ContributionResult.Failed -> ToolApplyResult("", errorOutput(result.reason))
                 }
             }
             "check_for_updates" -> {

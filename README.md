@@ -232,12 +232,17 @@ the *same* file the button serves, signed with the *same* key, it installs over 
 keeps API keys, chat history, durable memory and your permission grants. You tap the README button
 once, ever; after that Junction updates itself.
 
-This deliberately replaced a check against GitHub Releases, which was broken two ways. Releases are
-built from `v*` tags by `Android Release` and signed with the *release* key, so an APK offered from
-there could never install over a button-installed build — Android rejects the signature mismatch and
-the only way through is an uninstall, which destroys exactly the data above. And the comparison was
-on `versionName`, a hand-edited string that stays `0.5.0` across hundreds of builds, so no published
-build ever looked newer in the first place.
+This deliberately replaced a check against GitHub Releases, which was broken two ways. Releases were
+built from `v*` tags by a separate `Android Release` workflow and signed with a *different* key, so
+an APK offered from there could never install over a button-installed build — Android rejects the
+signature mismatch and the only way through is an uninstall, which destroys exactly the data above.
+And the comparison was on `versionName`, a hand-edited string that stays `0.5.0` across hundreds of
+builds, so no published build ever looked newer in the first place.
+
+That workflow has been deleted, along with the second signing key it needed. There is now one
+Junction: one artifact, one key, one URL, one version code that only goes up. Two distribution
+channels signed with two keys is not a richer release process — on Android it is just a guarantee
+that one of them can never update the other.
 
 No version number is written into this README by hand. The download badge is a shields.io dynamic
 badge reading `$.version` out of `latest.json`, so its face is the version of the build it links to,
@@ -265,18 +270,24 @@ Version codes come from CI, not from a hand-edited constant. `versionCode` is
 published build outranks the one before it and installs cleanly over it. Local builds fall back to
 the checked-in baseline.
 
-Separately, debug and release share `applicationId = "com.splinch.junction"` with no suffix and are
-signed with different keys, so a debug APK can never update a release install (or vice versa), and
-running `connectedDebugAndroidTest` against a phone that has the app installed replaces it — with
-the same data loss.
+One caveat remains for anyone building locally: `connectedDebugAndroidTest` against a phone that has
+Junction installed replaces the install, with the same data loss, because the instrumentation build
+does not carry the published version code.
 
-The `Android Release` workflow builds a signed APK + SHA-256 checksum on a `v*` tag push (repo
-secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-`ANDROID_KEY_PASSWORD`). The app checks GitHub Releases, verifies the published checksum, and hands
-the verified APK to Android's system installer — a checksum mismatch blocks installation before the
-installer opens. This release flow is a direct tag-push build, not the spec's full
-commit→draft-PR→independent-model-review→CI-gated pipeline; see the note in
-`update/UpdateChecker.kt` / `platform/ShizukuInstaller.kt` for what's still open there.
+## Junction changing its own code
+
+`propose_code_change` lets Junction write a file and open a pull request against its own repository,
+using a GitHub token stored in Settings under the same encrypted store as every other key.
+
+It cannot push to `main` and it cannot merge. That is the whole design: a push to `main` rebuilds the
+APK and republishes it at the URL this phone auto-updates from, so a direct push would let the model
+ship unreviewed code onto the owner's device — a device where Junction reads the screen, drives apps
+and sends messages. A pull request keeps the owner as the gate, which is the same bargain `TrustGate`
+strikes everywhere else: the model proposes, the owner decides.
+
+The tool is registered `DESTRUCTIVE` in `chat/tools/ToolRegistry.kt`. Not because it can damage the
+phone, but because it writes to the repository the phone's app is built from, and the risk tier is
+what puts the owner in front of it every time.
 
 ## Device validation
 
