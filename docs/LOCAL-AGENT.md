@@ -45,8 +45,8 @@ re-arm at the end of every reply threw, the throw was swallowed by the `runCatch
 around `startListening`, and a perfectly working recogniser was written off as a fatal
 failure: chip cleared, line dead, one sentence per tap. It looked identical to the bug
 `HandsFreeLoop` was built to fix, which is why the loop kept getting the blame. Every
-platform callback in `LocalVoiceSession` now hops to the main thread through one
-`onMainThread` helper. **Check this first on hardware** — everything below assumes it.
+engine callback now goes through `LocalVoiceSession.onSession`, which marshals onto one
+dispatcher. **Check this first on hardware** — everything below assumes it.
 
 **1. The line does not hang up on silence.** `HandsFreeLoop` has an explicit `Mode`.
 `CALL` never returns `GiveUp` for a silent turn — the owner opened the line, only the owner
@@ -60,7 +60,7 @@ one — it is usually an OEM speech service reloading, and it is retried up to
 lifecycle, so screen-off or app-switch stopped the system feeding microphone audio and the
 recogniser went quiet — deaf, but the UI still said listening. `VoiceCallService` declares a
 `microphone` foreground service for as long as the mic is on, with an ongoing notification
-that opens Junction or ends the call. It owns no audio; `LocalVoiceSession` still runs the
+that opens Junction or ends the call. It owns no audio; `AndroidVoiceEngine` still runs the
 recogniser and TTS, so behaviour is identical on screen and off. `START_NOT_STICKY` on
 purpose — resurrecting a call after a process kill would put a hot mic on the phone nobody
 asked for.
