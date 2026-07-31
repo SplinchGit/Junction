@@ -72,7 +72,14 @@ class PlanExecutor(
         var needsConfirmation = false
         for (step in plan.steps) {
             if (step.status != StepStatus.PENDING) continue
-            when (val decision = trustGate.evaluate(step.toPendingToolCall(), plan.trigger, step.costEstimateUsd)) {
+            when (
+                val decision = trustGate.evaluate(
+                    step.toPendingToolCall(),
+                    plan.trigger,
+                    step.costEstimateUsd,
+                    planId = plan.id
+                )
+            ) {
                 is TrustDecision.Allow -> Unit
                 is TrustDecision.RequireConfirmation -> {
                     needsConfirmation = true

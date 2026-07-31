@@ -14,12 +14,12 @@ import org.json.JSONObject
 // ─── Public types ────────────────────────────────────────────────────────────
 
 sealed class TrustDecision {
-    /** Tool call approved to execute. */
-    data class Allow(val planId: String) : TrustDecision()
+    /** Tool call approved to execute. Null when the call belongs to no plan. */
+    data class Allow(val planId: String?) : TrustDecision()
 
     /** Requires explicit owner confirmation before execution. */
     data class RequireConfirmation(
-        val planId: String,
+        val planId: String?,
         val tainted: Boolean,
         val taintSource: String?
     ) : TrustDecision()
@@ -108,13 +108,20 @@ class TrustGate(
     /**
      * Evaluate a pending tool call and return the trust decision.
      * Writes an audit row for every evaluation.
+     *
+     * [planId] must be the id of the plan this call belongs to, so every step
+     * of one plan shares it, and null for a standalone call that belongs to no
+     * plan. This used to mint a fresh UUID per call, which meant the audit
+     * trail could not tell "one plan, three steps" from "three unrelated single
+     * actions" — see ActionAuditEvaluator, which groups by exactly this column
+     * and treats a null as its own single-action task.
      */
     suspend fun evaluate(
         call: PendingToolCall,
         triggerProvenance: Provenance,
-        costEstimate: Double? = null
+        costEstimate: Double? = null,
+        planId: String? = null
     ): TrustDecision {
-        val planId = UUID.randomUUID().toString()
         val taintInfo = sessionTaint()
 
         // Determine registration/tier early for provenance gating logic.
@@ -329,7 +336,7 @@ class TrustGate(
     }
 
     private suspend fun writeAuditRow(
-        planId: String,
+        planId: String?,
         call: PendingToolCall,
         triggerProvenance: Provenance,
         tainted: Boolean,

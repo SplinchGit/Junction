@@ -6,6 +6,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ActionAuditEvaluatorTest {
+    /**
+     * Note what this test does *not* cover: it hands the evaluator rows that
+     * already share a planId. The grouping logic below has always been correct
+     * on that input — but TrustGate used to mint a fresh UUID per evaluated
+     * call, so no two rows from one plan ever shared a planId in production and
+     * redundantStepCount could only ever be 0. The bug lived entirely in what
+     * produced these rows, which is why it hid behind this passing test.
+     * End-to-end coverage of the real path belongs in the instrumentation test
+     * PlanExecutionScenarioRunnerTest.duplicateIdenticalCallsCountAsRedundantSteps,
+     * which runs a plan through PlanExecutor and TrustGate for real.
+     */
     @Test
     fun separatesExecutableTasksFromSafetyAndApprovalOutcomes() {
         val rows = listOf(
