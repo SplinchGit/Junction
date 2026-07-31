@@ -79,6 +79,11 @@ jobs:
       - name: Build Debug APK (capture logs even on failure)
         run: |
           ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1 || true
+          # Compiler diagnostics first. --stacktrace emits several hundred lines of
+          # Gradle internals, which pushed the actual "e: ..." lines off the end of
+          # the tail below -- a compile failure was unreadable from the job log alone.
+          echo "==== compiler diagnostics ===="
+          grep -E '^(e|w): ' build.log | head -n 100 || echo "(none found)"
           echo "==== build.log tail ===="
           tail -n 200 build.log || true
 

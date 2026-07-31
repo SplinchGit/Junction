@@ -65,7 +65,16 @@ jobs:
 
       # The injection test suite (spec 1.6) runs here. A regression fails the build.
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+        # --stacktrace buries compiler diagnostics under hundreds of lines of Gradle
+        # internals, which pushed the actual "e: ..." lines out of reach in the job
+        # log. Capture the output and print the diagnostics explicitly on failure.
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee test.log || {
+            echo "==== compiler diagnostics ===="
+            grep -E '^(e|w): ' test.log | head -n 100 || echo "(none found)"
+            exit 1
+          }
 
       - name: Build (assembleDebug)
         run: ./gradlew assembleDebug --no-daemon --stacktrace

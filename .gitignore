@@ -19,3 +19,5 @@ web/*.tsbuildinfo
 **/node_modules/
 
 .vscode/
+__pycache__/
+*.pyc
