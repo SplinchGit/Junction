@@ -64,6 +64,15 @@ jobs:
             echo "JUNCTION_API_BASE_URL=${{ secrets.JUNCTION_API_BASE_URL }}" >> local.properties
           fi
 
+      - name: Write debug keystore from secret
+        run: |
+          if [ -n "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > app/debug.keystore
+            echo "Wrote app/debug.keystore from ANDROID_DEBUG_KEYSTORE_BASE64"
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_BASE64 is not set. app/build.gradle.kts falls back to the runner's auto-generated debug keystore, which is regenerated on every run. The published APK will be signed with a key nobody has seen before, so it CANNOT update an existing install -- Android will refuse it until the app is uninstalled, wiping API keys, chat history and durable memory. Set the secret to make published builds updatable."
+          fi
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
