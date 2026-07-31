@@ -39,6 +39,10 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
         chatDao.clearSession()
     }
 
+    override suspend fun trimMessages(sessionId: String, keepRecent: Int) {
+        chatDao.trimMessages(sessionId, keepRecent)
+    }
+
     override fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>> {
         return chatDao.messageStream(sessionId).map { entities ->
             entities.map { it.toModel() }

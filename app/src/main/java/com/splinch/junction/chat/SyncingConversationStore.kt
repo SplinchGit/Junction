@@ -22,6 +22,12 @@ class SyncingConversationStore(
         delegate.clear()
     }
 
+    // Local-only, matching clear() above: trimming shortens what this device
+    // keeps and sends as context. It is not a remote delete, so no sync call.
+    override suspend fun trimMessages(sessionId: String, keepRecent: Int) {
+        delegate.trimMessages(sessionId, keepRecent)
+    }
+
     override fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>> {
         return delegate.messagesFlow(sessionId)
     }

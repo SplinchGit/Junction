@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
@@ -92,6 +93,16 @@ import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * Pixel offset applied when scrolling to the last message. Scrolling to an
+ * index alone aligns that item's *top* with the top of the viewport, so a
+ * reply taller than the screen would pin to its first line and stay there
+ * while the rest streamed in off-screen. A large offset asks to scroll well
+ * past the item's start; LazyColumn clamps it to the true maximum scroll, so
+ * the effect is "pin to the bottom" for tall and short messages alike.
+ */
+private const val BOTTOM_SCROLL_OFFSET = 100_000
 
 @Composable
 fun ChatScreen(
@@ -253,9 +264,47 @@ fun ChatScreen(
             IconButton(onClick = { scope.launch { chatManager.regenerateResponse() } }, modifier = Modifier.size(36.dp)) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = "Regenerate")
             }
+            // History management was reachable only by typing /clear, which is
+            // undiscoverable on a phone. Same actions, surfaced.
+            var historyMenuOpen by remember { mutableStateOf(false) }
+            Box {
+                IconButton(
+                    onClick = { historyMenuOpen = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.MoreVert, contentDescription = "Chat history options")
+                }
+                DropdownMenu(
+                    expanded = historyMenuOpen,
+                    onDismissRequest = { historyMenuOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Keep last ${ChatManager.DEFAULT_TRIM_KEEP} messages") },
+                        onClick = {
+                            historyMenuOpen = false
+                            scope.launch { chatManager.trimHistory() }
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Clear chat") },
+                        onClick = {
+                            historyMenuOpen = false
+                            scope.launch { chatManager.clearSession() }
+                        }
+                    )
+                }
+            }
         }
 
         val listState = rememberLazyListState()
+        // The streaming bubble is only an item when something is actually
+        // streaming. It used to be an unconditional item{} wrapping an if,
+        // which left a permanent zero-height row on the end -- so the scroll
+        // target was that empty row rather than the last real message, and
+        // every index calculation below was quietly off by one.
+        val itemCount = messages.size + if (streaming != null) 1 else 0
+        val lastIndex = (itemCount - 1).coerceAtLeast(0)
+
         // Only auto-follow new content if the user was already at (or very near)
         // the bottom -- otherwise a response streaming in would keep yanking
         // them back down every time they tried to scroll up to read history.
@@ -266,9 +315,23 @@ fun ChatScreen(
                 lastVisible == null || lastVisible.index >= layoutInfo.totalItemsCount - 2
             }
         }
-        LaunchedEffect(messages.size, streaming?.content) {
-            if (isNearBottom) {
-                listState.animateScrollToItem(messages.size)
+
+        // Opening the chat lands on the newest message. Previously the only
+        // scroll was the animated follow below, which meant arriving with a
+        // long history dropped you at the very top with the whole conversation
+        // to scroll through. This jumps without animating, so a long history
+        // doesn't visibly race past on the way down.
+        var hasSnappedToBottom by remember { mutableStateOf(false) }
+        LaunchedEffect(itemCount) {
+            if (!hasSnappedToBottom && itemCount > 0) {
+                listState.scrollToItem(lastIndex, BOTTOM_SCROLL_OFFSET)
+                hasSnappedToBottom = true
+            }
+        }
+
+        LaunchedEffect(itemCount, streaming?.content) {
+            if (hasSnappedToBottom && isNearBottom && itemCount > 0) {
+                listState.animateScrollToItem(lastIndex, BOTTOM_SCROLL_OFFSET)
             }
         }
 
@@ -280,17 +343,17 @@ fun ChatScreen(
                 .padding(top = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(messages) { message ->
+            items(messages, key = { it.id }) { message ->
                 MessageBubble(message)
             }
-            item {
-                if (streaming != null) {
+            streaming?.let { active ->
+                item(key = active.itemId) {
                     MessageBubble(
                         message = ChatMessage(
-                            id = streaming!!.itemId,
+                            id = active.itemId,
                             timestamp = Instant.now(),
                             sender = Sender.ASSISTANT,
-                            content = streaming!!.content
+                            content = active.content
                         )
                     )
                 }

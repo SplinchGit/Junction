@@ -5,6 +5,9 @@ interface ConversationStore {
     suspend fun saveSession(session: ChatSession)
     suspend fun appendMessage(sessionId: String, message: ChatMessage)
     suspend fun clear()
+
+    /** Drops all but the [keepRecent] newest messages, leaving the session running. */
+    suspend fun trimMessages(sessionId: String, keepRecent: Int)
     fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>>
 }
 
@@ -28,6 +31,12 @@ class InMemoryConversationStore : ConversationStore {
     override suspend fun clear() {
         session = null
         messagesFlow.value = emptyList()
+    }
+
+    override suspend fun trimMessages(sessionId: String, keepRecent: Int) {
+        val kept = messagesFlow.value.takeLast(keepRecent)
+        session = session?.copy(messages = kept)
+        messagesFlow.value = kept
     }
 
     override fun messagesFlow(sessionId: String): kotlinx.coroutines.flow.Flow<List<ChatMessage>> {

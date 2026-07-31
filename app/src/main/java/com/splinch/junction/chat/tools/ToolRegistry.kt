@@ -77,8 +77,16 @@ object ToolRegistry {
         register(
             RegisteredTool(
                 name = "set_setting",
-                description = "Update a specific Junction setting by key.",
-                parametersJson = """{"type":"object","properties":{"key":{"type":"string","description":"The setting key (e.g. digest_interval_minutes, realtime_endpoint)"},"value":{"description":"The new value for the setting"}},"required":["key","value"]}""",
+                description = "Update a Junction setting by key. Only two keys are supported: " +
+                    "digest_interval_minutes (integer, minimum 15) and realtime_endpoint (URL string). " +
+                    "Any other key is rejected — for speech mode use set_speech_mode, and for per-app " +
+                    "notification filtering use set_feed_filter.",
+                // Enumerated rather than left open-ended: applySetting() only
+                // handles these two keys, and an open "e.g." description had the
+                // model inventing plausible-sounding keys that round-tripped
+                // through a confirmation prompt only to fail as "Unsupported
+                // setting". The schema now rejects them before that happens.
+                parametersJson = """{"type":"object","properties":{"key":{"type":"string","enum":["digest_interval_minutes","realtime_endpoint"],"description":"The setting key to update"},"value":{"description":"The new value: an integer >= 15 for digest_interval_minutes, or a URL string for realtime_endpoint"}},"required":["key","value"]}""",
                 riskTier = RiskTier.INAPP,
                 summarize = { args -> "Set ${args.optString("key")} = ${args.opt("value")}" },
                 verifyPostCondition = { args, verifier ->

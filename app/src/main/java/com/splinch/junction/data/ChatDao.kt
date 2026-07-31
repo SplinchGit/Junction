@@ -29,6 +29,27 @@ interface ChatDao {
     @Query("DELETE FROM chat_messages")
     suspend fun clearMessages()
 
+    /**
+     * Deletes all but the [keepRecent] newest messages in a session, so a long
+     * conversation can be shortened without ending it. Ordering matches
+     * [getMessages]/[messageStream] (timestamp), with id as a tie-break so
+     * messages written inside the same millisecond can't be trimmed
+     * arbitrarily — otherwise a user turn could survive while the assistant
+     * reply it belongs to was deleted.
+     */
+    @Query(
+        """
+        DELETE FROM chat_messages
+        WHERE sessionId = :sessionId AND id NOT IN (
+            SELECT id FROM chat_messages
+            WHERE sessionId = :sessionId
+            ORDER BY timestamp DESC, id DESC
+            LIMIT :keepRecent
+        )
+        """
+    )
+    suspend fun trimMessages(sessionId: String, keepRecent: Int)
+
     @Query("DELETE FROM chat_sessions")
     suspend fun clearSession()
 

@@ -78,21 +78,34 @@ class ChatManager(
             You are Junction, a personal assistant that runs as an app on the owner's Android phone. You are not a
             website or a general chatbot — you are software on their device, talking to the person holding it.
 
-            What you can actually do here. You have real tools, and when a tool exists for something you should use it
-            rather than telling the owner to do it themselves:
-            - Read and act on their notifications. Junction collects notifications into a feed, groups them by app and
-              category, and can summarise what they missed.
-            - Open and launch apps on the phone, and navigate the device.
-            - Check for Junction updates and install them.
-            - Remember durable facts about the owner across conversations.
-            - See images the owner attaches, and read text in them.
-            Anything needing the owner's approval is presented to them as a plan they confirm with a tap — so propose
-            the action, don't refuse it.
+            Use your tools. This is the main thing that makes you useful. When a tool exists for what the owner is
+            asking, call it — don't describe the steps and hand the job back to them. Anything carrying real risk is
+            surfaced to the owner as a plan they approve with a tap before it runs, so the safe move is to propose the
+            action and let them decide. Refusing, or telling them to do it manually when you have a tool for it, is the
+            actual failure here.
 
-            What you cannot do. You can't change Junction's own settings, switch your own AI provider or model, or edit
-            the app's interface. Those live in the app's Settings screen, which only the owner can change. If they ask
-            for one of those, say plainly where it is (for example: Settings, then AI Provider) rather than implying
-            you have no idea or that it's impossible.
+            What you can do:
+            - Notifications and feed. Read the feed of collected notifications, reply to a notification directly,
+              dismiss one, archive a feed item, and turn a given app's notifications on or off.
+            - Apps and device. Launch any installed app, open a deep link or URI, fire an Android intent, and press
+              back or home.
+            - Drive the screen. Read a structured snapshot of whatever is on screen, then tap elements, type into
+              fields, and scroll — which lets you operate apps that have no other integration. Read the screen first so
+              you're selecting real elements rather than guessing.
+            - Gmail. Triage the inbox by category, draft a reply in a thread, send a draft, archive a message, and
+              unsubscribe from mailing lists. Needs a Gmail account set up in Settings.
+            - Junction's own settings. Turn speech mode on or off, change notification filters per app, and set the
+              digest interval or the realtime endpoint. These are yours to change — go ahead and change them when
+              asked, rather than sending the owner to the Settings screen.
+            - Memory. Remember durable facts about the owner across conversations, and forget them on request.
+            - Updates. Check whether a newer Junction build exists and install a verified one.
+            - Images. See pictures the owner attaches and read the text in them.
+            When the request is genuinely ambiguous, ask a clarifying question rather than guessing at something
+            irreversible — but don't use that as a way to avoid acting on a clear request.
+
+            What you cannot do. You can't switch your own AI provider or model, change API keys, or alter the app's
+            interface. Those live in the app's Settings screen and only the owner can change them. If they ask for one,
+            say plainly where it is (for example: Settings, then AI Provider) rather than implying it's impossible.
 
             Talking to the owner. Be direct and concise; this is a phone screen, not a document. Lead with the answer.
             Don't narrate what you're about to do at length, and don't pad replies with caveats. When you're speaking
@@ -117,6 +130,9 @@ class ChatManager(
 
         // §3.3 hard cap on durable facts — bounded by construction.
         private const val MAX_MEMORY_FACTS = 200
+
+        /** Messages kept by a default /trim or the chat menu's trim action. */
+        const val DEFAULT_TRIM_KEEP = 20
     }
 
     private val appContext = context.applicationContext
@@ -418,7 +434,16 @@ class ChatManager(
                                             sourceRef = "assistant_text:$itemId"
                                         )
                                     )
-                                    if (voiceBackend == VoiceBackend.LOCAL && _speechModeEnabled.value) {
+                                    // Speak whenever speech mode is on, not only
+                                    // when the LOCAL backend is selected. Reaching
+                                    // here in speech mode means Realtime did not
+                                    // handle the turn (that path returns earlier),
+                                    // so this reply is the text fallback -- and the
+                                    // owner is expecting to hear an answer either
+                                    // way. Gating on the backend meant a configured
+                                    // Azure voice stayed silent for anyone left on
+                                    // the default Realtime setting.
+                                    if (_speechModeEnabled.value) {
                                         localVoice.speak(final)
                                     }
                                 }
@@ -888,6 +913,30 @@ class ChatManager(
         appendSystemMessage("Session cleared")
     }
 
+    /**
+     * Shortens the conversation to its [keepRecent] newest messages without
+     * ending the session. Unlike [clearSession] this keeps speech mode, the
+     * agent-tools toggle, the session id and the realtime connection intact —
+     * it's for when the history has grown unwieldy to scroll (and expensive to
+     * send as context), not for starting over.
+     *
+     * Durable facts in memory are deliberately untouched: they're a separate
+     * store precisely so that trimming the transcript doesn't lose what the
+     * owner asked Junction to remember.
+     */
+    suspend fun trimHistory(keepRecent: Int = DEFAULT_TRIM_KEEP) {
+        val safeKeep = keepRecent.coerceAtLeast(0)
+        val before = _messages.value.size
+        if (before <= safeKeep) {
+            appendSystemMessage("Nothing to trim — the conversation is $before message(s) long.")
+            return
+        }
+        store.trimMessages(session.sessionId, safeKeep)
+        // The messages flow is Room-backed and re-emits on its own, but the
+        // in-memory store needs no prompting either; both land in _messages.
+        appendSystemMessage("Trimmed ${before - safeKeep} older message(s), kept the most recent $safeKeep.")
+    }
+
     /** §3.1 owner picks which voice backend speech mode uses; persisted, takes effect on the next speech-mode enable. */
     suspend fun setVoiceBackend(backend: VoiceBackend) {
         if (backend == voiceBackend) return
@@ -930,15 +979,19 @@ class ChatManager(
         _speechModeEnabled.value = enabled
         session = session.copy(speechModeEnabled = enabled)
         store.saveSession(session)
-        if (voiceBackend == VoiceBackend.LOCAL) {
-            if (enabled) {
-                localVoice.start()
-            } else {
-                _micEnabled.value = false
-                localVoice.stop()
-            }
-            return
+        // Bring the speech session up on either backend. On Realtime it's the
+        // safety net that speaks the text fallback when Realtime can't connect;
+        // without it the engine was never initialised and that fallback was
+        // silent.
+        if (enabled) {
+            localVoice.start()
+        } else {
+            _micEnabled.value = false
+            localVoice.stop()
         }
+
+        if (voiceBackend == VoiceBackend.LOCAL) return
+
         if (enabled && chatVisible) {
             realtime.disconnect()
             ensureConnected(keepAlive = true, history = _messages.value)
@@ -1104,6 +1157,7 @@ class ChatManager(
         when (command) {
             is CommandResult.Help -> appendSystemMessage(command.text)
             is CommandResult.Clear -> clearSession()
+            is CommandResult.Trim -> trimHistory(command.keepRecent)
             is CommandResult.Stats -> appendSystemMessage(buildStatsText())
             is CommandResult.Export -> appendSystemMessage(exportConversation(command.format))
             is CommandResult.MemorySearch -> {

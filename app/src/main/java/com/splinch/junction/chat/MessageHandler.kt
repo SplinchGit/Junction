@@ -5,6 +5,7 @@ import java.time.Instant
 sealed class CommandResult {
     data class Help(val text: String) : CommandResult()
     object Clear : CommandResult()
+    data class Trim(val keepRecent: Int) : CommandResult()
     data class Stats(val text: String) : CommandResult()
     data class Export(val format: String) : CommandResult()
     data class MemorySearch(val query: String) : CommandResult()
@@ -51,6 +52,15 @@ class MessageHandler {
         return when (command) {
             "/help" -> CommandResult.Help(buildHelpText())
             "/clear" -> CommandResult.Clear
+            "/trim" -> {
+                val raw = args.firstOrNull()
+                val keep = raw?.toIntOrNull()
+                when {
+                    raw == null -> CommandResult.Trim(ChatManager.DEFAULT_TRIM_KEEP)
+                    keep == null || keep < 0 -> CommandResult.Error("Usage: /trim [messages to keep]")
+                    else -> CommandResult.Trim(keep)
+                }
+            }
             "/stats" -> CommandResult.Stats("Requesting stats")
             "/export" -> CommandResult.Export(args.firstOrNull() ?: "json")
             "/memory" -> CommandResult.MemorySearch(args.joinToString(" "))
@@ -82,6 +92,7 @@ class MessageHandler {
 Available Commands:
   /help            - Show this help message
   /clear           - Clear the current chat session
+  /trim [n]        - Keep only the n newest messages (default ${ChatManager.DEFAULT_TRIM_KEEP})
   /stats           - Show chat statistics
   /export [format] - Export conversation (json/text)
   /memory [query]  - Search memory for information
