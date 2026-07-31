@@ -19,6 +19,23 @@ import okhttp3.Request
  */
 class InstallPermissionMissing(message: String) : Exception(message)
 
+/**
+ * The published build is signed with a different key than the installed one, so Android
+ * will not install it over the top at any price.
+ *
+ * Caught before the install intent rather than after, because the system's own answer is
+ * "App not installed" with no reason given -- and the real cost (an uninstall, which takes
+ * the API keys with it) is something the owner should be told before they start, not
+ * discovered afterwards.
+ */
+class SignatureMismatch(
+    val installedKey: String,
+    val updateKey: String
+) : Exception(
+    "This build is signed with a different key (${updateKey.take(12)}) than the installed " +
+        "one (${installedKey.take(12)}), so Android can't install it over the top."
+)
+
 object ApkIntegrity {
     fun sha256(file: File): String = file.inputStream().use { input ->
         val digest = MessageDigest.getInstance("SHA-256")
@@ -118,6 +135,14 @@ class UpdateInstaller(
                     updateFile.delete()
                     throw SecurityException("Downloaded APK did not match the published SHA-256 checksum.")
                 }
+            }
+            // Verified bytes, but the wrong key still can't be installed over this app.
+            // Checking here turns Android's blank "App not installed" into something the
+            // owner can act on -- and stops a pointless trip through the system dialog.
+            val installedKey = SigningIdentity.installed(context)
+            val updateKey = SigningIdentity.ofApk(context, updateFile.absolutePath)
+            if (installedKey != null && updateKey != null && !installedKey.equals(updateKey, ignoreCase = true)) {
+                throw SignatureMismatch(installedKey, updateKey)
             }
             onStage(UpdateStage.Installing)
             // §4.2 rollback retention: back up the APK currently installed

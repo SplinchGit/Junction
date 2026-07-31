@@ -1117,15 +1117,7 @@ fun SettingsScreen(
         }
 
         item {
-            Text(
-                text = "About",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.JUNCTION_VERSION_CODE})",
-                style = MaterialTheme.typography.bodyMedium
-            )
+            UpdateSettingsSection()
         }
     }
 }

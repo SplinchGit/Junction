@@ -117,6 +117,38 @@ The friction was never the download — it was everything around it.
 - **The download had no feedback**, so a slow one read as a dead button, and tapping again
   restarted it. There is now a progress bar, the banner is inert while working, and a
   download already matching the published checksum is reused instead of re-fetched.
+- **There was no way to ask.** Settings → *About & updates* now shows the version, the
+  build number, the signing key, and a **Check for updates** button that reports all three
+  outcomes separately — a newer build, "up to date, build N is the latest published", or
+  the reason the check failed. `UpdateChecker.check` returns `UpdateCheck` for this;
+  `checkForUpdate` still collapses to a nullable for the silent background check.
+
+### Updating never needs an uninstall — unless the key changed
+
+Installing the published APK over the top keeps everything. Android only refuses when the
+*signing certificate* differs, and then the sole way through is an uninstall.
+
+The committed debug keystore's certificate is:
+
+```
+33:D6:1D:48:C7:86:20:89:73:8D:F6:43:41:52:FA:85:EA:23:9E:49:A8:34:56:D0:B5:0E:3A:95:F2:AE:DB:F8
+```
+
+Settings shows the first 12 hex characters of the same value (`33d61d48c786`), so an owner
+can compare without a PC. Every CI build from `f1d3a5a` onward carries it; anything
+installed before that was signed with a per-run throwaway key and *will* hit the wall.
+
+`UpdateInstaller` now compares the downloaded APK's certificate against the installed one
+before firing the install intent, so this surfaces as a sentence rather than Android's
+bare "App not installed".
+
+If the keys genuinely differ, what survives an uninstall:
+
+- **Chat, feed and memory do** — plain Room, so `adb shell run-as com.splinch.junction`
+  can tar `/data/data/com.splinch.junction` out and back in on a debug build.
+- **API keys do not.** They are in `EncryptedSharedPreferences` behind an Android Keystore
+  master key, and that key is destroyed with the app. They have to be re-entered, whatever
+  is restored. `KeyStorage` handles the unreadable-store case without crashing.
 
 ## What to do, in order
 

@@ -6,6 +6,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 
+/** What a check against the published build manifest found. */
+sealed interface UpdateCheck {
+    data class Available(val update: UpdateInfo) : UpdateCheck
+
+    /** Nothing newer. [publishedVersionCode] is what is on the server right now. */
+    data class UpToDate(val publishedVersionCode: Int) : UpdateCheck
+
+    /** The manifest could not be read, which is not the same as being up to date. */
+    data class Failed(val reason: String) : UpdateCheck
+}
+
 data class UpdateInfo(
     val version: String,
     val versionCode: Int,
@@ -34,22 +45,45 @@ class UpdateChecker(
      * stays "0.5.0" across hundreds of builds, so comparing it meant no published build
      * ever looked newer than the installed one.
      */
-    suspend fun checkForUpdate(currentVersionCode: Int): UpdateInfo? = withContext(Dispatchers.IO) {
-        runCatching {
+    suspend fun checkForUpdate(currentVersionCode: Int): UpdateInfo? =
+        (check(currentVersionCode) as? UpdateCheck.Available)?.update
+
+    /**
+     * The same comparison, but able to say which of the three things happened.
+     *
+     * [checkForUpdate] returns null for "nothing newer" and for "couldn't reach the
+     * manifest" alike, which is fine for a background check that just doesn't raise a
+     * banner. It is not fine for a button the owner pressed: reporting "you're up to date"
+     * because the network was down is how someone sits on an old build convinced it is the
+     * current one.
+     */
+    suspend fun check(currentVersionCode: Int): UpdateCheck = withContext(Dispatchers.IO) {
+        try {
             httpClient.newCall(Request.Builder().url(MANIFEST_URL).get().build()).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val json = JSONObject(response.body?.string() ?: return@use null)
+                if (!response.isSuccessful) {
+                    return@use UpdateCheck.Failed("The build manifest returned HTTP ${response.code}.")
+                }
+                val body = response.body?.string()
+                    ?: return@use UpdateCheck.Failed("The build manifest was empty.")
+                val json = JSONObject(body)
                 val versionCode = json.optInt("versionCode", 0)
-                if (versionCode <= currentVersionCode) return@use null
-                UpdateInfo(
-                    version = json.optString("versionName").trim().ifBlank { "build $versionCode" },
-                    versionCode = versionCode,
-                    url = json.optString("pageUrl").trim().ifBlank { DOWNLOAD_PAGE_URL },
-                    apkUrl = json.optString("apkUrl").trim().takeIf { it.startsWith("https://") },
-                    sha256Url = json.optString("sha256Url").trim().takeIf { it.startsWith("https://") }
+                if (versionCode <= 0) {
+                    return@use UpdateCheck.Failed("The build manifest carried no version code.")
+                }
+                if (versionCode <= currentVersionCode) return@use UpdateCheck.UpToDate(versionCode)
+                UpdateCheck.Available(
+                    UpdateInfo(
+                        version = json.optString("versionName").trim().ifBlank { "build $versionCode" },
+                        versionCode = versionCode,
+                        url = json.optString("pageUrl").trim().ifBlank { DOWNLOAD_PAGE_URL },
+                        apkUrl = json.optString("apkUrl").trim().takeIf { it.startsWith("https://") },
+                        sha256Url = json.optString("sha256Url").trim().takeIf { it.startsWith("https://") }
+                    )
                 )
             }
-        }.getOrNull()
+        } catch (error: Exception) {
+            UpdateCheck.Failed(error.message ?: "Could not reach the build manifest.")
+        }
     }
 
     companion object {
