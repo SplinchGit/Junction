@@ -7,9 +7,13 @@
 .DS_Store
 app/google-services.json
 google-services.json
-app/debug.keystore
 app/release.keystore
 *.keystore
+# The debug keystore is deliberately committed. Its credentials are the public
+# Android SDK constants (android/androiddebugkey), so it is not a secret, and CI
+# needs it: without a fixed key every published APK is signed with a throwaway
+# key and cannot update the previous install. The release keystore stays ignored.
+!app/debug.keystore
 logcat_*.txt
 web/.env
 web/.env.local

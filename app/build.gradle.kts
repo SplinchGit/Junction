@@ -104,7 +104,17 @@ configure<ApplicationExtension> {
         minSdk = 26
         targetSdk = 36
 
-        val versionCodeValue = 2
+        // CI passes its run number so every published build outranks the previous
+        // one and installs over it. Local builds keep the checked-in baseline.
+        val baselineVersionCode = 2
+        val versionCodeValue =
+            (
+                findProperty("JUNCTION_VERSION_CODE")?.toString()
+                    ?: localProps.getProperty("JUNCTION_VERSION_CODE")
+                    ?: System.getenv("JUNCTION_VERSION_CODE")
+                )?.toIntOrNull()
+                ?.coerceAtLeast(baselineVersionCode)
+                ?: baselineVersionCode
         versionCode = versionCodeValue
         versionName = "0.5.0"
 

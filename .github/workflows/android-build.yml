@@ -64,19 +64,29 @@ jobs:
             echo "JUNCTION_API_BASE_URL=${{ secrets.JUNCTION_API_BASE_URL }}" >> local.properties
           fi
 
-      - name: Write debug keystore from secret
+      - name: Resolve debug keystore
         run: |
+          set -euo pipefail
           if [ -n "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > app/debug.keystore
-            echo "Wrote app/debug.keystore from ANDROID_DEBUG_KEYSTORE_BASE64"
+            echo "Signing with ANDROID_DEBUG_KEYSTORE_BASE64 (overrides the committed key)."
+          elif [ -f app/debug.keystore ]; then
+            echo "Signing with the committed app/debug.keystore."
           else
-            echo "::warning::ANDROID_DEBUG_KEYSTORE_BASE64 is not set. app/build.gradle.kts falls back to the runner's auto-generated debug keystore, which is regenerated on every run. The published APK will be signed with a key nobody has seen before, so it CANNOT update an existing install -- Android will refuse it until the app is uninstalled, wiping API keys, chat history and durable memory. Set the secret to make published builds updatable."
+            echo "::error::No debug keystore. app/debug.keystore is committed to the repo precisely so this can never happen; if it is missing, Gradle would sign with a throwaway key and the published APK could not update any existing install. Restore the file or set ANDROID_DEBUG_KEYSTORE_BASE64."
+            exit 1
           fi
+          echo "Signing key fingerprint (must stay identical across builds):"
+          keytool -list -v -keystore app/debug.keystore -storepass android -alias androiddebugkey \
+            | grep 'SHA256:'
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
       - name: Build Debug APK (capture logs even on failure)
+        env:
+          # Monotonic across runs, so each published APK installs over the last.
+          JUNCTION_VERSION_CODE: ${{ github.run_number }}
         run: |
           ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1 || true
           # Compiler diagnostics first. --stacktrace emits several hundred lines of

@@ -1,18 +1,18 @@
 # Junction
 
-[![Download APK](https://img.shields.io/badge/Download-APK-4f7cff?style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
+[![Download APK](https://img.shields.io/badge/%E2%AC%87%20DOWNLOAD%20APK-latest%20build-4f7cff?style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
 
-**[Download APK](https://splinchgit.github.io/Junction/junction-debug.apk)** — this is the only
-download link, and it always points at the newest build from `main`. Every push rebuilds it in
-place, so the URL never changes and there is nothing else to check.
+That button is the whole install. It downloads the APK itself — no landing page, no picking a file —
+and it always serves the newest build from `main`, because every push overwrites it in place at a URL
+that never changes. It is the only download link in this README on purpose.
 
 [![APK build](https://img.shields.io/github/actions/workflow/status/SplinchGit/Junction/android-build.yml?branch=main&style=flat-square&label=APK%20build)](https://github.com/SplinchGit/Junction/actions/workflows/android-build.yml)
 [![Updated](https://img.shields.io/github/last-commit/SplinchGit/Junction/main?style=flat-square&label=main%20updated)](https://github.com/SplinchGit/Junction/commits/main)
 
-Those two are status, not downloads, and they are live rather than written down — so this section
-cannot go stale. If "APK build" is not passing, the link above is still serving the last APK that
-built successfully, which will be older than `main`. Checksum for the current file:
-[`junction-debug.apk.sha256`](https://splinchgit.github.io/Junction/junction-debug.apk.sha256).
+Status, not downloads — and live rather than written down, so they cannot go stale. If "APK build" is
+not passing, the button is still serving the last APK that built successfully, which will be older
+than `main`. Installing it over an older Junction keeps your API keys, chat history and memory: every
+published build is signed with the same key and carries a higher version code than the one before.
 
 An Android-native assistant that acts on your phone under trust you control and can audit. It reads
 the screen, replies to messages, manages email, and drives apps — always with a client-side trust
@@ -209,37 +209,41 @@ a new one, text input stays available throughout.
 
 ## Update pipeline / direct APK releases
 
-**Latest debug build:** [splinchgit.github.io/Junction](https://splinchgit.github.io/Junction/) always serves the
-most recent debug APK from `main`, rebuilt by the `publish-pages` job in `Build Android APK`
-(`.github/workflows/android-build.yml`) on every push. The page is generated from the build that
-produced the APK, so the version, short SHA, build timestamp, commit link and SHA-256 it displays
-always describe that exact file. This is unsigned and meant for quick sideloading, not the signed
-release flow below.
+**One URL, always the newest build:**
+`https://splinchgit.github.io/Junction/junction-debug.apk` is the APK file itself, not a page about
+it. The `publish-pages` job in `Build Android APK` (`.github/workflows/android-build.yml`) overwrites
+it on every push to `main`, so the link is permanent and its contents are whatever `main` last built.
+The README button points straight at it; nothing else in this README downloads anything.
+
+Two companion files sit next to it for when you want them, deliberately not linked above so there is
+only ever one thing to tap: `junction-debug.apk.sha256` (checksum of the exact file being served) and
+`index.html` (a page stating the version, build date, commit and SHA-256 of that same file).
 
 No version number is written into this README on purpose. The APK's version comes from
-`versionName` in `app/build.gradle.kts` and is rendered into the download page at build time;
-restating it here would just be a second copy to forget to update. The badges at the top are
-evaluated by shields.io when the page loads, so they track the repo rather than the last time
-someone edited this file.
+`versionName` in `app/build.gradle.kts`; restating it here would just be a second copy to forget to
+update. The badges at the top are evaluated by shields.io when the page loads, so they track the repo
+rather than the last time someone edited this file.
 
-**Published builds must be signed with a stable key, or every update wipes the app.**
-`app/debug.keystore` is gitignored, so it exists locally but never reaches a CI runner. When it is
-absent, `app/build.gradle.kts` skips the debug `signingConfig` entirely and Gradle falls back to the
-runner's auto-generated debug keystore — which is regenerated on every run. Each published APK is
-then signed with a key nobody has seen before, Android refuses to update the existing install, and
-the only way to install is to uninstall first. That destroys API keys, chat history, durable memory
-facts and the notification/accessibility grants, every single update.
+**Published builds are signed with a stable, committed debug key.** `app/debug.keystore` is checked
+into the repo — an exception to the `*.keystore` ignore rule — because CI has to sign with the *same*
+key every run. Without a fixed key Gradle generates a throwaway one per build, Android refuses to
+install the new APK over the old one, and the only way through is to uninstall first, destroying API
+keys, chat history, durable memory facts and the notification/accessibility grants on every update.
 
-The fix is the `ANDROID_DEBUG_KEYSTORE_BASE64` repo secret. `Build Android APK` decodes it to
-`app/debug.keystore` before building, so published APKs stay signature-compatible with each other
-*and* with local debug builds. Produce the value from the keystore you already have:
+Committing it is safe precisely because it is a debug key: its credentials are the public Android SDK
+constants (`android` / `androiddebugkey`, hardcoded in `app/build.gradle.kts`), so it protects
+nothing and identifies nothing. It only has to be *stable*. The release keystore is a real secret and
+stays gitignored, injected from `ANDROID_KEYSTORE_BASE64` at tag time.
 
-```
-base64 -w0 app/debug.keystore
-```
+`ANDROID_DEBUG_KEYSTORE_BASE64` still works as an override: if that repo secret is set, the workflow
+decodes it over the committed file before building. Set it only if you want published builds signed
+with a key that isn't public — and keep it backed up, because losing it breaks updates for everyone
+who installed a build signed with it.
 
-If the secret is missing the build still succeeds, but it logs a warning saying the APK cannot
-update an existing install. Treat that warning as a broken release.
+Version codes come from CI, not from a hand-edited constant. `versionCode` is
+`JUNCTION_VERSION_CODE` when the environment sets it and the workflow passes the run number, so every
+published build outranks the one before it and installs cleanly over it. Local builds fall back to
+the checked-in baseline.
 
 Separately, debug and release share `applicationId = "com.splinch.junction"` with no suffix and are
 signed with different keys, so a debug APK can never update a release install (or vice versa), and
