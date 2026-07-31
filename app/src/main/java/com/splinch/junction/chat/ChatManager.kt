@@ -152,7 +152,10 @@ class ChatManager(
         if (key.isBlank()) return null
         return AzureNeuralVoice(appContext, key)
     }
-    private var voiceBackend: VoiceBackend = VoiceBackend.REALTIME
+    // Matches the persisted default (UserPrefsRepository.voiceBackendFlow). Set
+    // before initialize() reads prefs, so this must not assume a backend the owner
+    // has not deployed.
+    private var voiceBackend: VoiceBackend = VoiceBackend.LOCAL
 
     private val verifier = PostConditionVerifier(
         prefs = prefs,
@@ -205,7 +208,7 @@ class ChatManager(
     private val _micEnabled = MutableStateFlow(false)
     val micEnabled: StateFlow<Boolean> = _micEnabled.asStateFlow()
 
-    private val _voiceBackend = MutableStateFlow(VoiceBackend.REALTIME)
+    private val _voiceBackend = MutableStateFlow(VoiceBackend.LOCAL)
     val voiceBackendState: StateFlow<VoiceBackend> = _voiceBackend.asStateFlow()
 
     /** The currently configured text-chat provider, for a quick switcher UI. */
@@ -358,7 +361,12 @@ class ChatManager(
         // Vision needs the text-provider API either way -- Realtime voice has
         // no image channel in this app, so route straight past it when an
         // image is attached rather than silently dropping the picture.
-        if (_speechModeEnabled.value && imagePath == null) {
+        // Only the Realtime backend routes turns through the WebRTC lane. The local
+        // backend deliberately uses this same text path and simply speaks the reply
+        // (see the TextDone branch below); sending it down here would always fail,
+        // printing "Voice isn't available right now" on *every single* utterance and
+        // making working on-device voice look broken.
+        if (voiceBackend == VoiceBackend.REALTIME && _speechModeEnabled.value && imagePath == null) {
             // Speech mode: use Realtime API, but never let an unconfigured or
             // unreachable voice backend block the user's typed text from
             // getting a real answer — fall through to the text-provider path.
@@ -1131,6 +1139,13 @@ class ChatManager(
 
     override fun onSpeakingStateChanged(speaking: Boolean) {
         _localVoiceSpeaking.value = speaking
+    }
+
+    override fun onHandsFreeEnded() {
+        // The recogniser has stood down. Clear the mic state so the chip stops
+        // claiming Junction is listening when it isn't.
+        _micEnabled.value = false
+        _localVoiceListening.value = false
     }
 
     private fun startMessageCollection(sessionId: String) {

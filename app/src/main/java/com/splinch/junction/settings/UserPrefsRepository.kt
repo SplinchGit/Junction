@@ -142,9 +142,20 @@ class UserPrefsRepository(private val context: Context) {
         prefs[alwaysAllowedToolsKey] ?: emptySet()
     }
 
-    /** §3.1 "realtime" (OpenAI WebRTC) or "local" (on-device SpeechRecognizer/TextToSpeech). */
+    /**
+     * §3.1 "realtime" (OpenAI WebRTC) or "local" (on-device SpeechRecognizer/TextToSpeech).
+     *
+     * Defaults to **local**, because that is the only one that can work on a fresh
+     * install. Realtime needs a deployed SDP endpoint, a server minting client
+     * secrets, and a Firebase sign-in; until all three are standing it does nothing,
+     * which presents to the owner as "voice is broken" rather than "voice is not
+     * configured yet". The on-device path needs none of them.
+     *
+     * Realtime is still the better experience once that backend exists -- it is a
+     * mode to opt into, not the floor.
+     */
     val voiceBackendFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[voiceBackendKey] ?: "realtime"
+        prefs[voiceBackendKey] ?: "local"
     }
 
     suspend fun setVoiceBackend(backend: String) {

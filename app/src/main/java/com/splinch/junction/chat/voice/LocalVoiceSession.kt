@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 interface LocalVoiceListener {
@@ -21,6 +22,14 @@ interface LocalVoiceListener {
     fun onListeningStateChanged(listening: Boolean)
     fun onSpeakingStateChanged(speaking: Boolean)
     fun onError(message: String)
+
+    /**
+     * Hands-free listening has stopped on its own -- too much silence, or the
+     * recogniser failed unrecoverably. The UI must clear its "Mic on" state:
+     * showing a live mic while nothing is listening is the exact illusion that
+     * makes voice look broken.
+     */
+    fun onHandsFreeEnded()
 }
 
 /**
@@ -57,12 +66,46 @@ class LocalVoiceSession(
     /** The voice currently speaking, retained so barge-in can stop playback. */
     private var activeCloudVoice: AzureNeuralVoice? = null
 
+    /**
+     * An utterance that arrived before TextToSpeech finished initialising.
+     *
+     * TTS init is asynchronous and can take hundreds of milliseconds, while a model
+     * reply can land in about a second. Dropping the utterance in that window is the
+     * difference between "Junction answered me" and "Junction heard me and then said
+     * nothing" on the first thing an owner ever tries -- and it failed silently, with
+     * only a log line. Only the most recent is held: if two replies arrive before the
+     * engine is up, the newer one is the one still worth speaking.
+     *
+     * Semantics live in [PendingSpeech] so they can be unit tested without an Android
+     * TTS engine -- this failure was silent, and silent failures earn a test.
+     */
+    private val pendingUtterance = PendingSpeech()
+
+    /**
+     * Keeps the mic live across turns. SpeechRecognizer stops after a single
+     * utterance, so without this the owner gets one sentence per tap while the UI
+     * still claims to be listening. See [HandsFreeLoop].
+     */
+    private val handsFree = HandsFreeLoop()
+
+    /** Pending re-arm, cancelled whenever the owner or a new turn overtakes it. */
+    private var reArmJob: Job? = null
+
     fun start() {
         if (started) return
         started = true
         tts = TextToSpeech(context) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) tts?.language = Locale.getDefault()
+            if (ttsReady) {
+                tts?.language = Locale.getDefault()
+                // Speak anything that arrived while the engine was still starting.
+                pendingUtterance.take()?.let { queued -> speakOnDevice(queued) }
+            } else {
+                // Initialisation failed outright: tell the owner rather than going
+                // quietly mute, which is indistinguishable from Junction ignoring them.
+                pendingUtterance.discard()
+                listener.onError("Text-to-speech is unavailable on this device.")
+            }
         }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
@@ -71,10 +114,22 @@ class LocalVoiceSession(
 
             override fun onDone(utteranceId: String?) {
                 listener.onSpeakingStateChanged(false)
+                // Junction has finished its reply, so the owner's turn is next.
+                applyDecision(handsFree.onReplyFinished())
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
+                listener.onSpeakingStateChanged(false)
+                // Playback failed, but the conversation shouldn't die with it.
+                applyDecision(handsFree.onReplyFinished())
+            }
+
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                // Barge-in or a QUEUE_FLUSH from a newer reply. Deliberately does
+                // NOT re-arm: either the owner is already talking, or another
+                // utterance is about to start. Overridden explicitly because the
+                // platform's default onStop funnels into onError, which would.
                 listener.onSpeakingStateChanged(false)
             }
         })
@@ -90,7 +145,10 @@ class LocalVoiceSession(
 
     fun stop() {
         started = false
+        handsFree.stop()
+        reArmJob?.cancel()
         speakJob?.cancel()
+        pendingUtterance.discard()
         activeCloudVoice?.stop()
         recognizer?.destroy()
         recognizer = null
@@ -100,22 +158,60 @@ class LocalVoiceSession(
         ttsReady = false
     }
 
-    /** Barge-in: cut any current TTS playback and start listening for the owner's next utterance. */
+    /**
+     * The owner turned the mic on. Barge-in: cut any current TTS playback, then
+     * listen — and keep listening across turns until they turn it off again.
+     */
     fun startListening() {
         speakJob?.cancel()
+        // Drop anything still queued from before the engine was ready: the owner has
+        // started talking, so a reply they interrupted must not surface afterwards.
+        pendingUtterance.discard()
         activeCloudVoice?.stop()
         tts?.stop()
+        handsFree.start()
+        arm()
+    }
+
+    fun stopListening() {
+        handsFree.stop()
+        reArmJob?.cancel()
+        runCatching { recognizer?.stopListening() }
+    }
+
+    /** Point the recogniser at the microphone for one utterance. */
+    private fun arm() {
+        reArmJob?.cancel()
         val intent = android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
         }
         runCatching { recognizer?.startListening(intent) }
-            .onFailure { listener.onError(it.message ?: "Failed to start listening") }
+            .onFailure {
+                handsFree.onFatalError()
+                listener.onError(it.message ?: "Failed to start listening")
+                listener.onHandsFreeEnded()
+            }
     }
 
-    fun stopListening() {
-        runCatching { recognizer?.stopListening() }
+    /** Carry out whatever [HandsFreeLoop] decided after a turn ended. */
+    private fun applyDecision(decision: HandsFreeLoop.Decision) {
+        reArmJob?.cancel()
+        when (decision) {
+            is HandsFreeLoop.Decision.ReArmNow -> arm()
+            is HandsFreeLoop.Decision.ReArmAfter -> {
+                reArmJob = scope.launch {
+                    delay(decision.delayMillis)
+                    arm()
+                }
+            }
+            is HandsFreeLoop.Decision.GiveUp -> {
+                listener.onError("Stopped listening — nothing heard for a while.")
+                listener.onHandsFreeEnded()
+            }
+            is HandsFreeLoop.Decision.Idle -> Unit
+        }
     }
 
     fun speak(text: String) {
@@ -135,6 +231,8 @@ class LocalVoiceSession(
                     speakOnDevice(text)
                 } else {
                     listener.onSpeakingStateChanged(false)
+                    // The cloud path has no UtteranceProgressListener, so re-arm here.
+                    applyDecision(handsFree.onReplyFinished())
                 }
             }
             return
@@ -145,8 +243,10 @@ class LocalVoiceSession(
 
     private fun speakOnDevice(text: String) {
         if (!ttsReady) {
-            Log.w(TAG, "TTS not ready; dropping utterance")
-            listener.onSpeakingStateChanged(false)
+            // Hold it rather than drop it -- the engine is still initialising and will
+            // flush this the moment it is ready. See [pendingUtterance].
+            Log.d(TAG, "TTS not ready; queueing utterance until init completes")
+            pendingUtterance.queue(text)
             return
         }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
@@ -163,14 +263,42 @@ class LocalVoiceSession(
                 ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 ?.firstOrNull()
                 ?.trim()
-            if (!text.isNullOrBlank()) listener.onUserUtterance(text)
+            if (!text.isNullOrBlank()) {
+                // Stay quiet until the reply has been spoken, then re-arm — otherwise
+                // the recogniser hears Junction's own voice and answers itself.
+                applyDecision(handsFree.onSpeechHeard())
+                listener.onUserUtterance(text)
+            } else {
+                applyDecision(handsFree.onSilentTurn())
+            }
         }
 
         override fun onError(error: Int) {
             listener.onListeningStateChanged(false)
-            // NO_MATCH / SPEECH_TIMEOUT are routine (silence, unclear audio) — not worth surfacing as errors.
-            if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                listener.onError("Speech recognition error (code $error)")
+            when (error) {
+                // Routine: silence or unclear audio. Not worth surfacing, but the
+                // recogniser has stopped, so it still needs re-arming.
+                SpeechRecognizer.ERROR_NO_MATCH,
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
+                SpeechRecognizer.ERROR_BUSY -> applyDecision(handsFree.onSilentTurn())
+
+                // Nothing to retry: retrying spins forever and never succeeds.
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                    applyDecision(handsFree.onFatalError())
+                    listener.onError("Microphone permission is not granted.")
+                    listener.onHandsFreeEnded()
+                }
+
+                SpeechRecognizer.ERROR_CLIENT -> {
+                    applyDecision(handsFree.onFatalError())
+                    listener.onError("The speech recogniser failed to start.")
+                    listener.onHandsFreeEnded()
+                }
+
+                else -> {
+                    listener.onError("Speech recognition error (code $error)")
+                    applyDecision(handsFree.onSilentTurn())
+                }
             }
         }
 
