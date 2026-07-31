@@ -17,6 +17,7 @@ import com.splinch.junction.chat.realtime.RealtimeConnectionState
 import com.splinch.junction.chat.realtime.RealtimeEventListener
 import com.splinch.junction.chat.realtime.RealtimeSessionManager
 import com.splinch.junction.chat.realtime.ToolCall
+import com.splinch.junction.chat.voice.AndroidVoiceEngine
 import com.splinch.junction.chat.voice.AzureNeuralVoice
 import com.splinch.junction.chat.voice.LocalVoiceListener
 import com.splinch.junction.chat.voice.LocalVoiceSession
@@ -137,6 +138,13 @@ class ChatManager(
 
         /** Messages kept by a default /trim or the chat menu's trim action. */
         const val DEFAULT_TRIM_KEEP = 20
+
+        /**
+         * Ceiling on how much of a plan's outcome is read aloud on a call. Long enough
+         * for a clarifying question, short enough that a ten-step plan doesn't hold the
+         * line for a minute while the owner waits for their turn back.
+         */
+        private const val MAX_SPOKEN_OUTCOME_CHARS = 400
     }
 
     private val appContext = context.applicationContext
@@ -145,7 +153,17 @@ class ChatManager(
     // Passed as a supplier, not a value: the key is read at each utterance so
     // adding it in Settings takes effect immediately rather than after an app
     // restart. No key configured means the on-device engine is used, as before.
-    private val localVoice = LocalVoiceSession(appContext, this, { resolveCloudVoice() })
+    /**
+     * Deliberately not `Main.immediate` like [scope]: the voice session assumes its own
+     * work is serialised, and an immediate dispatcher would run an engine callback
+     * re-entrantly in the middle of the call that provoked it.
+     */
+    private val voiceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val localVoice = LocalVoiceSession(
+        listener = this,
+        engine = AndroidVoiceEngine(appContext, cloudVoiceProvider = { resolveCloudVoice() }),
+        scope = voiceScope
+    )
 
     /**
      * Builds the Azure neural voice from the stored key, or null when none is
@@ -337,12 +355,16 @@ class ChatManager(
         val commandResult = processed.commandResult
         if (commandResult != null) {
             handleCommand(commandResult)
+            // Commands print to the screen rather than answer aloud, but the turn is
+            // still over, and on a call the mic has to come back either way.
+            endVoiceTurn("command")
             return
         }
 
         val (isValid, error) = messageHandler.validateMessage(processed.content)
         if (!isValid && imagePath == null) {
             appendSystemMessage(error ?: "Invalid message")
+            endVoiceTurn("invalid_message", error ?: "Sorry, I couldn't use that.")
             return
         }
 
@@ -397,6 +419,7 @@ class ChatManager(
         val activeProvider: com.splinch.junction.chat.provider.LlmProvider = providerRegistry.getActiveProvider()
             ?: run {
                 appendSystemMessage("No AI provider configured. Add your API key in Settings.")
+                endVoiceTurn("no_provider", "There's no AI provider configured. Add your API key in Settings.")
                 return
             }
 
@@ -405,7 +428,7 @@ class ChatManager(
         val useFrontier = explicitFrontier || pendingFrontierEscalation
         pendingFrontierEscalation = false
 
-        scope.launch(Dispatchers.IO) {
+        val turnJob = scope.launch(Dispatchers.IO) {
             val contextBlocks = buildContextBlocks(activeProvider)
             val tools = if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
             var itemId = UUID.randomUUID().toString()
@@ -414,6 +437,10 @@ class ChatManager(
             var usage: com.splinch.junction.chat.provider.ProviderUsage? = null
             var sawToolArgParseFailure = false
             val responseStartedAt = System.currentTimeMillis()
+            // Whether the model's own words are already on their way to the speaker. If
+            // they are, nothing else in this turn may speak: [speak] flushes, so a tool
+            // confirmation arriving a moment later would cut the answer off mid-word.
+            var spokeReplyAloud = false
 
             var currentProvider = activeProvider
             var attemptsLeft = 2 // primary + one health-aware fallback
@@ -458,6 +485,7 @@ class ChatManager(
                                     if (_speechModeEnabled.value) {
                                         com.splinch.junction.chat.voice.VoiceTrace.replyReady(final.length)
                                         localVoice.speak(final)
+                                        spokeReplyAloud = true
                                     }
                                 }
                                 _streamingAssistant.value = null
@@ -513,6 +541,9 @@ class ChatManager(
 
             if (fatalError != null) {
                 appendSystemMessage("Error: ${cleanProviderError(fatalError)}")
+                // On a call this is the whole turn. Saying it out loud is the difference
+                // between "Junction couldn't do that" and Junction having gone silent.
+                endVoiceTurn("provider_error", "Sorry, that didn't work: ${cleanProviderError(fatalError)}")
                 return@launch
             }
 
@@ -537,7 +568,12 @@ class ChatManager(
                 }
             }
             if (requestedCalls.isNotEmpty()) {
-                handleProposedPlan(requestedCalls, processed.content.take(120), costEstimatePerStep)
+                handleProposedPlan(
+                    requestedCalls,
+                    processed.content.take(120),
+                    costEstimatePerStep,
+                    speakOutcomes = !spokeReplyAloud
+                )
             }
 
             // §1.1 escalation triggers for the *next* turn: this one was too
@@ -552,6 +588,35 @@ class ChatManager(
                 appendSystemMessage("A tool call had malformed arguments — escalating to the frontier model for the next turn.")
             }
         }
+
+        // However this turn ended -- a reply, tool calls and no reply, an empty reply, a
+        // plan waiting on approval, an exception nobody predicted -- the line goes back to
+        // the owner. Re-arming used to hang off a spoken reply alone, so every one of
+        // those other endings left the mic dead with the chip still reading "Mic on".
+        // Ignored when a reply is already being spoken; that turn ends when the audio does.
+        turnJob.invokeOnCompletion {
+            // Explicitly dispatched rather than immediate: this completes on the IO lane,
+            // and the reply, if there is one, was handed to the voice session from there
+            // moments earlier. Queueing keeps them in that order.
+            scope.launch(Dispatchers.Main) { endVoiceTurn("turn_complete") }
+        }
+    }
+
+    /** True while the owner is on an on-device voice call, as opposed to typing. */
+    private fun onLocalCall(): Boolean =
+        voiceBackend == VoiceBackend.LOCAL && _speechModeEnabled.value && _micEnabled.value
+
+    /**
+     * Ends a voice turn that produced no spoken reply, and hands the microphone back.
+     *
+     * [sayOutLoud] is for the endings the owner would otherwise never learn about: on a
+     * call they are listening, not reading, so a failure that only appends a line to the
+     * chat is indistinguishable from Junction having quietly hung up. Speaking it also
+     * ends the turn -- the mic comes back when the audio does.
+     */
+    private fun endVoiceTurn(reason: String, sayOutLoud: String? = null) {
+        if (!onLocalCall()) return
+        if (sayOutLoud != null) localVoice.speak(sayOutLoud) else localVoice.onTurnEnded(reason)
     }
 
     /**
@@ -560,7 +625,17 @@ class ChatManager(
      * either runs it immediately (every step auto-allowed) or leaves it in
      * [activePlan] awaiting one owner-level approve/cancel.
      */
-    private suspend fun handleProposedPlan(calls: List<PendingToolCall>, goal: String, costEstimatePerStepUsd: Double? = null) {
+    private suspend fun handleProposedPlan(
+        calls: List<PendingToolCall>,
+        goal: String,
+        costEstimatePerStepUsd: Double? = null,
+        /**
+         * False when the model already answered in words on this turn: it is saying what
+         * it is doing, and speaking a confirmation over the top would flush the sentence
+         * the owner is still listening to.
+         */
+        speakOutcomes: Boolean = true
+    ) {
         if (calls.isEmpty()) return
         val plan = planExecutor.buildPlan(
             goal.ifBlank { "Plan" },
@@ -580,9 +655,17 @@ class ChatManager(
         }
 
         if (autoRun) {
-            runPlan(plan)
+            runPlan(plan, speakOutcomes)
         } else {
             _activePlan.value = plan
+            // An approval prompt that only appears on screen is, to someone on a call,
+            // just Junction going quiet. Say that it's waiting. Approving it still means
+            // touching the screen -- a spoken "yes" must never be able to run a plan.
+            endVoiceTurn(
+                "plan_awaiting_approval",
+                "I need your approval before I can do that — it's waiting on screen."
+                    .takeIf { speakOutcomes }
+            )
         }
     }
 
@@ -604,9 +687,23 @@ class ChatManager(
         appendSystemMessage("Cancelled: ${plan.goal}")
     }
 
-    private suspend fun runPlan(plan: Plan) {
+    private suspend fun runPlan(plan: Plan, speakOutcomes: Boolean = true) {
         planExecutor.approve(plan)
-        planExecutor.run(plan) { step -> applyStepAndReport(step) }
+        // What each step would have said on screen, kept so a call can hear it instead.
+        val outcomes = mutableListOf<String>()
+        planExecutor.run(plan) { step ->
+            applyStepAndReport(step).also { result ->
+                if (result.confirmation.isNotBlank()) outcomes += result.confirmation
+            }
+        }
+        // Tool results don't go back to the model on the text lane, so these confirmations
+        // are the entire answer to what the owner just asked for. Unspoken, a call that
+        // does something is indistinguishable from a call that has dropped -- and
+        // `ask_clarification` arrives this way too, which makes the silence a question
+        // the owner never heard.
+        if (outcomes.isNotEmpty() && speakOutcomes) {
+            endVoiceTurn("plan_done", outcomes.joinToString(" ").take(MAX_SPOKEN_OUTCOME_CHARS))
+        }
         plan.steps.filter { it.status == StepStatus.FAILED }.forEach { step ->
             appendSystemMessage(
                 "Post-condition check failed for ${step.summary}: ${step.outcomeDetail ?: "unknown reason"}"

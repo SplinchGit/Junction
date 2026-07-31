@@ -71,6 +71,14 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val voiceOpenRequests = MutableStateFlow(0)
     private val chatOpenRequests = MutableStateFlow(0)
+
+    /** Bumped on every resume, so the update check can run when Junction comes forward. */
+    private val foregroundTicks = MutableStateFlow(0)
+
+    override fun onResume() {
+        super.onResume()
+        foregroundTicks.value = foregroundTicks.value + 1
+    }
     private val prefsRepository by lazy { UserPrefsRepository(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -125,18 +133,26 @@ class MainActivity : ComponentActivity() {
                         prefs.setNotificationListenerEnabled(
                             NotificationAccessHelper.isNotificationListenerEnabled(context)
                         )
-
-                        val lastChecked = prefs.lastUpdateCheckAtFlow.first()
-                        val now = System.currentTimeMillis()
-                        if (now - lastChecked > UPDATE_CHECK_INTERVAL_MS) {
-                            scope.launch {
-                                val update = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
-                                updateState.value = update
-                                prefs.updateLastUpdateCheckAt(now)
-                            }
-                        }
                     }.onFailure { ex ->
                         Log.e(TAG, "Startup initialization failed", ex)
+                    }
+                }
+
+                // Every time Junction comes to the foreground, not only on a cold start.
+                // A build published while the app sat in the background was invisible until
+                // it was force-closed and reopened -- and then only if four hours had gone
+                // by. Now switching away and back is enough, and the check is one small
+                // JSON GET behind a short cooldown.
+                val foregroundTick by foregroundTicks.collectAsState()
+                LaunchedEffect(foregroundTick) {
+                    runCatching {
+                        val lastChecked = prefs.lastUpdateCheckAtFlow.first()
+                        val now = System.currentTimeMillis()
+                        if (now - lastChecked <= UPDATE_CHECK_INTERVAL_MS) return@runCatching
+                        prefs.updateLastUpdateCheckAt(now)
+                        updateState.value = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
+                    }.onFailure { ex ->
+                        Log.w(TAG, "Update check failed", ex)
                     }
                 }
 
@@ -241,7 +257,13 @@ class MainActivity : ComponentActivity() {
          * several builds in a day, so a 24h gap meant routinely running days-old code.
          * The check is a single small JSON GET, so this is cheap to do often.
          */
-        private const val UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000L
+        /**
+         * Cooldown between update checks. Short, because the check is a few hundred bytes
+         * of JSON and the whole point is that a build pushed minutes ago is offered
+         * without the owner having to think about it. It was four hours, which meant a
+         * fresh build could sit unnoticed for most of a day.
+         */
+        private const val UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000L
     }
 }
 

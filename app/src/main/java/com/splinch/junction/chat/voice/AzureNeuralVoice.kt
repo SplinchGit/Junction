@@ -43,12 +43,19 @@ class AzureNeuralVoice(
      * started, not until it finishes, so a caller can still barge in via [stop].
      * Returns false when synthesis failed and the caller should fall back to the
      * on-device engine rather than silently saying nothing.
+     *
+     * [onFinished] runs on the main thread when playback reaches its end, which is the
+     * only signal a caller has that the turn is over -- the on-device engine has
+     * `UtteranceProgressListener` for this, and without the equivalent here the mic came
+     * back up the instant playback *started* and spent the whole reply listening to
+     * Junction. Deliberately not called for a [stop]: an interruption is the owner taking
+     * their turn, not Junction finishing one.
      */
-    suspend fun speak(text: String): Boolean {
+    suspend fun speak(text: String, onFinished: () -> Unit = {}): Boolean {
         if (text.isBlank() || !isConfigured) return false
 
         val audio = withContext(Dispatchers.IO) { synthesize(text) } ?: return false
-        return withContext(Dispatchers.Main) { play(audio) }
+        return withContext(Dispatchers.Main) { play(audio, onFinished) }
     }
 
     fun stop() {
@@ -85,7 +92,7 @@ class AzureNeuralVoice(
         }.onFailure { Log.w(TAG, "Azure TTS request failed", it) }.getOrNull()
     }
 
-    private fun play(audio: File): Boolean {
+    private fun play(audio: File, onFinished: () -> Unit): Boolean {
         stop()
         return runCatching {
             player = MediaPlayer().apply {
@@ -96,7 +103,18 @@ class AzureNeuralVoice(
                         .build()
                 )
                 setDataSource(audio.absolutePath)
-                setOnCompletionListener { stop() }
+                setOnCompletionListener {
+                    stop()
+                    onFinished()
+                }
+                setOnErrorListener { _, what, extra ->
+                    // A decode or playback failure has to end the turn like any other
+                    // ending, or the caller waits for audio that is never coming.
+                    Log.w(TAG, "Playback error (what=$what extra=$extra)")
+                    stop()
+                    onFinished()
+                    true
+                }
                 prepare()
                 start()
             }

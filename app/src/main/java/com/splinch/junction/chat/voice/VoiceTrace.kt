@@ -61,6 +61,24 @@ object VoiceTrace {
     /** Hands-free listening stood itself down. [reason] is silence or fatal. */
     fun handsFreeEnded(reason: String) = stage("handsfree_ended", "reason=$reason")
 
+    /** A turn ended without anything being spoken -- an error, or tool calls only. */
+    fun turnEnded(reason: String) = stage("turn_ended", "reason=$reason")
+
+    /**
+     * Whoever held the floor overran and it was taken back, which is the last line of
+     * defence against a call going dead. [holder] is a [CallFloor.Holder] name.
+     */
+    fun floorOverrun(holder: String) = stage("floor_overrun", "holder=$holder")
+
+    /** The barge-in microphone is live underneath the current reply. */
+    fun bargeInArmed() = stage("bargein_armed")
+
+    /** The owner cut in mid-reply; playback stops and the recogniser takes the mic. */
+    fun bargeIn() = stage("bargein")
+
+    /** Barge-in can't run here, so the reply is uninterruptible. [reason] is why. */
+    fun bargeInUnavailable(reason: String) = stage("bargein_unavailable", "reason=$reason")
+
     private fun stage(name: String, detail: String = "") {
         Log.i(TAG, if (detail.isEmpty()) "stage=$name" else "stage=$name $detail")
     }

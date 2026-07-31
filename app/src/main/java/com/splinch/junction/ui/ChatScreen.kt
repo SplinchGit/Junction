@@ -116,6 +116,8 @@ fun ChatScreen(
     val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
     val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
     val micEnabled by chatManager.micEnabled.collectAsState()
+    val voiceListening by chatManager.localVoiceListening.collectAsState()
+    val voiceSpeaking by chatManager.localVoiceSpeaking.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
     var input by remember { mutableStateOf("") }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
@@ -247,7 +249,7 @@ fun ChatScreen(
                             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     },
-                    label = { Text(if (micEnabled) "Mic on" else "Mic muted") },
+                    label = { Text(callStatusLabel(micEnabled, voiceListening, voiceSpeaking)) },
                     leadingIcon = {
                         Icon(
                             imageVector = if (micEnabled) Icons.Default.Mic else Icons.Default.MicOff,
@@ -416,6 +418,21 @@ fun ChatScreen(
             onRemoveImage = { pendingImagePath = null }
         )
     }
+}
+
+/**
+ * What the call is doing this second.
+ *
+ * A chip reading "Mic on" while nothing is actually listening is the illusion that makes
+ * voice feel broken, so the label follows the audio rather than the switch. Falls back to
+ * "Mic on" between turns and on the Realtime backend, which drives its own audio and
+ * reports neither state -- never claiming more than is known.
+ */
+private fun callStatusLabel(micEnabled: Boolean, listening: Boolean, speaking: Boolean): String = when {
+    !micEnabled -> "Mic muted"
+    speaking -> "Speaking"
+    listening -> "Listening"
+    else -> "Mic on"
 }
 
 @Composable

@@ -56,24 +56,54 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
         private set
 
     private var silentTurns = 0
+    private var recogniserFailures = 0
 
     /** The owner turned the mic on. */
     fun start(mode: Mode = Mode.HANDS_FREE) {
         this.mode = mode
         isActive = true
         silentTurns = 0
+        recogniserFailures = 0
     }
 
     /** The owner turned the mic off, or the session is shutting down. */
     fun stop() {
         isActive = false
         silentTurns = 0
+        recogniserFailures = 0
+    }
+
+    /** The recogniser armed successfully, so any earlier failure was transient. */
+    fun onRecogniserReady() {
+        recogniserFailures = 0
+    }
+
+    /**
+     * The recogniser refused to start, or failed in a way that is usually transient.
+     *
+     * `ERROR_CLIENT` is the common one and it is overwhelmingly a hiccup: restarting a
+     * single-shot recogniser quickly, or an OEM speech service reloading underneath.
+     * Treating it as unrecoverable ended the call outright on the first stumble, which
+     * on Samsung is most calls. So it retries -- but a recogniser that is genuinely
+     * broken fails identically forever, so the retries are capped rather than endless.
+     */
+    fun onRecogniserFailure(): Decision {
+        if (!isActive) return Decision.Idle
+        recogniserFailures++
+        if (recogniserFailures >= MAX_RECOGNISER_FAILURES) {
+            isActive = false
+            return Decision.GiveUp
+        }
+        return Decision.ReArmAfter(
+            (SILENT_RETRY_DELAY_MS * recogniserFailures).coerceAtMost(CALL_MAX_RETRY_DELAY_MS)
+        )
     }
 
     /** A turn produced real speech; the loop is healthy. */
     fun onSpeechHeard(): Decision {
         if (!isActive) return Decision.Idle
         silentTurns = 0
+        recogniserFailures = 0
         // Don't re-arm yet: a reply is on its way and the recogniser must not
         // listen to Junction's own voice.
         return Decision.Idle
@@ -82,6 +112,28 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
     /** Junction finished speaking its reply, so the owner's turn is next. */
     fun onReplyFinished(): Decision =
         if (isActive) Decision.ReArmNow else Decision.Idle
+
+    /**
+     * The turn is over but nothing was said -- the provider errored, the model asked for
+     * tools instead of answering, a plan is waiting on approval, or the reply was empty.
+     *
+     * Identical in effect to [onReplyFinished] and separate on purpose: re-arming used to
+     * hang off a spoken reply alone, so all of those endings left the mic dead with the
+     * UI still claiming it was listening. Naming them distinctly is what stops that
+     * assumption creeping back in.
+     */
+    fun onTurnEnded(): Decision =
+        if (isActive) Decision.ReArmNow else Decision.Idle
+
+    /**
+     * The owner cut in while Junction was speaking. Their turn starts immediately, and
+     * since they are plainly still there, any silence counted against the line is void.
+     */
+    fun onBargeIn(): Decision {
+        if (!isActive) return Decision.Idle
+        silentTurns = 0
+        return Decision.ReArmNow
+    }
 
     /** A listening turn ended with nothing usable: silence, no match, or a recoverable error. */
     fun onSilentTurn(): Decision {
@@ -123,6 +175,14 @@ class HandsFreeLoop(private val maxSilentTurns: Int = DEFAULT_MAX_SILENT_TURNS) 
 
         /** Long enough not to spin, short enough to feel continuous. */
         const val SILENT_RETRY_DELAY_MS = 500L
+
+        /**
+         * How many times the recogniser may fail to start before the line closes.
+         * Generous, because the failure is usually transient and hanging up on a
+         * recoverable stumble is the bug this exists to stop; finite, because a
+         * device with no working recogniser must not retry until the battery dies.
+         */
+        const val MAX_RECOGNISER_FAILURES = 8
 
         /**
          * Ceiling for the call-mode backoff. A line quiet for a long stretch still

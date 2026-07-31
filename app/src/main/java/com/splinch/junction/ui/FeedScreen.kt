@@ -50,10 +50,12 @@ import com.splinch.junction.feed.model.FeedCategory
 import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.feed.model.FeedStatus
 import com.splinch.junction.notifications.NotificationTapStore
+import androidx.compose.material3.LinearProgressIndicator
+import com.splinch.junction.update.InstallPermissionMissing
 import com.splinch.junction.update.UpdateInfo
 import com.splinch.junction.update.UpdateInstaller
+import com.splinch.junction.update.UpdateStage
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -73,16 +75,14 @@ fun FeedScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedItem by remember { mutableStateOf<FeedItem?>(null) }
     var chatItem by remember { mutableStateOf<FeedItem?>(null) }
-    var showUpdateBanner by remember { mutableStateOf(updateInfo != null) }
     var showChatChooser by remember { mutableStateOf(false) }
 
-    LaunchedEffect(updateInfo) {
-        showUpdateBanner = updateInfo != null
-        if (updateInfo != null) {
-            delay(6000)
-            showUpdateBanner = false
-        }
-    }
+    // Deliberately no auto-hide. The banner used to dismiss itself after six seconds,
+    // leaving only a dot that does nothing when tapped -- so an owner who looked away
+    // during those six seconds had no way back to the update short of restarting the app
+    // and hoping to catch it next time.
+    var installStage by remember { mutableStateOf<UpdateStage?>(null) }
+    var needsInstallPermission by remember { mutableStateOf(false) }
 
     val now = System.currentTimeMillis()
     val activeItems = items.filter {
@@ -117,18 +117,37 @@ fun FeedScreen(
                 }
             }
 
-            if (updateInfo != null && showUpdateBanner) {
-                UpdateBanner(updateInfo = updateInfo, onOpen = {
-                    scope.launch {
-                        if (updateInfo.apkUrl != null && updateInfo.sha256Url != null) {
-                            UpdateInstaller(context).downloadAndRequestInstall(updateInfo).getOrElse {
-                                Toast.makeText(context, it.message ?: "Could not verify update.", Toast.LENGTH_LONG).show()
+            if (updateInfo != null) {
+                UpdateBanner(
+                    updateInfo = updateInfo,
+                    stage = installStage,
+                    needsPermission = needsInstallPermission,
+                    onOpen = {
+                        // A second tap during a download would restart it from zero.
+                        if (installStage != null) return@UpdateBanner
+                        val installer = UpdateInstaller(context)
+                        if (needsInstallPermission || !installer.canInstallPackages()) {
+                            needsInstallPermission = true
+                            installer.requestInstallPermission().getOrElse {
+                                Toast.makeText(context, "Open Settings › Apps › Junction to allow installing updates.", Toast.LENGTH_LONG).show()
                             }
-                        } else {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url)))
+                            return@UpdateBanner
+                        }
+                        scope.launch {
+                            if (updateInfo.apkUrl != null && updateInfo.sha256Url != null) {
+                                installStage = UpdateStage.Downloading(null)
+                                installer.downloadAndRequestInstall(updateInfo) { stage -> installStage = stage }
+                                    .getOrElse { error ->
+                                        needsInstallPermission = error is InstallPermissionMissing
+                                        Toast.makeText(context, error.message ?: "Could not verify update.", Toast.LENGTH_LONG).show()
+                                    }
+                                installStage = null
+                            } else {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(updateInfo.url)))
+                            }
                         }
                     }
-                })
+                )
             }
 
             // §4.2 one-tap rollback: only shown once an update has actually
@@ -294,32 +313,73 @@ private fun UpdateDot() {
 }
 
 @Composable
-private fun UpdateBanner(updateInfo: UpdateInfo, onOpen: () -> Unit) {
+private fun UpdateBanner(
+    updateInfo: UpdateInfo,
+    stage: UpdateStage?,
+    needsPermission: Boolean,
+    onOpen: () -> Unit
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 10.dp, bottom = 10.dp)
-            .clickable { onOpen() }
+            .clickable(enabled = stage == null) { onOpen() }
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                text = "Update available",
+                text = if (needsPermission) "Update needs permission" else "Update available",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Text(
-                text = if (updateInfo.apkUrl != null && updateInfo.sha256Url != null) {
-                    "Version ${updateInfo.version} is ready. Tap to verify and install."
-                } else {
-                    "Version ${updateInfo.version} is ready. Tap to view release."
-                },
+                text = updateBannerDetail(updateInfo, stage, needsPermission),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            // Determinate where the server gave a length, a sweep where it didn't --
+            // either way the owner can see it is working rather than wondering.
+            when (stage) {
+                is UpdateStage.Downloading -> {
+                    val percent = stage.percent
+                    if (percent == null) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { percent / 100f },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        )
+                    }
+                }
+
+                UpdateStage.Verifying, UpdateStage.Installing ->
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+
+                null -> Unit
+            }
         }
     }
+}
+
+private fun updateBannerDetail(
+    updateInfo: UpdateInfo,
+    stage: UpdateStage?,
+    needsPermission: Boolean
+): String = when {
+    needsPermission ->
+        "Android needs your go-ahead before Junction can install its own updates. Tap to allow it."
+
+    stage is UpdateStage.Downloading ->
+        stage.percent?.let { "Downloading version ${updateInfo.version}… $it%" }
+            ?: "Downloading version ${updateInfo.version}…"
+
+    stage == UpdateStage.Verifying -> "Checking the download against its published checksum…"
+    stage == UpdateStage.Installing -> "Ready. Confirm the install when Android asks."
+    updateInfo.apkUrl != null && updateInfo.sha256Url != null ->
+        "Version ${updateInfo.version} is ready. Tap to verify and install."
+
+    else -> "Version ${updateInfo.version} is ready. Tap to view release."
 }
 
 @Composable

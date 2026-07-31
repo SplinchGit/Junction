@@ -186,6 +186,95 @@ class HandsFreeLoopTest {
     }
 
     @Test
+    fun `a turn that produced no reply still gives the mic back`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+        loop.onSpeechHeard()
+
+        // The provider errored, the model asked for tools instead of answering, or a plan
+        // is waiting on approval. Re-arming used to hang off a spoken reply alone, so all
+        // of these left the mic dead while the UI still said "Mic on".
+        assertEquals(HandsFreeLoop.Decision.ReArmNow, loop.onTurnEnded())
+    }
+
+    @Test
+    fun `a turn ending after the owner hung up does not re-open the mic`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+        loop.onSpeechHeard()
+        loop.stop()
+
+        assertEquals(HandsFreeLoop.Decision.Idle, loop.onTurnEnded())
+    }
+
+    @Test
+    fun `cutting in mid-reply hands the turn straight back`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        // No delay: the owner is already mid-sentence.
+        assertEquals(HandsFreeLoop.Decision.ReArmNow, loop.onBargeIn())
+    }
+
+    @Test
+    fun `cutting in proves the owner is there, so the silence budget resets`() {
+        val loop = HandsFreeLoop(maxSilentTurns = 3)
+        loop.start()
+        loop.onSilentTurn()
+        loop.onSilentTurn()
+
+        loop.onBargeIn()
+
+        assertTrue(loop.onSilentTurn() is HandsFreeLoop.Decision.ReArmAfter)
+        assertTrue(loop.onSilentTurn() is HandsFreeLoop.Decision.ReArmAfter)
+        assertEquals(HandsFreeLoop.Decision.GiveUp, loop.onSilentTurn())
+    }
+
+    @Test
+    fun `barge-in on a closed line is ignored`() {
+        val loop = HandsFreeLoop()
+
+        assertEquals(HandsFreeLoop.Decision.Idle, loop.onBargeIn())
+    }
+
+    @Test
+    fun `a recogniser stumble is retried rather than hanging up`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        // ERROR_CLIENT is usually an OEM speech service reloading, or a single-shot
+        // recogniser restarted too quickly. Ending the call on the first one dropped the
+        // line mid-conversation for a reason the owner could never see.
+        assertTrue(loop.onRecogniserFailure() is HandsFreeLoop.Decision.ReArmAfter)
+        assertTrue(loop.isActive)
+    }
+
+    @Test
+    fun `a recogniser that never works stops being retried`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+
+        repeat(HandsFreeLoop.MAX_RECOGNISER_FAILURES - 1) {
+            assertTrue(loop.onRecogniserFailure() is HandsFreeLoop.Decision.ReArmAfter)
+        }
+        assertEquals(HandsFreeLoop.Decision.GiveUp, loop.onRecogniserFailure())
+        assertFalse("retrying forever would burn the battery flat", loop.isActive)
+    }
+
+    @Test
+    fun `a recogniser that comes back clears its failure record`() {
+        val loop = HandsFreeLoop()
+        loop.start(HandsFreeLoop.Mode.CALL)
+        repeat(HandsFreeLoop.MAX_RECOGNISER_FAILURES - 1) { loop.onRecogniserFailure() }
+
+        loop.onRecogniserReady()
+
+        // Stumbles spread across a long call must not add up to a hang-up.
+        assertTrue(loop.onRecogniserFailure() is HandsFreeLoop.Decision.ReArmAfter)
+        assertTrue(loop.isActive)
+    }
+
+    @Test
     fun `restarting after giving up starts from a clean budget`() {
         val loop = HandsFreeLoop(maxSilentTurns = 2)
         loop.start()
