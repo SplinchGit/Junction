@@ -1359,11 +1359,12 @@ class ChatManager(
                 }
             }
             "check_for_updates" -> {
-                val update = UpdateChecker().checkForUpdate(BuildConfig.VERSION_NAME)
+                val update = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
                 updateState.value = update
                 prefs.updateLastUpdateCheckAt(System.currentTimeMillis())
                 val message = if (update != null) {
-                    "Update available: ${update.version}."
+                    "Update available: ${update.version} (build ${update.versionCode}), " +
+                        "up from build ${BuildConfig.JUNCTION_VERSION_CODE}."
                 } else {
                     "No updates available."
                 }

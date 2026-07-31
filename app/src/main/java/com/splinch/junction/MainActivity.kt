@@ -128,9 +128,9 @@ class MainActivity : ComponentActivity() {
 
                         val lastChecked = prefs.lastUpdateCheckAtFlow.first()
                         val now = System.currentTimeMillis()
-                        if (now - lastChecked > 86_400_000L) {
+                        if (now - lastChecked > UPDATE_CHECK_INTERVAL_MS) {
                             scope.launch {
-                                val update = UpdateChecker().checkForUpdate(BuildConfig.VERSION_NAME)
+                                val update = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
                                 updateState.value = update
                                 prefs.updateLastUpdateCheckAt(now)
                             }
@@ -235,6 +235,13 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN_CHAT = "extra_open_chat"
         const val EXTRA_OPEN_VOICE = "extra_open_voice"
         private const val TAG = "MainActivity"
+
+        /**
+         * How stale an update check may be before startup runs another. `main` can land
+         * several builds in a day, so a 24h gap meant routinely running days-old code.
+         * The check is a single small JSON GET, so this is cheap to do often.
+         */
+        private const val UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000L
     }
 }
 

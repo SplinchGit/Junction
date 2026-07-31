@@ -44,7 +44,9 @@ class UpdateInstaller(
                 ApkIntegrity.expectedHash(response.body?.string().orEmpty())
                     ?: throw IllegalStateException("Release checksum was invalid.")
             }
-            val updateFile = File(context.cacheDir, "junction-update-${update.version}.apk")
+            // Keyed by version code, not version name: the name is constant across builds,
+            // so every download would otherwise reuse one cache path.
+            val updateFile = File(context.cacheDir, "junction-update-${update.versionCode}.apk")
             httpClient.newCall(Request.Builder().url(apkUrl).build()).execute().use { response ->
                 if (!response.isSuccessful) throw IllegalStateException("Could not download update APK.")
                 response.body?.byteStream()?.use { input -> updateFile.outputStream().use(input::copyTo) }

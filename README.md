@@ -1,10 +1,14 @@
 # Junction
 
-[![Download APK](https://img.shields.io/badge/%E2%AC%87%20DOWNLOAD%20APK-latest%20build-4f7cff?style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
+[![Download APK](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplinchgit.github.io%2FJunction%2Flatest.json&query=%24.version&prefix=%E2%AC%87%20&label=DOWNLOAD%20APK&color=4f7cff&style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
 
-That button is the whole install. It downloads the APK itself — no landing page, no picking a file —
-and it always serves the newest build from `main`, because every push overwrites it in place at a URL
-that never changes. It is the only download link in this README on purpose.
+That button is the whole install, and the version on its face is read live from the build it is
+serving — not typed here. It downloads the APK itself: no landing page, no picking a file. Every push
+to `main` overwrites it in place at a URL that never changes, so it is always the newest build, and
+it is the only download link in this README on purpose.
+
+You should only ever need it once. After that Junction updates itself: it checks the same URL, and
+installs over itself keeping your API keys, chat history and memory. Same app, same key, one version.
 
 [![APK build](https://img.shields.io/github/actions/workflow/status/SplinchGit/Junction/android-build.yml?branch=main&style=flat-square&label=APK%20build)](https://github.com/SplinchGit/Junction/actions/workflows/android-build.yml)
 [![Updated](https://img.shields.io/github/last-commit/SplinchGit/Junction/main?style=flat-square&label=main%20updated)](https://github.com/SplinchGit/Junction/commits/main)
@@ -215,14 +219,30 @@ it. The `publish-pages` job in `Build Android APK` (`.github/workflows/android-b
 it on every push to `main`, so the link is permanent and its contents are whatever `main` last built.
 The README button points straight at it; nothing else in this README downloads anything.
 
-Two companion files sit next to it for when you want them, deliberately not linked above so there is
-only ever one thing to tap: `junction-debug.apk.sha256` (checksum of the exact file being served) and
-`index.html` (a page stating the version, build date, commit and SHA-256 of that same file).
+Three companion files sit next to it, deliberately not linked above so there is only ever one thing
+to tap: `junction-debug.apk.sha256` (checksum of the exact file being served), `index.html` (a page
+stating version, build date, commit and SHA-256 of that same file), and `latest.json` (the same facts
+as machine-readable JSON).
 
-No version number is written into this README on purpose. The APK's version comes from
-`versionName` in `app/build.gradle.kts`; restating it here would just be a second copy to forget to
-update. The badges at the top are evaluated by shields.io when the page loads, so they track the repo
-rather than the last time someone edited this file.
+**`latest.json` is what makes updates seamless.** `UpdateChecker` fetches it and compares
+`versionCode` against `BuildConfig.JUNCTION_VERSION_CODE`; if the published build is higher,
+`UpdateInstaller` downloads the APK, verifies it against the published SHA-256, backs up the
+currently installed APK for one-tap rollback, and hands it to Android's installer. Because that is
+the *same* file the button serves, signed with the *same* key, it installs over the running app and
+keeps API keys, chat history, durable memory and your permission grants. You tap the README button
+once, ever; after that Junction updates itself.
+
+This deliberately replaced a check against GitHub Releases, which was broken two ways. Releases are
+built from `v*` tags by `Android Release` and signed with the *release* key, so an APK offered from
+there could never install over a button-installed build — Android rejects the signature mismatch and
+the only way through is an uninstall, which destroys exactly the data above. And the comparison was
+on `versionName`, a hand-edited string that stays `0.5.0` across hundreds of builds, so no published
+build ever looked newer in the first place.
+
+No version number is written into this README by hand. The download badge is a shields.io dynamic
+badge reading `$.version` out of `latest.json`, so its face is the version of the build it links to,
+resolved when the page loads. The two status badges work the same way against the repo. Nothing in
+this section can drift from reality by someone forgetting to edit it.
 
 **Published builds are signed with a stable, committed debug key.** `app/debug.keystore` is checked
 into the repo — an exception to the `*.keystore` ignore rule — because CI has to sign with the *same*

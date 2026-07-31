@@ -163,7 +163,28 @@ jobs:
           FULL_SHA=$(git rev-parse HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          VERSION_CODE="${{ github.run_number }}"
           REPO="${GITHUB_REPOSITORY}"
+          BASE_URL="https://splinchgit.github.io/Junction"
+
+          # The in-app updater reads this. It describes the exact bytes sitting next to
+          # it, so "is there a newer Junction?" is one small GET against the same
+          # artifact the README button serves -- never a different build or a different
+          # signing key. versionCode is the comparison; versionName is display only.
+          cat > site/latest.json <<JSON
+          {
+            "version": "${VERSION_NAME} (build ${VERSION_CODE})",
+            "versionCode": ${VERSION_CODE},
+            "versionName": "${VERSION_NAME}",
+            "commit": "${FULL_SHA}",
+            "shortCommit": "${SHORT_SHA}",
+            "builtAt": "${BUILD_DATE}",
+            "sha256": "${SHA256}",
+            "apkUrl": "${BASE_URL}/junction-debug.apk",
+            "sha256Url": "${BASE_URL}/junction-debug.apk.sha256",
+            "pageUrl": "${BASE_URL}/"
+          }
+          JSON
 
           cat > site/index.html <<EOF
           <!doctype html>
