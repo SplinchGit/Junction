@@ -1,8 +1,20 @@
 # Junction
 
 [![Download APK](https://img.shields.io/badge/Download-APK-4f7cff?style=for-the-badge)](https://splinchgit.github.io/Junction/)
+[![APK build](https://img.shields.io/github/actions/workflow/status/SplinchGit/Junction/android-build.yml?branch=main&style=for-the-badge&label=APK%20build)](https://github.com/SplinchGit/Junction/actions/workflows/android-build.yml)
+[![Updated](https://img.shields.io/github/last-commit/SplinchGit/Junction/main?style=for-the-badge&label=updated)](https://github.com/SplinchGit/Junction/commits/main)
 
-Grab the latest debug build straight to your phone: **[Download APK](https://splinchgit.github.io/Junction/)** — the page rebuilds automatically on every push to `main`.
+Grab the latest build straight to your phone: **[Download APK](https://splinchgit.github.io/Junction/)**
+— rebuilt automatically on every push to `main`. The download page states the version, build date,
+commit and SHA-256 of exactly what it is serving, so there is never any guessing about whether you
+have the current build.
+
+- Direct APK: [`junction-debug.apk`](https://splinchgit.github.io/Junction/junction-debug.apk)
+- Checksum: [`junction-debug.apk.sha256`](https://splinchgit.github.io/Junction/junction-debug.apk.sha256)
+
+Both badges above are live, so this section cannot go stale: "updated" is when `main` last changed,
+and "APK build" is the status of the workflow that publishes the download page. If that build is
+failing, the page is still serving the last APK that succeeded — which will be older than `main`.
 
 An Android-native assistant that acts on your phone under trust you control and can audit. It reads
 the screen, replies to messages, manages email, and drives apps — always with a client-side trust
@@ -201,8 +213,21 @@ a new one, text input stays available throughout.
 
 **Latest debug build:** [splinchgit.github.io/Junction](https://splinchgit.github.io/Junction/) always serves the
 most recent debug APK from `main`, rebuilt by the `publish-pages` job in `Build Android APK`
-(`.github/workflows/android-build.yml`) on every push. This is unsigned and meant for quick
-sideloading, not the signed release flow below.
+(`.github/workflows/android-build.yml`) on every push. The page is generated from the build that
+produced the APK, so the version, short SHA, build timestamp, commit link and SHA-256 it displays
+always describe that exact file. This is unsigned and meant for quick sideloading, not the signed
+release flow below.
+
+No version number is written into this README on purpose. The APK's version comes from
+`versionName` in `app/build.gradle.kts` and is rendered into the download page at build time;
+restating it here would just be a second copy to forget to update. The badges at the top are
+evaluated by shields.io when the page loads, so they track the repo rather than the last time
+someone edited this file.
+
+Note that debug and release share `applicationId = "com.splinch.junction"` with no suffix, and the
+debug build is signed with a different key. Installing a debug APK over a release install (or
+running `connectedDebugAndroidTest`) therefore replaces the app and wipes its data — API keys,
+chat history, durable memory facts and the notification/accessibility grants all go with it.
 
 The `Android Release` workflow builds a signed APK + SHA-256 checksum on a `v*` tag push (repo
 secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
