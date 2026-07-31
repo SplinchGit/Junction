@@ -20,6 +20,8 @@ import com.splinch.junction.chat.realtime.ToolCall
 import com.splinch.junction.chat.voice.AzureNeuralVoice
 import com.splinch.junction.chat.voice.LocalVoiceListener
 import com.splinch.junction.chat.voice.LocalVoiceSession
+import com.splinch.junction.chat.voice.VoiceCallController
+import com.splinch.junction.chat.voice.VoiceCallService
 import com.splinch.junction.settings.KeyStorage
 import com.splinch.junction.chat.tools.PostConditionVerifier
 import com.splinch.junction.chat.tools.ToolRegistry
@@ -997,6 +999,9 @@ class ChatManager(
         } else {
             _micEnabled.value = false
             localVoice.stop()
+            // Leaving speech mode ends any call with it; an ongoing-call notification
+            // outliving the session would claim a mic that is no longer listening.
+            VoiceCallService.stop(appContext)
         }
 
         if (voiceBackend == VoiceBackend.LOCAL) return
@@ -1018,8 +1023,22 @@ class ChatManager(
         store.saveSession(session)
     }
 
+    /**
+     * Brings the call service up and points its "End call" action back here, so hanging
+     * up from the notification tears the recogniser down the same way the in-app control
+     * does rather than just dismissing the notification.
+     */
+    private fun startCallService() {
+        VoiceCallController.onHangUp = { setMicEnabled(false) }
+        VoiceCallService.start(appContext)
+    }
+
     fun setMicEnabled(enabled: Boolean) {
         _micEnabled.value = enabled
+        // The mic being on *is* the call, so the foreground service tracks it on both
+        // backends. Without it the system stops feeding audio as soon as the owner locks
+        // the screen, and the call goes deaf without saying so.
+        if (enabled) startCallService() else VoiceCallService.stop(appContext)
         if (voiceBackend == VoiceBackend.LOCAL) {
             if (enabled) localVoice.startListening() else localVoice.stopListening()
             return
@@ -1148,6 +1167,9 @@ class ChatManager(
         // claiming Junction is listening when it isn't.
         _micEnabled.value = false
         _localVoiceListening.value = false
+        // Same reason the chip has to clear: an ongoing-call notification left behind by
+        // a recogniser that has already given up is the deaf-but-lit bug in the shade.
+        VoiceCallService.stop(appContext)
     }
 
     private fun startMessageCollection(sessionId: String) {

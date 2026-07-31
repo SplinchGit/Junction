@@ -2,6 +2,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- A voice call keeps the recogniser fed while Junction is off screen. Without a
+         microphone foreground service the system stops delivering audio the moment the
+         owner locks the phone, and the call goes silently deaf. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Bluetooth audio thrower: connect/disconnect the phone's link to paired headphones -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -73,6 +78,11 @@
                 <action android:name="com.splinch.junction.action.OPEN_NOTIFICATION_SOURCE" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".chat.voice.VoiceCallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <service
             android:name=".notifications.JunctionNotificationListenerService"
