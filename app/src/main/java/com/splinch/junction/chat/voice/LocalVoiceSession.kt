@@ -280,7 +280,7 @@ class LocalVoiceSession(
                 // recogniser has stopped, so it still needs re-arming.
                 SpeechRecognizer.ERROR_NO_MATCH,
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                SpeechRecognizer.ERROR_BUSY -> applyDecision(handsFree.onSilentTurn())
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> applyDecision(handsFree.onSilentTurn())
 
                 // Nothing to retry: retrying spins forever and never succeeds.
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
