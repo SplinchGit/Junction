@@ -1,20 +1,7 @@
 {
   "folders": [
     {
-      "name": "Junction · repository",
       "path": "."
-    },
-    {
-      "name": "Android · source areas",
-      "path": "apps/android/src/main/java/com/splinch/junction"
-    },
-    {
-      "name": "Android · unit tests",
-      "path": "apps/android/src/test/java/com/splinch/junction"
-    },
-    {
-      "name": "Android · device tests",
-      "path": "apps/android/src/androidTest/java/com/splinch/junction"
     }
   ],
   "settings": {
