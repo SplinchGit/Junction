@@ -102,5 +102,13 @@ class GitHubContributorTest {
         assertTrue(status.detail.contains("not a Junction-managed branch"))
     }
 
+    @Test
+    fun `source operations can target an owner approved repository without changing the default`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"tree":[{"path":"README.md","type":"blob"}]}"""))
+        val contributor = GitHubContributor(token = "token", apiBase = apiBase(), repositoryFullName = "owner/project")
+        val index = contributor.listSource().getOrThrow()
+        assertEquals("owner/project", index.repository)
+        assertEquals("/repos/owner/project/git/trees/main?recursive=1", server.takeRequest().path)
+    }
     private fun apiBase(): String = server.url("").toString().removeSuffix("/")
 }

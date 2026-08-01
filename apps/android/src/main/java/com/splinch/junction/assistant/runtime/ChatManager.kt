@@ -76,7 +76,7 @@ class ChatManager(
             actual failure here.
 
             What you can do:
-            - Notifications and feed. Read the feed of collected notifications, reply to a notification directly,
+            - Notifications and feed. Read the active notification feed for triage, reply to a notification directly,
               dismiss one, archive a feed item, and turn a given app's notifications on or off.
             - Apps and device. Launch any installed app, open a deep link or URI, fire an Android intent, and press
               back or home.
@@ -90,7 +90,8 @@ class ChatManager(
               asked, rather than sending the owner to the Settings screen.
             - Memory. Remember durable facts about the owner across conversations, and forget them on request.
             - Updates. Check whether a newer Junction build exists and install a verified one.
-            - Junction source. List and read relevant files from Junction's GitHub main branch before proposing code changes. Read only what is needed; do not invent the current implementation or load the whole repository into one prompt. Explain the bounded plan, then use propose_code_change only after the owner approves it on screen.
+            - Calendar. Read the upcoming agenda and schedule local reminders without changing calendar events.
+            - Junction source. List and read relevant files from GitHub before proposing code changes. Read only what is needed; do not invent the current implementation or load the whole repository into one prompt. Explain the bounded plan, then use propose_code_change only after the owner approves it on screen.
             - Images. See pictures the owner attaches and read the text in them.
             When the request is genuinely ambiguous, ask a clarifying question rather than guessing at something
             irreversible — but don't use that as a way to avoid acting on a clear request.
@@ -170,7 +171,7 @@ class ChatManager(
     // Tool calls proposed by the realtime (voice) path accumulate here across
     // a single model response and are turned into one plan at onResponseDone.
     private val pendingRealtimeCalls = mutableListOf<PendingToolCall>()
-    private val untrustedOutputTools = setOf("read_screen", "gmail_triage_inbox")
+    private val untrustedOutputTools = setOf("read_screen", "read_notifications", "get_calendar_agenda", "gmail_triage_inbox")
 
     // §1.1 two-lane escalation: set when the *previous* turn signalled the
     // next one should use the frontier model (plan complexity or a parse

@@ -100,6 +100,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
                 }
             )
         }
+        "read_notifications" -> readNotifications(call)
         "archive_feed_item" -> {
             val id = call.arguments.optString("id")
             if (id.isBlank()) return ToolApplyResult("", errorOutput("Missing id"))
@@ -124,6 +125,8 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         "propose_code_change" -> proposeCodeChange(call)
         "check_github_change" -> checkGitHubChange(call)
         "merge_github_change" -> mergeGitHubChange(call)
+        "get_calendar_agenda" -> getCalendarAgenda(call)
+        "schedule_calendar_reminder" -> scheduleCalendarReminder(call)
         "check_for_updates" -> {
             val update = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
             dependencies.updateState.value = update
@@ -203,12 +206,15 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         }
     }
 
-    private fun contributor() = GitHubContributor(
-        KeyStorage(appContext).getApiKey(GitHubContributor.TOKEN_ID)
-    )
+    private fun contributor(repository: String? = null): GitHubContributor {
+        return GitHubContributor(
+            token = KeyStorage(appContext).getApiKey(GitHubContributor.TOKEN_ID),
+            repositoryFullName = repository?.trim().takeUnless { it.isNullOrBlank() } ?: "${GitHubContributor.DEFAULT_OWNER}/${GitHubContributor.DEFAULT_REPO}"
+        )
+    }
 
     private suspend fun listJunctionSource(call: PendingToolCall): ToolApplyResult =
-        contributor().listSource(call.arguments.optString("prefix")).fold(
+        contributor(call.arguments.optString("repository")).listSource(call.arguments.optString("prefix")).fold(
             onSuccess = { index ->
                 githubSourceContext.rememberIndex(index)
                 val message = "Referenced ${index.paths.size} Junction source paths for the next turn. Ask me to read the relevant files before I draft a change."
@@ -218,7 +224,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         )
 
     private suspend fun readJunctionSource(call: PendingToolCall): ToolApplyResult =
-        contributor().readSource(call.arguments.optString("path")).fold(
+        contributor(call.arguments.optString("repository")).readSource(call.arguments.optString("path")).fold(
             onSuccess = { source ->
                 githubSourceContext.rememberFile(source)
                 val message = "Referenced ${source.path} from Junction GitHub for the next turn. I can now use it to prepare a bounded proposal."
@@ -237,7 +243,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
             }
         } ?: listOf(SourceChange(call.arguments.optString("path"), call.arguments.optString("content")))
         return when (
-            val result = contributor().proposeChange(
+            val result = contributor(call.arguments.optString("repository")).proposeChange(
                 changes,
                 call.arguments.optString("message"),
                 call.arguments.optString("description")
@@ -253,7 +259,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
     }
 
     private suspend fun checkGitHubChange(call: PendingToolCall): ToolApplyResult =
-        contributor().pullRequestStatus(call.arguments.optInt("pullRequest")).fold(
+        contributor(call.arguments.optString("repository")).pullRequestStatus(call.arguments.optInt("pullRequest")).fold(
             onSuccess = { status ->
                 val message = "PR #${status.number}: ${status.detail} ${status.url}"
                 ToolApplyResult(message, successOutput("check_github_change", message))
@@ -262,7 +268,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         )
 
     private suspend fun mergeGitHubChange(call: PendingToolCall): ToolApplyResult =
-        when (val result = contributor().mergePullRequest(call.arguments.optInt("pullRequest"))) {
+        when (val result = contributor(call.arguments.optString("repository")).mergePullRequest(call.arguments.optInt("pullRequest"))) {
             is MergeResult.Merged -> ToolApplyResult(result.message, successOutput("merge_github_change", result.message))
             is MergeResult.NotReady -> ToolApplyResult("", errorOutput(result.reason))
             is MergeResult.Failed -> ToolApplyResult("", errorOutput(result.reason))
@@ -308,6 +314,47 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         return ToolApplyResult("Launched intent $action.", successOutput("launch_intent", action))
     }
 
+    private suspend fun getCalendarAgenda(call: PendingToolCall): ToolApplyResult {
+        val horizon = call.arguments.optInt("hours", 24).coerceIn(1, 168) * 60L * 60L * 1000L
+        val now = System.currentTimeMillis()
+        val items = JSONArray()
+        feedRepository.getAll().asSequence()
+            .filter { it.source.equals("Calendar", true) || it.source.equals("Google Calendar", true) }
+            .filter { it.timestamp in now..(now + horizon) }
+            .sortedBy { it.timestamp }
+            .forEach { item -> items.put(JSONObject().put("id", item.id).put("title", item.title).put("detail", item.body ?: "").put("eventAtMillis", item.timestamp).put("threadKey", item.threadKey ?: "")) }
+        return ToolApplyResult("Found ${items.length()} upcoming calendar event(s).", JSONObject().put("status", "applied").put("action", "get_calendar_agenda").put("provenance", "UNTRUSTED").put("items", items).toString())
+    }
+    private fun scheduleCalendarReminder(call: PendingToolCall): ToolApplyResult {
+        val eventId = call.arguments.optString("eventId").ifBlank { return ToolApplyResult("", errorOutput("Missing eventId")) }
+        val title = call.arguments.optString("title").ifBlank { return ToolApplyResult("", errorOutput("Missing title")) }
+        val eventAt = call.arguments.optLong("eventAtMillis", 0L)
+        val minutesBefore = call.arguments.optInt("minutesBefore", 15).coerceIn(0, 1440)
+        val triggerAt = eventAt - minutesBefore * 60_000L
+        val scheduled = Scheduler.scheduleCalendarReminder(appContext, eventId, title, call.arguments.optString("detail"), triggerAt)
+        return if (scheduled) ToolApplyResult("Reminder scheduled ${minutesBefore} minute(s) before $title.", successOutput("schedule_calendar_reminder", eventId))
+        else ToolApplyResult("", errorOutput("That reminder time is already in the past."))
+    }
+    private suspend fun readNotifications(call: PendingToolCall): ToolApplyResult {
+        val limit = call.arguments.optInt("maxResults", 20).coerceIn(1, 50)
+        val items = JSONArray()
+        feedRepository.getAll()
+            .asSequence()
+            .filter { it.status != com.splinch.junction.feature.feed.model.FeedStatus.ARCHIVED }
+            .sortedWith(compareByDescending<com.splinch.junction.feature.feed.model.FeedItem> { it.priority }.thenByDescending { it.timestamp })
+            .take(limit)
+            .forEach { item ->
+                items.put(JSONObject().put("id", item.id).put("source", item.source)
+                    .put("title", item.title).put("body", item.body ?: "")
+                    .put("priority", item.priority).put("status", item.status.name)
+                    .put("threadKey", item.threadKey ?: "").put("actionHint", item.actionHint ?: ""))
+            }
+        return ToolApplyResult(
+            "Read ${items.length()} active notification(s). Decide what needs the owner, what can be archived, and whether a reply requires approval.",
+            JSONObject().put("status", "applied").put("action", "read_notifications")
+                .put("provenance", "UNTRUSTED").put("items", items).toString()
+        )
+    }
     private fun replyNotification(call: PendingToolCall): ToolApplyResult {
         val key = call.arguments.optString("notificationKey")
         val text = call.arguments.optString("text")

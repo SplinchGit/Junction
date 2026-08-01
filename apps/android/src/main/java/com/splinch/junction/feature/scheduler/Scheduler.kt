@@ -5,6 +5,8 @@ import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.workDataOf
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
@@ -32,6 +34,16 @@ object Scheduler {
         )
     }
 
+    fun scheduleCalendarReminder(context: Context, eventId: String, title: String, detail: String, triggerAtMillis: Long): Boolean {
+        val delay = triggerAtMillis - System.currentTimeMillis()
+        if (delay <= 0L) return false
+        val request = OneTimeWorkRequestBuilder<CalendarReminderWorker>()
+            .setInitialDelay(delay, TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(CalendarReminderWorker.KEY_TITLE to title, CalendarReminderWorker.KEY_DETAIL to detail))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork("junction_calendar_reminder_$eventId", androidx.work.ExistingWorkPolicy.REPLACE, request)
+        return true
+    }
     fun cancelFeedDigest(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(FEED_DIGEST_WORK)
     }

@@ -21,6 +21,8 @@ object NotificationHelper {
     private const val ITEM_CHANNEL_ID = "junction_items"
     private const val ITEM_CHANNEL_NAME = "Junction Items"
     private const val ITEM_CHANNEL_DESCRIPTION = "Individual items Junction surfaced, tap to open the source app"
+    private const val REMINDER_CHANNEL_ID = "junction_reminders"
+    private const val REMINDER_CHANNEL_NAME = "Junction Reminders"
 
     /** Groups the per-item notifications under the digest so they collapse tidily. */
     private const val GROUP_KEY = "com.splinch.junction.FEED"
@@ -42,6 +44,13 @@ object NotificationHelper {
                 ).apply { description = CHANNEL_DESCRIPTION }
             )
 
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    REMINDER_CHANNEL_ID,
+                    REMINDER_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
             manager.createNotificationChannel(
                 NotificationChannel(
                     ITEM_CHANNEL_ID,
@@ -142,6 +151,14 @@ object NotificationHelper {
         }
     }
 
+    fun showReminder(context: Context, title: String, detail: String) {
+        val openIntent = PendingIntent.getActivity(context, title.hashCode(), Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_junction).setContentTitle(title).setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail)).setContentIntent(openIntent)
+            .setColor(BRAND_ACCENT).setAutoCancel(true).build()
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(title.hashCode(), notification)
+    }
     fun cancelDigest(context: Context) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(DIGEST_ID)

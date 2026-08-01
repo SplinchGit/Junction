@@ -14,8 +14,8 @@ import org.json.JSONObject
 /** A complete replacement for one repository-relative text file. */
 data class SourceChange(val path: String, val content: String)
 
-data class RepositorySourceIndex(val prefix: String, val paths: List<String>)
-data class RepositorySourceFile(val path: String, val content: String)
+data class RepositorySourceIndex(val prefix: String, val paths: List<String>, val repository: String = "${GitHubContributor.DEFAULT_OWNER}/${GitHubContributor.DEFAULT_REPO}")
+data class RepositorySourceFile(val path: String, val content: String, val repository: String = "${GitHubContributor.DEFAULT_OWNER}/${GitHubContributor.DEFAULT_REPO}")
 
 sealed interface ContributionResult {
     data class Opened(val number: Int, val url: String, val branch: String) : ContributionResult
@@ -45,18 +45,20 @@ sealed interface MergeResult {
 }
 
 /**
- * Direct GitHub access for Junction's own repository.
+ * Direct GitHub access for an owner-selected repository.
  *
- * The repository is deliberately fixed here rather than supplied by a model tool call. A
- * fine-grained token may have access to more than one repository, but this self-improvement
- * route must never become a general-purpose write credential. Every source change is created
- * on a new branch and reviewed through a pull request; this class cannot write to main.
+ * The repository is supplied as an explicit owner/name scope and validated before any request. A
+ * fine-grained token may have access to more than one repository, but every source change is
+ * still created on a new branch and reviewed through a pull request; this class cannot write to main.
  */
 class GitHubContributor(
     private val token: String,
     private val httpClient: OkHttpClient = OkHttpClient(),
-    private val apiBase: String = API
+    private val apiBase: String = API,
+    val repositoryFullName: String = "$DEFAULT_OWNER/$DEFAULT_REPO"
 ) {
+    init { require(isSafeRepository(repositoryFullName)) { "Repository must use the owner/name form and may not contain path traversal." } }
+
     suspend fun proposeChange(
         changes: List<SourceChange>,
         commitMessage: String,
@@ -90,7 +92,7 @@ class GitHubContributor(
         }
         runCatching {
             val body = get("${repoUrl()}/git/trees/$DEFAULT_BASE?recursive=1")
-                ?: error("GitHub could not list Junction's source tree.")
+                ?: error("GitHub could not list the selected repository's source tree.")
             val tree = JSONObject(body).optJSONArray("tree") ?: error("GitHub returned no source tree.")
             val paths = buildList {
                 for (index in 0 until tree.length()) {
@@ -101,7 +103,7 @@ class GitHubContributor(
                     if (size >= MAX_SOURCE_INDEX_PATHS) break
                 }
             }
-            RepositorySourceIndex(safePrefix, paths)
+            RepositorySourceIndex(safePrefix, paths, repositoryFullName)
         }
     }
 
@@ -120,7 +122,7 @@ class GitHubContributor(
             val encoded = json.optString("content").replace(Regex("\\s"), "")
             val content = Base64.getDecoder().decode(encoded).toString(Charsets.UTF_8)
             if (content.length > MAX_SOURCE_READ_CHARS) error("$safePath is too large; list a narrower folder or split the file before reading it.")
-            RepositorySourceFile(safePath, content)
+            RepositorySourceFile(safePath, content, repositoryFullName)
         }
     }
 
@@ -136,7 +138,7 @@ class GitHubContributor(
             val account = get("$apiBase/user") ?: error("GitHub rejected the token or could not be reached.")
             val login = JSONObject(account).optString("login").takeIf { it.isNotBlank() }
                 ?: error("GitHub returned no account name.")
-            if (get(repoUrl()) == null) error("This token cannot access $DEFAULT_OWNER/$DEFAULT_REPO.")
+            if (get(repoUrl()) == null) error("This token cannot access $repositoryFullName.")
             login
         }
     }
@@ -168,6 +170,7 @@ class GitHubContributor(
 
     private fun validationFailure(changes: List<SourceChange>, message: String, baseBranch: String): String? {
         if (token.isBlank()) return "No GitHub token is stored. Add one in Settings before proposing code changes."
+        if (!isSafeRepository(repositoryFullName)) return "Repository must use the owner/name form and may not contain path traversal."
         if (changes.isEmpty()) return "At least one source file is required."
         if (changes.size > MAX_CHANGES) return "A proposal can change at most $MAX_CHANGES files."
         if (message.isBlank()) return "A commit message is required."
@@ -262,7 +265,7 @@ class GitHubContributor(
         return if (pending) PullRequestCheckState.PENDING else PullRequestCheckState.PASSED
     }
 
-    private fun repoUrl() = "$apiBase/repos/$DEFAULT_OWNER/$DEFAULT_REPO"
+    private fun repoUrl() = "$apiBase/repos/$repositoryFullName"
     private fun get(url: String): String? = execute(request(url).get().build())
     private fun post(url: String, body: JSONObject): String? = execute(request(url).post(body.toString().toRequestBody(JSON)).build())
     private fun put(url: String, body: JSONObject): String? = execute(request(url).put(body.toString().toRequestBody(JSON)).build())
@@ -288,5 +291,8 @@ class GitHubContributor(
         private const val MAX_FILE_CHARS = 250_000
         private val SUCCESSFUL_CONCLUSIONS = setOf("success", "neutral", "skipped")
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        fun isSafeRepository(value: String): Boolean =
+            value.matches(Regex("[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}")) &&
+                !value.contains("..")
     }
 }
