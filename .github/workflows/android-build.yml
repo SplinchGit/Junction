@@ -290,3 +290,35 @@ jobs:
         if: steps.find_apk.outputs.APK_PATH != ''
         id: deployment
         uses: actions/deploy-pages@v4
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-debug.apk
+
+      - name: Create checksum
+        run: sha256sum app-debug.apk > app-debug.apk.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Junction build ${{ github.run_number }}
+          body: |
+            Automated signed APK build from `${{ github.sha }}`.
+
+            This release passed the Android build job and unit tests. The APK uses the
+            repository's stable update signing key and can install in place over Junction.
+          files: |
+            app-debug.apk
+            app-debug.apk.sha256
+          make_latest: true
+          generate_release_notes: false
