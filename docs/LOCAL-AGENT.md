@@ -17,7 +17,7 @@ One Junction. One artifact, one signing key, one URL, one version code that only
 | --- | --- |
 | The only download | `https://splinchgit.github.io/Junction/junction-debug.apk` |
 | Build manifest the app reads | `https://splinchgit.github.io/Junction/latest.json` |
-| Signing key | `app/debug.keystore`, committed |
+| Signing key | `apps/android/debug.keystore`, committed |
 | Version code | CI run number, via `JUNCTION_VERSION_CODE` |
 
 Recent changes, newest first:
@@ -31,7 +31,7 @@ Recent changes, newest first:
 Why the keystore is committed: without a fixed key, every CI run signs with a throwaway
 one, Android refuses to install over the previous build, and the only way through is an
 uninstall that wipes API keys, chat history and memory. Its credentials are the public
-`android` / `androiddebugkey` constants already hardcoded in `app/build.gradle.kts`, so it
+`android` / `androiddebugkey` constants already hardcoded in `apps/android/build.gradle.kts`, so it
 protects nothing — it only has to be *stable*. The release keystore stays secret.
 
 ## How voice becomes a continuous call
@@ -155,9 +155,9 @@ If the keys genuinely differ, what survives an uninstall:
 ### 1. Build and install
 
 ```sh
-python3 companion/junctionctl.py doctor          # phone visible and ready?
+python3 tools/companion/junctionctl.py doctor          # phone visible and ready?
 ./gradlew assembleDebug
-python3 companion/junctionctl.py install app/build/outputs/apk/debug/app-debug.apk
+python3 tools/companion/junctionctl.py install apps/android/build/outputs/apk/debug/app-debug.apk
 ```
 
 Local builds use the committed keystore, so they install over a button-installed build and
@@ -176,13 +176,13 @@ This is the thing that has never been proven, and it is the whole promise.
 6. Confirm API keys, chat history and durable memory all survive.
 
 If step 5 demands an uninstall, signatures diverged — check the fingerprint printed by the
-`Resolve debug keystore` CI step against `keytool -list -v -keystore app/debug.keystore`.
+`Resolve debug keystore` CI step against `keytool -list -v -keystore apps/android/debug.keystore`.
 
 ### 3. Test the call
 
 ```sh
-python3 companion/junctionctl.py voice           # stage tracing; shows where a turn dies
-python3 companion/junctionctl.py logs
+python3 tools/companion/junctionctl.py voice           # stage tracing; shows where a turn dies
+python3 tools/companion/junctionctl.py logs
 ```
 
 - **Have an actual back-and-forth: five or six turns without touching the screen.** This is
@@ -246,7 +246,7 @@ unreviewed code onto a device that reads the screen and sends messages. Register
 
 - **`instrumentation-tests` has failed on every run since at least #52** — "Timeout waiting
   for emulator to boot" on the macOS runner. Predates all of the above. The injection test
-  suite in `app/src/androidTest` is therefore effectively switched off. `unit-tests` passes.
+  suite in `apps/android/src/androidTest` is therefore effectively switched off. `unit-tests` passes.
   Worth fixing early: it is the safety net for the trust model.
 - **Nothing here has touched hardware.** Foreground services in particular get treated
   differently by OEMs — Xiaomi/MIUI especially.

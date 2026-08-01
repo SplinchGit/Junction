@@ -5,10 +5,10 @@
   "functions": [
     {
       "codebase": "default",
-      "source": "functions"
+      "source": "services/functions"
     },
     {
-      "source": "junction",
+      "source": "services/junction-functions",
       "codebase": "junction",
       "disallowLegacyRuntimeConfig": true,
       "ignore": [

@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 permissions:
-  contents: write
-  packages: write
-  actions: read
+  contents: read
 
 jobs:
   build:
@@ -40,7 +40,7 @@ jobs:
         run: |
           if [ -n "${{ secrets.GOOGLE_SERVICES_JSON }}" ]; then
             echo "Writing google-services.json from secret"
-            echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > app/google-services.json
+            echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > apps/android/google-services.json
           else
             echo "No GOOGLE_SERVICES_JSON provided; skipping"
           fi
@@ -68,16 +68,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > app/debug.keystore
+            echo "${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}" | base64 --decode > apps/android/debug.keystore
             echo "Signing with ANDROID_DEBUG_KEYSTORE_BASE64 (overrides the committed key)."
-          elif [ -f app/debug.keystore ]; then
-            echo "Signing with the committed app/debug.keystore."
+          elif [ -f apps/android/debug.keystore ]; then
+            echo "Signing with the committed apps/android/debug.keystore."
           else
-            echo "::error::No debug keystore. app/debug.keystore is committed to the repo precisely so this can never happen; if it is missing, Gradle would sign with a throwaway key and the published APK could not update any existing install. Restore the file or set ANDROID_DEBUG_KEYSTORE_BASE64."
+            echo "::error::No debug keystore. apps/android/debug.keystore is committed to the repo precisely so this can never happen; if it is missing, Gradle would sign with a throwaway key and the published APK could not update any existing install. Restore the file or set ANDROID_DEBUG_KEYSTORE_BASE64."
             exit 1
           fi
           echo "Signing key fingerprint (must stay identical across builds):"
-          keytool -list -v -keystore app/debug.keystore -storepass android -alias androiddebugkey \
+          keytool -list -v -keystore apps/android/debug.keystore -storepass android -alias androiddebugkey \
             | grep 'SHA256:'
 
       - name: Grant execute permission for gradlew
@@ -97,9 +97,26 @@ jobs:
           echo "==== build.log tail ===="
           tail -n 200 build.log || true
 
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace > test.log 2>&1 || {
+            echo "==== unit-test diagnostics ===="
+            grep -E '^(e|w): |FAILED|[0-9]+ tests completed' test.log | head -n 100 || true
+            echo "==== test.log tail ===="
+            tail -n 200 test.log || true
+            exit 1
+          }
+
+      - name: Upload unit-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-log
+          path: test.log
       - name: Collect APK into workspace root (if produced)
         run: |
-          APK=$(find app/build/outputs/apk/debug -type f -name "*.apk" | head -n1 || true)
+          APK=$(find apps/android/build/outputs/apk/debug -type f -name "*.apk" | head -n1 || true)
           if [ -n "$APK" ]; then
             echo "Found APK at: $APK"
             cp "$APK" "$GITHUB_WORKSPACE/app-debug.apk"
@@ -162,7 +179,7 @@ jobs:
           SHORT_SHA=$(git rev-parse --short HEAD)
           FULL_SHA=$(git rev-parse HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' apps/android/build.gradle.kts)
           VERSION_CODE="${{ github.run_number }}"
           REPO="${GITHUB_REPOSITORY}"
           BASE_URL="https://splinchgit.github.io/Junction"

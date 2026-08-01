@@ -1,0 +1,30 @@
+{
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "explorer.compactFolders": false,
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.expand": false,
+  "explorer.fileNesting.patterns": {
+    "settings.gradle.kts": "build.gradle.kts, gradle.properties, gradlew, gradlew.bat",
+    "firebase.json": ".firebaserc, firestore.rules, google-services.json",
+    "README.md": ".gitignore, LICENSE"
+  },
+  "files.exclude": {
+    "**/.claude": true,
+    "**/.gradle": true,
+    "**/.idea": true,
+    "**/.kotlin": true,
+    "**/.vscode": true,
+    "**/build": true,
+    "**/node_modules": true,
+    "**/.firebase": true,
+    "**/local.properties": true,
+    "**/logcat_*.txt": true
+  },
+  "search.exclude": {
+    "**/.gradle": true,
+    "**/.kotlin": true,
+    "**/build": true,
+    "**/node_modules": true,
+    "**/.firebase": true
+  }
+}

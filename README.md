@@ -102,7 +102,7 @@ provenance tag — can never themselves initiate a tool call.
   (`evaluation/`), and an explicit, content-free telemetry export.
 - Optional Firebase sync (chat/feed/prefs) and a PC companion web client that mirrors
   conversations read-only — it cannot execute tools; anything it sends is tagged `UNTRUSTED`.
-- GitHub Releases update banner + checksum-verified APK install.
+- GitHub Pages update card + checksum-verified APK install, rollback backup, and Android installer confirmation.
 
 ## Android setup
 
@@ -127,7 +127,7 @@ sync of chat/feed/prefs.
 
 1. Firebase Console: create or select the project.
 2. Project settings -> Your apps -> Add app (Android), package `com.splinch.junction`.
-3. Download `google-services.json` to `app/google-services.json`.
+3. Download `google-services.json` to `apps/android/google-services.json`.
 4. Add SHA fingerprints (SHA-1 required, SHA-256 recommended).
 5. Authentication -> Sign-in method: enable Google.
 6. Google Cloud Console -> Credentials: OAuth Client ID (Android, same package+SHA-1) and OAuth
@@ -145,7 +145,7 @@ become owner-authorized context.
 
 Read-only mirror of chat/feed; cannot execute tools (see "Injection architecture").
 ```
-cd web
+cd apps/web
 cp .env.example .env   # fill Firebase values, set VITE_REALTIME_ENDPOINT
 npm install
 npm run dev
@@ -154,7 +154,7 @@ npm run dev
 ## Firebase Functions (Realtime SDP exchange — only needed for OpenAI Realtime voice)
 
 ```
-cd functions
+cd services/functions
 npm install
 firebase functions:config:set openai.key="YOUR_OPENAI_API_KEY"
 firebase deploy --only functions
@@ -168,7 +168,7 @@ Chat itself no longer goes through this server; providers are called directly fr
 server exists only for: minting short-lived Realtime client secrets, the OAuth integration flows
 below, and stamping the single-admin Firebase custom claim.
 ```
-cd server
+cd services/server
 npm install
 cp .env.example .env   # OPENAI_API_KEY, Firebase Admin creds, PUBLIC_BASE_URL, OAuth client IDs
 npm start
@@ -194,14 +194,11 @@ Refresh the ID token (sign out/in, or any Settings action calling `getIdToken(tr
 ## Voice
 
 Settings > Voice backend chooses:
-- **Realtime** — OpenAI's WebRTC voice API, low latency, needs the Functions/server relay above and
-  sign-in.
-- **On-device** — Android's own `SpeechRecognizer`/`TextToSpeech`, routed through your configured
-  text provider. Higher latency, works with any provider, needs neither Firebase nor the server.
 
-Either way: mic toggle mutes/unmutes input, Stop cancels the current response, Regenerate requests
-a new one, text input stays available throughout.
+- **Realtime** — OpenAI's WebRTC voice API, low latency, needs the Functions/server relay above and sign-in.
+- **On-device** — Android's `SpeechRecognizer`/`TextToSpeech`, routed through your configured text provider. Higher latency, works with any provider, and needs neither Firebase nor the server.
 
+A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. Junction can explain a proposed GitHub change by voice and can read its own source on request, but voice alone never approves a plan, merges a PR, or installs an APK: those remain deliberate on-screen actions.
 ## Privacy posture
 
 - Notification ingestion, feed, chat history, memory, and the audit log are local-only by default.
@@ -249,14 +246,14 @@ badge reading `$.version` out of `latest.json`, so its face is the version of th
 resolved when the page loads. The two status badges work the same way against the repo. Nothing in
 this section can drift from reality by someone forgetting to edit it.
 
-**Published builds are signed with a stable, committed debug key.** `app/debug.keystore` is checked
+**Published builds are signed with a stable, committed debug key.** `apps/android/debug.keystore` is checked
 into the repo — an exception to the `*.keystore` ignore rule — because CI has to sign with the *same*
 key every run. Without a fixed key Gradle generates a throwaway one per build, Android refuses to
 install the new APK over the old one, and the only way through is to uninstall first, destroying API
 keys, chat history, durable memory facts and the notification/accessibility grants on every update.
 
 Committing it is safe precisely because it is a debug key: its credentials are the public Android SDK
-constants (`android` / `androiddebugkey`, hardcoded in `app/build.gradle.kts`), so it protects
+constants (`android` / `androiddebugkey`, hardcoded in `apps/android/build.gradle.kts`), so it protects
 nothing and identifies nothing. It only has to be *stable*. The release keystore is a real secret and
 stays gitignored, injected from `ANDROID_KEYSTORE_BASE64` at tag time.
 
@@ -276,19 +273,13 @@ does not carry the published version code.
 
 ## Junction changing its own code
 
-`propose_code_change` lets Junction write a file and open a pull request against its own repository,
-using a GitHub token stored in Settings under the same encrypted store as every other key.
+Junction can inspect its own fixed GitHub repository, `SplinchGit/Junction`, using a fine-grained token stored in the encrypted Android key store. It is deliberately a **referential** source view: Junction lists the tree and reads only the folders/files relevant to the change at hand. It does not clone the repository or attach it to ordinary chat context.
 
-It cannot push to `main` and it cannot merge. That is the whole design: a push to `main` rebuilds the
-APK and republishes it at the URL this phone auto-updates from, so a direct push would let the model
-ship unreviewed code onto the owner's device — a device where Junction reads the screen, drives apps
-and sends messages. A pull request keeps the owner as the gate, which is the same bargain `TrustGate`
-strikes everywhere else: the model proposes, the owner decides.
+Read source is held in a bounded, in-memory reference cache for one following turn, then discarded. At most a 6,000-character source index, four selected file excerpts, and 36,000 characters of source can enter that turn. The reference material consumes the same turn budget as chat history, keeping ordinary voice and chat turns cheap while letting the model work from the actual current implementation rather than guessing.
 
-The tool is registered `DESTRUCTIVE` in `chat/tools/ToolRegistry.kt`. Not because it can damage the
-phone, but because it writes to the repository the phone's app is built from, and the risk tier is
-what puts the owner in front of it every time.
+`propose_code_change` creates one reviewable multi-file pull request on a new `junction/...` branch. It can change up to 12 source files atomically, but cannot target `main`, alter CI workflows, or read/write signing and local secret material. The proposal is `DESTRUCTIVE`, so Junction always shows the owner its exact file payload and waits for an on-screen approval tap before creating the PR. “Always allow” is unavailable for repository changes.
 
+GitHub Actions builds and runs unit tests for the PR. Junction can check that PR's state and, only when GitHub reports the Junction branch mergeable with successful checks, offer a separate on-screen **Merge PR** action. It never pushes directly to `main` and never auto-merges. A merged PR triggers the normal signed GitHub Pages APK pipeline; the in-app update card then downloads, checks, backs up, and hands the update to Android's installer.
 ## Device validation
 
 ```

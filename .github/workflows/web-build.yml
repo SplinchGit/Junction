@@ -15,12 +15,12 @@ jobs:
           node-version: "20"
       - name: Install
         run: npm install
-        working-directory: web
+        working-directory: apps/web
       - name: Build
         run: npm run build
-        working-directory: web
+        working-directory: apps/web
       - name: Upload Web Build
         uses: actions/upload-artifact@v4
         with:
           name: junction-web
-          path: web/dist
+          path: apps/web/dist

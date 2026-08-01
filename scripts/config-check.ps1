@@ -26,7 +26,7 @@ function Mask-Value {
 $root = (Get-Location).Path
 
 Write-Output "== Android =="
-$gsPath = Join-Path $root "app\\google-services.json"
+$gsPath = Join-Path $root "apps\\android\\google-services.json"
 if (Test-Path -LiteralPath $gsPath) {
   $gs = Get-Content -LiteralPath $gsPath | ConvertFrom-Json
   $projectId = $gs.project_info.project_id
@@ -50,7 +50,7 @@ Write-Output ("JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT: {0}" -f (Mask-Value $re
 
 Write-Output ""
 Write-Output "== Web =="
-$webEnv = Join-Path $root "web\\.env"
+$webEnv = Join-Path $root "apps\\web\\.env"
 $webKeys = @(
   "VITE_FIREBASE_API_KEY",
   "VITE_FIREBASE_AUTH_DOMAIN",
@@ -67,12 +67,12 @@ if (Test-Path -LiteralPath $webEnv) {
     Write-Output ("{0}: {1}" -f $key, (Mask-Value $value))
   }
 } else {
-  Write-Output "web/.env: MISSING"
+  Write-Output "apps/web/.env: MISSING"
 }
 
 Write-Output ""
 Write-Output "== Server =="
-$serverEnv = Join-Path $root "server\\.env"
+$serverEnv = Join-Path $root "services\\server\\.env"
 if (Test-Path -LiteralPath $serverEnv) {
   $openAi = Get-PropValue -Path $serverEnv -Key "OPENAI_API_KEY"
   $svc = Get-PropValue -Path $serverEnv -Key "FIREBASE_SERVICE_ACCOUNT_JSON"
@@ -84,5 +84,5 @@ if (Test-Path -LiteralPath $serverEnv) {
     Write-Output "Firebase Admin creds: MISSING (set FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS)"
   }
 } else {
-  Write-Output "server/.env: MISSING"
+  Write-Output "services/server/.env: MISSING"
 }

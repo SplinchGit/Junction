@@ -20,8 +20,10 @@ UI
 
 ## Boundaries
 
-- **Assistant runtime** owns conversation orchestration, context, providers,
-  plans, trust decisions, and tool dispatch.
+- **Assistant runtime** is a thin orchestration facade for owner input, context
+  assembly, provider calls, response streaming, and plan handoff. Focused
+  coordinators own conversation state, provider routing, memory operations,
+  plan lifecycle, tool dispatch, and voice state.
 - **Features** own user-facing capabilities such as chat, voice, feed,
   notifications, Gmail, scheduling, settings, and updates.
 - **Data** owns Room persistence, preferences, secret storage, and synchronisation.
@@ -37,3 +39,17 @@ UI
 The package reorganisation is deliberately behaviour-preserving. Package moves
 may update declarations, imports, manifests, and tests, but must not change Room
 table names, migration behaviour, persisted preferences, or tool semantics.
+
+## Assistant runtime components
+
+`assistant/runtime/ChatManager.kt` connects the following focused components:
+
+- `ConversationCoordinator` manages sessions, persisted messages, and trimming;
+- `ProviderRouter` selects providers and handles health, escalation, and fallback;
+- `MemoryService` owns durable fact CRUD and memory-context formatting;
+- `PlanCoordinator` manages plan proposal, approval, cancellation, and execution;
+- `ToolExecutor` dispatches approved calls to existing capabilities;
+- `VoiceCoordinator` manages local and realtime voice state and services.
+
+These components preserve the existing flow and dependencies. They do not add a
+new framework, Gradle module, persistence schema, or tool abstraction.

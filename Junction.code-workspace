@@ -1,0 +1,50 @@
+{
+  "folders": [
+    {
+      "name": "Junction · repository",
+      "path": "."
+    },
+    {
+      "name": "Android · source areas",
+      "path": "apps/android/src/main/java/com/splinch/junction"
+    },
+    {
+      "name": "Android · unit tests",
+      "path": "apps/android/src/test/java/com/splinch/junction"
+    },
+    {
+      "name": "Android · device tests",
+      "path": "apps/android/src/androidTest/java/com/splinch/junction"
+    }
+  ],
+  "settings": {
+    "explorer.compactFolders": false,
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.expand": false,
+    "explorer.fileNesting.patterns": {
+      "settings.gradle.kts": "build.gradle.kts, gradle.properties, gradlew, gradlew.bat",
+      "firebase.json": ".firebaserc, firestore.rules, google-services.json",
+      "README.md": ".gitignore, LICENSE"
+    },
+    "files.exclude": {
+      "**/.claude": true,
+      "**/.gradle": true,
+      "**/.idea": true,
+      "**/.vscode": true,
+      "**/build": true,
+      "**/.kotlin": true,
+      "**/node_modules": true,
+      "**/.firebase": true,
+      "**/local.properties": true,
+      "**/logcat_*.txt": true
+    },
+    "search.exclude": {
+      "**/build": true,
+      "**/.gradle": true,
+      "**/.kotlin": true,
+      "**/.firebase": true,
+      "**/node_modules": true
+    },
+    "java.configuration.updateBuildConfiguration": "interactive"
+  }
+}

@@ -1,9 +1,9 @@
 Write-Host "Junction update: pulling latest changes..." -ForegroundColor Cyan
 git pull
 
-if (Test-Path ".\\web\\package.json") {
+if (Test-Path ".\\apps\\web\\package.json") {
     Write-Host "Refreshing web dependencies..." -ForegroundColor Cyan
-    Push-Location .\\web
+    Push-Location .\\apps\\web
     npm install
     Pop-Location
 }

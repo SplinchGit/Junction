@@ -19,3 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Junction"
 include(":app")
+project(":app").projectDir = file("apps/android")

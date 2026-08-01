@@ -51,7 +51,7 @@ jobs:
           JUNCTION_API_BASE_URL: ${{ secrets.JUNCTION_API_BASE_URL }}
 
       # The ubuntu-latest image ships an Android SDK at $ANDROID_HOME; install only the
-      # pieces this project actually needs, matched to compileSdk/targetSdk in app/build.gradle.kts.
+      # pieces this project actually needs, matched to compileSdk/targetSdk in apps/android/build.gradle.kts.
       - name: Install Android SDK components
         run: |
           set -euo pipefail
@@ -84,7 +84,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-reports
-          path: app/build/reports/tests/
+          path: apps/android/build/reports/tests/
           if-no-files-found: ignore
 
       - name: Upload APK
@@ -92,7 +92,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: apps/android/build/outputs/apk/debug/app-debug.apk
 
   instrumentation-tests:
     runs-on: macos-latest
