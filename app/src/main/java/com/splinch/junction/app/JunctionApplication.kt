@@ -1,4 +1,4 @@
-package com.splinch.junction.core
+package com.splinch.junction.app
 
 import android.app.Application
 import android.util.Log
@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.SupervisorJob
 
-class JunctionApp : Application() {
+class JunctionApplication : Application() {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "Background task failed", throwable)
     }
@@ -28,11 +28,11 @@ class JunctionApp : Application() {
         appScope.launch {
             val interval = prefsRepository.digestIntervalMinutesFlow.first().coerceAtLeast(15)
             val enabled = prefsRepository.digestEnabledFlow.first()
-            Scheduler.configureFeedDigest(this@JunctionApp, enabled, interval.toLong())
+            Scheduler.configureFeedDigest(this@JunctionApplication, enabled, interval.toLong())
         }
     }
 
     private companion object {
-        private const val TAG = "JunctionApp"
+        private const val TAG = "JunctionApplication"
     }
 }

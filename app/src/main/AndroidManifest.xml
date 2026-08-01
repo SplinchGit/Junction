@@ -37,7 +37,7 @@
     </queries>
 
     <application
-        android:name=".core.JunctionApp"
+        android:name=".app.JunctionApplication"
         android:allowBackup="true"
         android:label="Junction"
         android:icon="@drawable/ic_junction"
@@ -54,7 +54,7 @@
                 android:resource="@xml/update_file_paths" />
         </provider>
         <activity
-            android:name=".MainActivity"
+            android:name=".app.MainActivity"
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:exported="true">

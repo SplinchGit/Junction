@@ -1,4 +1,4 @@
-﻿package com.splinch.junction.settings
+package com.splinch.junction.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.splinch.junction.core.Config
+import com.splinch.junction.app.config.AppConfig
 import com.splinch.junction.scheduler.DigestQuietHours
 import com.splinch.junction.scheduler.DigestProfile
 import kotlinx.coroutines.flow.Flow
@@ -81,7 +81,7 @@ class UserPrefsRepository(private val context: Context) {
     }
 
     val chatModelFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[chatModelKey] ?: Config.buildChatModel
+        prefs[chatModelKey] ?: AppConfig.buildChatModel
     }
 
     val chatApiKeyFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -111,11 +111,11 @@ class UserPrefsRepository(private val context: Context) {
     }
 
     val realtimeEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[realtimeEndpointKey] ?: Config.buildRealtimeEndpoint
+        prefs[realtimeEndpointKey] ?: AppConfig.buildRealtimeEndpoint
     }
 
     val realtimeClientSecretEndpointFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[realtimeClientSecretEndpointKey] ?: Config.buildRealtimeClientSecretEndpoint
+        prefs[realtimeClientSecretEndpointKey] ?: AppConfig.buildRealtimeClientSecretEndpoint
     }
 
     val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
@@ -214,7 +214,7 @@ class UserPrefsRepository(private val context: Context) {
             disabledPackages = prefs[disabledPackagesKey] ?: emptySet(),
             lastUpdateCheckAt = prefs[lastUpdateCheckAtKey] ?: 0L,
             realtimeClientSecretEndpoint = prefs[realtimeClientSecretEndpointKey].orEmpty(),
-            chatModel = prefs[chatModelKey] ?: Config.buildChatModel,
+            chatModel = prefs[chatModelKey] ?: AppConfig.buildChatModel,
             connectedIntegrations = prefs[connectedIntegrationsKey] ?: emptySet()
         )
     }

@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import com.splinch.junction.MainActivity
+import com.splinch.junction.app.MainActivity
 import com.splinch.junction.R
 import com.splinch.junction.feed.model.FeedItem
 import com.splinch.junction.notifications.NotificationTapReceiver

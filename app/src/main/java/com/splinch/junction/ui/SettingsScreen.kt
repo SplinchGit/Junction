@@ -45,7 +45,7 @@ import com.splinch.junction.BuildConfig
 import com.splinch.junction.accessibility.JunctionAccessibilityService
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.provider.ModelCatalog
-import com.splinch.junction.core.Config
+import com.splinch.junction.app.config.AppConfig
 import com.splinch.junction.feed.FeedRepository
 import com.splinch.junction.platform.ShizukuCapability
 import com.splinch.junction.platform.ShizukuStatus
@@ -81,7 +81,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    val chatModel by userPrefs.chatModelFlow.collectAsState(initial = Config.buildChatModel)
+    val chatModel by userPrefs.chatModelFlow.collectAsState(initial = AppConfig.buildChatModel)
     val chatApiKey by userPrefs.chatApiKeyFlow.collectAsState(initial = "")
     val providerConfig by userPrefs.providerConfigFlow.collectAsState(initial = ProviderConfig())
     val digestInterval by userPrefs.digestIntervalMinutesFlow.collectAsState(initial = 30)

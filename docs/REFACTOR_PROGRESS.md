@@ -4,7 +4,7 @@ The refactor is intentionally incremental. Each phase must compile and pass its
 relevant tests before the next begins.
 
 - [x] Phase 1: add architecture, map, package rules, and this progress log.
-- [ ] Phase 2: move application entry points into `app`.
+- [x] Phase 2: move application entry points into `app`.
 - [ ] Phase 3: organise assistant runtime by responsibility.
 - [ ] Phase 4: consolidate voice under `feature/voice`.
 - [ ] Phase 5: group user-facing capabilities by feature.
@@ -22,8 +22,8 @@ relevant tests before the next begins.
 
 - [x] Documentation files exist.
 - [x] No production code was changed by this phase.
-- [ ] `test` passes.
-- [ ] `assembleDebug` passes.
+- [x] `test` passes.
+- [x] `assembleDebug` passes.
 
 ## Working agreement
 

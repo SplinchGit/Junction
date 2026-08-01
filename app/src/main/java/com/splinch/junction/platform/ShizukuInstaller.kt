@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
-import com.splinch.junction.MainActivity
+import com.splinch.junction.app.MainActivity
 import java.io.File
 
 sealed class ShizukuInstallResult {

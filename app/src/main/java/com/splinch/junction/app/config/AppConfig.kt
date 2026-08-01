@@ -1,8 +1,8 @@
-package com.splinch.junction.core
+package com.splinch.junction.app.config
 
 import com.splinch.junction.BuildConfig
 
-object Config {
+object AppConfig {
     val buildWebClientId: String
         get() = sanitizeWebClientId(BuildConfig.JUNCTION_WEB_CLIENT_ID)
 

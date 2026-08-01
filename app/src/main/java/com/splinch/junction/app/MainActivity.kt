@@ -1,4 +1,4 @@
-package com.splinch.junction
+package com.splinch.junction.app
 
 import android.Manifest
 import android.content.Intent
@@ -41,6 +41,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import com.splinch.junction.BuildConfig
 import com.splinch.junction.chat.ChatManager
 import com.splinch.junction.chat.RoomConversationStore
 import com.splinch.junction.chat.SyncingConversationStore
