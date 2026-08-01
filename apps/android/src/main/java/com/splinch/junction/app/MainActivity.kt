@@ -65,6 +65,7 @@ import com.splinch.junction.feature.settings.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
 import com.splinch.junction.feature.update.UpdateChecker
 import com.splinch.junction.feature.update.UpdateInfo
+import com.splinch.junction.feature.update.UpdateInstaller
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -75,6 +76,8 @@ class MainActivity : ComponentActivity() {
 
     /** Bumped on every resume, so the update check can run when Junction comes forward. */
     private val foregroundTicks = MutableStateFlow(0)
+    /** Prevents repeatedly reopening the installer if the owner dismisses it. */
+    private var autoInstallAttemptedVersion = 0
 
     override fun onResume() {
         super.onResume()
@@ -151,7 +154,20 @@ class MainActivity : ComponentActivity() {
                         val now = System.currentTimeMillis()
                         if (now - lastChecked <= UPDATE_CHECK_INTERVAL_MS) return@runCatching
                         prefs.updateLastUpdateCheckAt(now)
-                        updateState.value = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
+                        val update = UpdateChecker().checkForUpdate(BuildConfig.JUNCTION_VERSION_CODE)
+                        updateState.value = update
+                        // Trusted updates are automatic once Junction has permission to
+                        // request package installs. The installer still owns the final
+                        // Android consent dialog; checksum, signing-key, and rollback
+                        // checks remain inside UpdateInstaller before that dialog opens.
+                        if (update != null &&
+                            update.versionCode > autoInstallAttemptedVersion &&
+                            UpdateInstaller(context).canInstallPackages()
+                        ) {
+                            autoInstallAttemptedVersion = update.versionCode
+                            UpdateInstaller(context).downloadAndRequestInstall(update)
+                                .onFailure { error -> Log.w(TAG, "Automatic update could not start", error) }
+                        }
                     }.onFailure { ex ->
                         Log.w(TAG, "Update check failed", ex)
                     }
