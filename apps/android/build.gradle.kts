@@ -106,7 +106,7 @@ configure<ApplicationExtension> {
 
         // CI passes its run number so every published build outranks the previous
         // one and installs over it. Local builds keep the checked-in baseline.
-        val baselineVersionCode = 2
+        val baselineVersionCode = 67
         val versionCodeValue =
             (
                 findProperty("JUNCTION_VERSION_CODE")?.toString()
