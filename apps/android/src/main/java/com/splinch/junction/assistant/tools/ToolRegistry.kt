@@ -190,9 +190,9 @@ object ToolRegistry {
         register(
             RegisteredTool(
                 name = "propose_code_change",
-                description = "Create a reviewable pull request containing up to 12 coordinated source-file replacements. " +
+                description = "Create a reviewable pull request containing up to 30 coordinated source-file replacements. " +
                     "Never use this until the owner has agreed the plan. It cannot target main, change workflows or secrets, or merge.",
-                parametersJson = """{"type":"object","properties":{"changes":{"type":"array","minItems":1,"maxItems":12,"items":{"type":"object","properties":{"path":{"type":"string","description":"Repository-relative source path"},"content":{"type":"string","description":"Complete replacement contents"}},"required":["path","content"]}},"message":{"type":"string","description":"Commit and PR title"},"description":{"type":"string","description":"PR body with rationale, behaviour and test plan"},"repository":{"type":"string","description":"GitHub repository in owner/name form"}}},"required":["changes","message","description"]}""",
+                parametersJson = """{"type":"object","properties":{"changes":{"type":"array","minItems":1,"maxItems":30,"items":{"type":"object","properties":{"path":{"type":"string","description":"Repository-relative source path"},"content":{"type":"string","description":"Complete replacement contents"}},"required":["path","content"]}},"message":{"type":"string","description":"Commit and PR title"},"description":{"type":"string","description":"PR body with rationale, behaviour and test plan"},"repository":{"type":"string","description":"GitHub repository in owner/name form"}}},"required":["changes","message","description"]}""",
                 riskTier = RiskTier.DESTRUCTIVE,
                 summarize = { args ->
                     val changes = args.optJSONArray("changes")

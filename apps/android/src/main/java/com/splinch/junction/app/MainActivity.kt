@@ -57,6 +57,7 @@ import com.splinch.junction.data.sync.firebase.AuthManager
 import com.splinch.junction.data.sync.firebase.ChatSyncManager
 import com.splinch.junction.data.sync.firebase.FeedSyncManager
 import com.splinch.junction.data.sync.firebase.PrefsSyncManager
+import com.splinch.junction.data.sync.firebase.RemoteCommandSyncManager
 import com.splinch.junction.feature.chat.ui.ChatScreen
 import com.splinch.junction.feature.feed.ui.FeedScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
@@ -122,6 +123,7 @@ class MainActivity : ComponentActivity() {
                         memoryFactDao = database.memoryFactDao()
                     )
                 }
+                val remoteCommandSyncManager = remember { RemoteCommandSyncManager(chatManager, authManager) }
                 val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
@@ -181,12 +183,14 @@ class MainActivity : ComponentActivity() {
                             feedSyncManager.start()
                             prefsSyncManager.start()
                             auditSyncManager.start()
+                            remoteCommandSyncManager.start()
                         }.onFailure { ex ->
                             Log.e(TAG, "Firebase sync initialization failed", ex)
                         }
                     } else {
                         authManager.stop()
                         auditSyncManager.stop()
+                        remoteCommandSyncManager.stop()
                     }
                 }
 

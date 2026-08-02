@@ -285,7 +285,7 @@ class GitHubContributor(
         const val DEFAULT_BASE = "main"
         const val TOKEN_ID = "github"
         private const val API = "https://api.github.com"
-        private const val MAX_CHANGES = 12
+        private const val MAX_CHANGES = 30
         private const val MAX_SOURCE_INDEX_PATHS = 500
         private const val MAX_SOURCE_READ_CHARS = 48_000
         private const val MAX_FILE_CHARS = 250_000

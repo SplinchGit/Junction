@@ -44,6 +44,22 @@ service cloud.firestore {
       match /preferences/{preferenceId} {
         allow read, write: if ownsUser(userId);
       }
+
+      // Separate from /conversations/{id}/messages on purpose: those are
+      // always UNTRUSTED by rule, so they can never act as a command. A
+      // command written here while authenticated as the owner is trusted
+      // and runs through the normal chat pipeline -- see
+      // RemoteCommandSyncManager.
+      match /remote_commands/{commandId} {
+        allow read, delete: if ownsUser(userId);
+        allow create: if ownsUser(userId)
+          && request.resource.data.keys().hasOnly(['content', 'status', 'createdAt', 'source'])
+          && request.resource.data.content is string
+          && request.resource.data.status == 'pending';
+        allow update: if ownsUser(userId)
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'error']);
+      }
     }
   }
 }
