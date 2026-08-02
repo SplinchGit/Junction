@@ -895,6 +895,57 @@ class ChatManager(
         appendSystemMessage("Session cleared")
     }
 
+    /** Chat shelf: every session/project on this device, newest first. */
+    val sessionSummaries: kotlinx.coroutines.flow.Flow<List<ChatSessionSummary>> =
+        conversationCoordinator.sessionSummaries()
+
+    /** Starts a new chat alongside existing ones -- unlike [clearSession], nothing else is touched. */
+    suspend fun startNewChat() {
+        voiceCoordinator.disconnect()
+        conversationCoordinator.startNew()
+        _agentToolsEnabled.value = session.agentToolsEnabled
+        voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
+        planCoordinator.clearActive()
+        pendingRealtimeCalls.clear()
+        rebuildSessionScopedComponents()
+        _streamingAssistant.value = null
+        _lastUndo.value = null
+    }
+
+    /** Switches the active chat to an existing session from the shelf. */
+    suspend fun switchToSession(targetSessionId: String) {
+        if (targetSessionId == session.sessionId) return
+        voiceCoordinator.disconnect()
+        conversationCoordinator.switchTo(targetSessionId)
+        _agentToolsEnabled.value = session.agentToolsEnabled
+        voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
+        planCoordinator.clearActive()
+        pendingRealtimeCalls.clear()
+        rebuildSessionScopedComponents()
+        _streamingAssistant.value = null
+        _lastUndo.value = null
+    }
+
+    suspend fun renameSession(targetSessionId: String, title: String) {
+        conversationCoordinator.renameSession(targetSessionId, title)
+    }
+
+    /** Deletes a chat from the shelf; if it was the active one, starts a fresh chat in its place. */
+    suspend fun deleteSession(targetSessionId: String) {
+        val wasActive = targetSessionId == session.sessionId
+        conversationCoordinator.deleteSession(targetSessionId)
+        if (wasActive) {
+            voiceCoordinator.disconnect()
+            _agentToolsEnabled.value = session.agentToolsEnabled
+            voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
+            planCoordinator.clearActive()
+            pendingRealtimeCalls.clear()
+            rebuildSessionScopedComponents()
+            _streamingAssistant.value = null
+            _lastUndo.value = null
+        }
+    }
+
     /**
      * Shortens the conversation to its [keepRecent] newest messages without
      * ending the session. Unlike [clearSession] this keeps speech mode, the

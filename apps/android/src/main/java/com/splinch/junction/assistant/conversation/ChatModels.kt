@@ -48,5 +48,14 @@ data class ChatSession(
     val startedAt: Instant,
     val messages: List<ChatMessage> = emptyList(),
     val speechModeEnabled: Boolean = false,
-    val agentToolsEnabled: Boolean = true
+    val agentToolsEnabled: Boolean = true,
+    val title: String? = null
+)
+
+/** Lightweight row for the chat shelf -- no message list, so listing many sessions stays cheap. */
+data class ChatSessionSummary(
+    val sessionId: String,
+    val title: String?,
+    val startedAt: Instant,
+    val preview: String?
 )

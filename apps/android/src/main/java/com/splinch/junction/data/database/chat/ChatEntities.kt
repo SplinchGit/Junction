@@ -8,7 +8,9 @@ data class ChatSessionEntity(
     @PrimaryKey val id: String,
     val startedAt: Long,
     val speechModeEnabled: Boolean = false,
-    val agentToolsEnabled: Boolean = true
+    val agentToolsEnabled: Boolean = true,
+    /** Owner-editable label shown in the chat shelf; null falls back to a generated one. */
+    val title: String? = null
 )
 
 @Entity(tableName = "chat_messages")

@@ -40,6 +40,19 @@ class SyncingConversationStore(
         return delegate.messagesFlow(sessionId)
     }
 
+    override suspend fun loadSessionById(sessionId: String): ChatSession? = delegate.loadSessionById(sessionId)
+
+    override fun sessionSummariesFlow(): kotlinx.coroutines.flow.Flow<List<ChatSessionSummary>> =
+        delegate.sessionSummariesFlow()
+
+    override suspend fun renameSession(sessionId: String, title: String) {
+        delegate.renameSession(sessionId, title)
+    }
+
+    override suspend fun deleteSession(sessionId: String) {
+        delegate.deleteSession(sessionId)
+    }
+
     private fun ChatMessage.toEntity(sessionId: String): ChatMessageEntity {
         return ChatMessageEntity(
             id = id,

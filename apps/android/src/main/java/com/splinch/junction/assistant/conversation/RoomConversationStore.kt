@@ -17,14 +17,46 @@ import kotlinx.coroutines.flow.map
 class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     override suspend fun loadSession(): ChatSession? {
         val session = chatDao.getSession() ?: return null
+        return loadSessionEntity(session)
+    }
+
+    override suspend fun loadSessionById(sessionId: String): ChatSession? {
+        val session = chatDao.getSessionById(sessionId) ?: return null
+        return loadSessionEntity(session)
+    }
+
+    private suspend fun loadSessionEntity(session: ChatSessionEntity): ChatSession {
         val messages = chatDao.getMessages(session.id).map { it.toModel() }
         return ChatSession(
             sessionId = session.id,
             startedAt = Instant.ofEpochMilli(session.startedAt),
             messages = messages,
             speechModeEnabled = session.speechModeEnabled,
-            agentToolsEnabled = session.agentToolsEnabled
+            agentToolsEnabled = session.agentToolsEnabled,
+            title = session.title
         )
+    }
+
+    override fun sessionSummariesFlow(): kotlinx.coroutines.flow.Flow<List<com.splinch.junction.assistant.conversation.ChatSessionSummary>> {
+        return chatDao.sessionsStream().map { sessions ->
+            sessions.map { s ->
+                ChatSessionSummary(
+                    sessionId = s.id,
+                    title = s.title,
+                    startedAt = Instant.ofEpochMilli(s.startedAt),
+                    preview = chatDao.lastMessageContent(s.id)
+                )
+            }
+        }
+    }
+
+    override suspend fun renameSession(sessionId: String, title: String) {
+        chatDao.updateSessionTitle(sessionId, title)
+    }
+
+    override suspend fun deleteSession(sessionId: String) {
+        chatDao.clearMessagesForSession(sessionId)
+        chatDao.deleteSessionById(sessionId)
     }
 
     override suspend fun saveSession(session: ChatSession) {
@@ -33,7 +65,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
                 id = session.sessionId,
                 startedAt = session.startedAt.toEpochMilli(),
                 speechModeEnabled = session.speechModeEnabled,
-                agentToolsEnabled = session.agentToolsEnabled
+                agentToolsEnabled = session.agentToolsEnabled,
+                title = session.title
             )
         )
     }

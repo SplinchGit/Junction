@@ -34,7 +34,7 @@ import com.splinch.junction.feature.feed.model.FeedItemEntity
         StepEntity::class,
         MemoryFactEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class)
@@ -56,7 +56,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -210,6 +210,13 @@ abstract class JunctionDatabase : RoomDatabase() {
                 // ASSISTANT message, so a mid-conversation fallback is visible on the
                 // bubble itself instead of only in a system-message aside.
                 db.execSQL("ALTER TABLE `chat_messages` ADD COLUMN `modelLabel` TEXT")
+            }
+        }
+
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Owner-editable label for the chat shelf (multiple concurrent chats/projects).
+                db.execSQL("ALTER TABLE `chat_sessions` ADD COLUMN `title` TEXT")
             }
         }
     }

@@ -11,8 +11,26 @@ interface ChatDao {
     @Query("SELECT * FROM chat_sessions LIMIT 1")
     suspend fun getSession(): ChatSessionEntity?
 
+    @Query("SELECT * FROM chat_sessions WHERE id = :id LIMIT 1")
+    suspend fun getSessionById(id: String): ChatSessionEntity?
+
+    @Query("SELECT * FROM chat_sessions ORDER BY startedAt DESC")
+    fun sessionsStream(): Flow<List<ChatSessionEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSession(session: ChatSessionEntity)
+
+    @Query("UPDATE chat_sessions SET title = :title WHERE id = :id")
+    suspend fun updateSessionTitle(id: String, title: String)
+
+    @Query("DELETE FROM chat_sessions WHERE id = :id")
+    suspend fun deleteSessionById(id: String)
+
+    @Query("SELECT content FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT 1")
+    suspend fun lastMessageContent(sessionId: String): String?
+
+    @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
+    suspend fun clearMessagesForSession(sessionId: String)
 
     @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessages(sessionId: String): List<ChatMessageEntity>

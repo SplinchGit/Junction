@@ -60,6 +60,39 @@ class ConversationCoordinator(
         return session
     }
 
+    /** Chat shelf: every session/project currently on this device, newest first. */
+    fun sessionSummaries(): kotlinx.coroutines.flow.Flow<List<ChatSessionSummary>> = store.sessionSummariesFlow()
+
+    /** Starts a new session alongside existing ones -- unlike [clear], nothing else is touched. */
+    suspend fun startNew(): ChatSession {
+        session = newSession()
+        store.saveSession(session)
+        _sessionId.value = session.sessionId
+        startCollection()
+        return session
+    }
+
+    /** Switches the active session to an existing one, loading its history. */
+    suspend fun switchTo(targetSessionId: String): ChatSession {
+        val loaded = store.loadSessionById(targetSessionId) ?: return startNew()
+        session = loaded
+        _sessionId.value = loaded.sessionId
+        startCollection()
+        return loaded
+    }
+
+    suspend fun renameSession(targetSessionId: String, title: String) {
+        store.renameSession(targetSessionId, title)
+        if (targetSessionId == session.sessionId) session = session.copy(title = title)
+    }
+
+    /** Deletes a session; if it was the active one, switches to a fresh session. */
+    suspend fun deleteSession(targetSessionId: String): ChatSession? {
+        store.deleteSession(targetSessionId)
+        if (targetSessionId != session.sessionId) return null
+        return startNew()
+    }
+
     suspend fun setSpeechMode(enabled: Boolean) {
         session = session.copy(speechModeEnabled = enabled)
         store.saveSession(session)
