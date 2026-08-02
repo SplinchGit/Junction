@@ -805,6 +805,14 @@ private fun MessageBubble(message: ChatMessage) {
                 .background(bubbleColor)
                 .padding(12.dp)
         ) {
+            if (message.sender == Sender.ASSISTANT && !message.modelLabel.isNullOrBlank()) {
+                Text(
+                    text = message.modelLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             message.imagePath?.let { path ->
                 val bitmap = remember(path) { BitmapFactory.decodeFile(path)?.asImageBitmap() }
                 if (bitmap != null) {

@@ -37,11 +37,18 @@ class ConversationCoordinator(
 
     suspend fun append(message: ChatMessage) {
         store.appendMessage(session.sessionId, message)
+        // Room's Flow re-queries only after its invalidation tracker fires, which lands
+        // a beat after this write returns. Callers that read `messages` immediately
+        // after append (building the next provider request) would otherwise see a
+        // stale list missing the message just sent -- e.g. ending on the prior
+        // assistant turn, which Anthropic rejects as an unsupported prefill.
+        _messages.value = _messages.value.filterNot { it.id == message.id } + message
     }
 
     /** Upserts a message with the same id, used to attach the cached image summary. */
     suspend fun upsert(message: ChatMessage) {
         store.appendMessage(session.sessionId, message)
+        _messages.value = _messages.value.map { if (it.id == message.id) message else it }
     }
 
     suspend fun clear(): ChatSession {

@@ -66,7 +66,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             provenance = runCatching { Provenance.valueOf(provenance) }.getOrDefault(Provenance.UNTRUSTED),
             sourceRef = sourceRef,
             imagePath = imagePath,
-            imageSummary = imageSummary
+            imageSummary = imageSummary,
+            modelLabel = modelLabel
         )
     }
 
@@ -80,7 +81,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             provenance = provenance.name,
             sourceRef = sourceRef,
             imagePath = imagePath,
-            imageSummary = imageSummary
+            imageSummary = imageSummary,
+            modelLabel = modelLabel
         )
     }
 }

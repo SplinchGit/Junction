@@ -38,7 +38,9 @@ data class ChatMessage(
     // Absolute path to an app-private, pre-downscaled JPEG attached to this message.
     val imagePath: String? = null,
     /** Cached one-line description, so replays cost text not image bytes. */
-    val imageSummary: String? = null
+    val imageSummary: String? = null,
+    /** Friendly "Claude Sonnet 5" / "GPT-5.6 Sol" label for an ASSISTANT message, so a fallback mid-conversation is visible at a glance instead of only showing up as a system-message aside. */
+    val modelLabel: String? = null
 )
 
 data class ChatSession(

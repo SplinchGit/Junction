@@ -403,12 +403,20 @@ class ChatManager(
                             is LlmEvent.TextDone -> {
                                 val final = stripLeakedEnvelope(event.text.ifBlank { accumulatedText })
                                 if (final.isNotBlank()) {
+                                    val turnModel = if (frontierRequested) {
+                                        currentProvider.frontierModel ?: currentProvider.workhorseModel
+                                    } else {
+                                        currentProvider.workhorseModel
+                                    }
+                                    val turnModelLabel = ModelCatalog.modelById(currentProvider.id, turnModel)?.displayName
+                                        ?: "${currentProvider.id}/$turnModel"
                                     appendMessage(
                                         ChatMessage(
                                             sender = Sender.ASSISTANT,
                                             content = final,
                                             provenance = Provenance.JUNCTION,
-                                            sourceRef = "assistant_text:$itemId"
+                                            sourceRef = "assistant_text:$itemId",
+                                            modelLabel = turnModelLabel
                                         )
                                     )
                                     // Speak whenever speech mode is on, not only
@@ -994,7 +1002,8 @@ class ChatManager(
                         sender = Sender.ASSISTANT,
                         content = content,
                         provenance = Provenance.JUNCTION,
-                        sourceRef = "assistant_realtime:$itemId"
+                        sourceRef = "assistant_realtime:$itemId",
+                        modelLabel = "Realtime Voice"
                     )
                 )
             }
