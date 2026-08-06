@@ -358,6 +358,139 @@ body {
   color: #f08f8f;
 }
 
+.remote-confirmation {
+  color: var(--accent);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+}
+
+.mode-toggle button {
+  background: transparent;
+  border: 1px solid #2a333f;
+  color: var(--muted);
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.mode-toggle button.active {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #081424;
+}
+
+.remote-commands {
+  border-top: 1px solid #1f2630;
+  padding-top: 14px;
+  margin-top: 4px;
+}
+
+.remote-commands-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.remote-commands-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.remote-commands-list {
+  display: grid;
+  gap: 10px;
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.remote-command-card {
+  background: var(--panel-2);
+  border: 1px solid #2a333f;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.remote-command-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.remote-command-time {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.remote-command-text {
+  margin: 0 0 6px;
+}
+
+.remote-command-response,
+.remote-command-meta {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.remote-command-hint {
+  margin: 6px 0 0;
+  color: #f0c37b;
+  font-size: 0.85rem;
+}
+
+.remote-command-error {
+  margin: 6px 0 0;
+  color: #f3b0b0;
+  font-size: 0.85rem;
+}
+
+.remote-status {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  background: #2a333f;
+  color: var(--text);
+}
+
+.remote-status.status-done {
+  background: var(--accent);
+  color: #062116;
+}
+
+.remote-status.status-error,
+.remote-status.status-expired {
+  background: #ff6b6b;
+  color: #2b0b0b;
+}
+
+.remote-status.status-awaiting_approval {
+  background: #f0ad4e;
+  color: #2b1c05;
+}
+
+.remote-status.status-pending,
+.remote-status.status-processing,
+.remote-status.status-running {
+  background: var(--accent-2);
+  color: #081424;
+}
+
+.remote-status.status-cancelled {
+  background: #3a3f4a;
+  color: var(--muted);
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;

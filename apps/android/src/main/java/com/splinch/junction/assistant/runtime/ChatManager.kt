@@ -49,6 +49,22 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Coarse, correlation-safe summary of one [ChatManager.sendUserMessage] turn.
+ *
+ * Deliberately excludes tool arguments, plan text, and raw provider output --
+ * this is built to be safe to mirror off-device (see RemoteCommandSyncManager),
+ * not a full audit record. [ChatManager.activePlan] and the on-device audit
+ * log remain the source of truth for anything more detailed.
+ */
+data class TurnOutcome(
+    val assistantText: String?,
+    val toolsRequested: Int,
+    val toolsRan: Boolean,
+    val approvalRequired: Boolean,
+    val errorMessage: String?
+)
+
 class ChatManager(
     context: Context,
     private val store: ConversationStore,
@@ -292,7 +308,19 @@ class ChatManager(
         )
     }
 
-    suspend fun sendUserMessage(raw: String, imagePath: String? = null) {
+    suspend fun sendUserMessage(
+        raw: String,
+        imagePath: String? = null,
+        /**
+         * Fires exactly once per call, on every exit path, with a coarse summary of how
+         * the turn ended. Optional and additive -- omitted by the voice/chat-UI callers
+         * that already observe [messages]/[activePlan] directly -- so this does not change
+         * their behavior. Added for RemoteCommandSyncManager, which has no UI to watch and
+         * needs to know when a headless turn has actually finished (see PR: remote command
+         * result correlation).
+         */
+        onTurnComplete: ((TurnOutcome) -> Unit)? = null
+    ) {
         // §1.1 explicit escalation request: "/frontier <message>" forces the
         // frontier lane for this turn without being swallowed by the
         // MessageHandler's generic "/"-prefixed command dispatch.
@@ -311,6 +339,7 @@ class ChatManager(
             // Commands print to the screen rather than answer aloud, but the turn is
             // still over, and on a call the mic has to come back either way.
             endVoiceTurn("command")
+            onTurnComplete?.invoke(TurnOutcome(null, 0, false, false, null))
             return
         }
 
@@ -318,6 +347,7 @@ class ChatManager(
         if (!isValid && imagePath == null) {
             appendSystemMessage(error ?: "Invalid message")
             endVoiceTurn("invalid_message", error ?: "Sorry, I couldn't use that.")
+            onTurnComplete?.invoke(TurnOutcome(null, 0, false, false, error ?: "Invalid message"))
             return
         }
 
@@ -350,7 +380,14 @@ class ChatManager(
             voiceCoordinator.speechModeEnabled.value &&
             imagePath == null
         ) {
-            if (voiceCoordinator.trySendRealtimeText(processed.content)) return
+            if (voiceCoordinator.trySendRealtimeText(processed.content)) {
+                // Realtime voice owns this reply from here; there is no text result to
+                // correlate back to a caller waiting on onTurnComplete.
+                onTurnComplete?.invoke(
+                    TurnOutcome(null, 0, false, false, "Handled via realtime voice; no text result available")
+                )
+                return
+            }
             appendSystemMessage("Voice isn't available right now — replying via text instead.")
         }
 
@@ -359,6 +396,9 @@ class ChatManager(
             ?: run {
                 appendSystemMessage("No AI provider configured. Add your API key in Settings.")
                 endVoiceTurn("no_provider", "There's no AI provider configured. Add your API key in Settings.")
+                onTurnComplete?.invoke(
+                    TurnOutcome(null, 0, false, false, "No AI provider configured. Add your API key in Settings.")
+                )
                 return
             }
 
@@ -371,6 +411,7 @@ class ChatManager(
             val tools = if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
+            var lastAssistantText: String? = null
             val requestedCalls = mutableListOf<PendingToolCall>()
             var usage: com.splinch.junction.assistant.provider.ProviderUsage? = null
             var sawToolArgParseFailure = false
@@ -419,6 +460,7 @@ class ChatManager(
                                             modelLabel = turnModelLabel
                                         )
                                     )
+                                    lastAssistantText = final
                                     // Speak whenever speech mode is on, not only
                                     // when the LOCAL backend is selected. Reaching
                                     // here in speech mode means Realtime did not
@@ -492,6 +534,9 @@ class ChatManager(
                 // On a call this is the whole turn. Saying it out loud is the difference
                 // between "Junction couldn't do that" and Junction having gone silent.
                 endVoiceTurn("provider_error", "Sorry, that didn't work: ${providerRouter.cleanError(fatalError)}")
+                onTurnComplete?.invoke(
+                    TurnOutcome(null, 0, false, false, providerRouter.cleanError(fatalError))
+                )
                 return@launch
             }
 
@@ -535,6 +580,21 @@ class ChatManager(
                 providerRouter.requestFrontierForNextTurn()
                 appendSystemMessage("A tool call had malformed arguments — escalating to the frontier model for the next turn.")
             }
+
+            // handleProposedPlan (via PlanCoordinator.propose) either ran the plan to
+            // completion before returning (autoRun) or left it parked in [activePlan]
+            // awaiting owner approval -- so this check, made right after it returns, is
+            // an accurate read of which one happened for *this* turn's calls.
+            val approvalRequired = requestedCalls.isNotEmpty() && activePlan.value != null
+            onTurnComplete?.invoke(
+                TurnOutcome(
+                    assistantText = lastAssistantText,
+                    toolsRequested = requestedCalls.size,
+                    toolsRan = requestedCalls.isNotEmpty() && !approvalRequired,
+                    approvalRequired = approvalRequired,
+                    errorMessage = null
+                )
+            )
         }
 
         // However this turn ended -- a reply, tool calls and no reply, an empty reply, a

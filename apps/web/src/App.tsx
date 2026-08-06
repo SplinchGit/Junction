@@ -56,6 +56,37 @@ type Conversation = {
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+type SendMode = "chat" | "phone";
+
+// Superset of what Android currently writes (pending/processing/done/error) plus the
+// states the build spec calls for adding later (awaiting_approval/running/cancelled/
+// expired) -- typed now so the UI doesn't need reshaping when Android starts using them.
+type RemoteCommandStatus =
+  | "pending"
+  | "processing"
+  | "awaiting_approval"
+  | "running"
+  | "done"
+  | "error"
+  | "cancelled"
+  | "expired";
+
+// Mirrors users/{uid}/remote_commands/{id}. Deliberately excludes tool arguments and
+// plan text -- see RemoteCommandSyncManager and firestore.rules for why only this
+// coarse a result ever leaves the device.
+type RemoteCommand = {
+  id: string;
+  content: string;
+  status: RemoteCommandStatus;
+  createdAt: number;
+  completedAt?: number;
+  error?: string;
+  assistantResponse?: string;
+  toolsRequested?: number;
+  toolsRan?: boolean;
+  approvalRequired?: boolean;
+};
+
 type PendingToolCall = {
   id: string;
   name: string;
@@ -111,6 +142,12 @@ export default function App() {
   const [streamingText, setStreamingText] = useState("");
   const [pendingToolCalls, setPendingToolCalls] = useState<PendingToolCall[]>([]);
   const [realtimeError, setRealtimeError] = useState<RealtimeError | null>(null);
+  const [sendMode, setSendMode] = useState<SendMode>("chat");
+  const [remoteCommands, setRemoteCommands] = useState<RemoteCommand[]>([]);
+  const [remoteSending, setRemoteSending] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteConfirmation, setRemoteConfirmation] = useState<string | null>(null);
+  const remoteSubmittingRef = useRef(false);
 
   const rtcRef = useRef<RealtimeSession | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -122,7 +159,9 @@ export default function App() {
   const showCounter = inputLength >= warnAtLength;
   const canSend =
     !!user && !!realtimeEndpoint && !overLimit && input.trim().length > 0;
-  const showRealtimeMissing = tab === "chat" && !realtimeEndpoint;
+  const showRealtimeMissing = tab === "chat" && sendMode === "chat" && !realtimeEndpoint;
+  const canSendRemote =
+    !!user && sendMode === "phone" && !overLimit && input.trim().length > 0 && !remoteSending;
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -136,6 +175,10 @@ export default function App() {
       setMicMuted(true);
       setPendingToolCalls([]);
       setRealtimeError(null);
+      setRemoteCommands([]);
+      setRemoteError(null);
+      setRemoteConfirmation(null);
+      setSendMode("chat");
       disconnectRealtime();
       return;
     }
@@ -237,6 +280,31 @@ export default function App() {
         blockReason: docSnap.data().blockReason,
       }));
       setAuditLog(data);
+    });
+    return () => unsub();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const remoteRef = collection(db, "users", user.uid, "remote_commands");
+    const remoteQuery = query(remoteRef, orderBy("createdAt", "desc"), limit(20));
+    const unsub = onSnapshot(remoteQuery, (snap: { docs: any[] }) => {
+      const data = snap.docs.map((docSnap) => {
+        const d = docSnap.data();
+        return {
+          id: docSnap.id,
+          content: d.content ?? "",
+          status: (d.status ?? "pending") as RemoteCommandStatus,
+          createdAt: d.createdAt?.toMillis?.() ?? Date.now(),
+          completedAt: d.completedAt?.toMillis?.(),
+          error: d.error,
+          assistantResponse: d.assistantResponse,
+          toolsRequested: d.toolsRequested,
+          toolsRan: d.toolsRan,
+          approvalRequired: d.approvalRequired,
+        } as RemoteCommand;
+      });
+      setRemoteCommands(data);
     });
     return () => unsub();
   }, [user]);
@@ -384,6 +452,45 @@ export default function App() {
     }
     sendEvent({ type: "response.create" });
     setTab("chat");
+  }
+
+  // Deliberately separate from appendMessage: that path writes UNTRUSTED conversation
+  // mirror messages that never trigger phone actions. This writes to the distinct
+  // remote_commands collection, which Android treats as a real owner instruction and
+  // runs through ChatManager/TrustGate -- see RemoteCommandSyncManager.
+  async function sendRemoteCommand(content: string): Promise<string> {
+    if (!user) throw new Error("Sign in required");
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error("Command cannot be blank");
+    if (trimmed.length > maxMessageLength) {
+      throw new Error(`Command too long (max ${maxMessageLength} characters).`);
+    }
+    const remoteRef = collection(db, "users", user.uid, "remote_commands");
+    const docRef = await addDoc(remoteRef, {
+      content: trimmed,
+      status: "pending",
+      createdAt: serverTimestamp(),
+      source: "companion:web",
+    });
+    return docRef.id;
+  }
+
+  async function handleRunOnPhone() {
+    if (!canSendRemote || remoteSubmittingRef.current) return;
+    remoteSubmittingRef.current = true;
+    setRemoteSending(true);
+    setRemoteError(null);
+    try {
+      const id = await sendRemoteCommand(input);
+      setInput("");
+      setRemoteConfirmation(`Sent to phone (${id.slice(0, 8)})`);
+      window.setTimeout(() => setRemoteConfirmation(null), 4000);
+    } catch (err: any) {
+      setRemoteError(err?.message || "Failed to send command to phone.");
+    } finally {
+      setRemoteSending(false);
+      remoteSubmittingRef.current = false;
+    }
   }
 
   async function markSeen(item: FeedItem) {
@@ -835,6 +942,20 @@ export default function App() {
                   ))}
                 </div>
                 <div className="conversation">
+                  <div className="mode-toggle" role="group" aria-label="Send mode">
+                    <button
+                      className={sendMode === "chat" ? "active" : ""}
+                      onClick={() => setSendMode("chat")}
+                    >
+                      Chat here
+                    </button>
+                    <button
+                      className={sendMode === "phone" ? "active" : ""}
+                      onClick={() => setSendMode("phone")}
+                    >
+                      Run on phone
+                    </button>
+                  </div>
                   <div className="conversation-controls">
                     <label>
                         <input
@@ -919,18 +1040,33 @@ export default function App() {
                       )}
                     </div>
                   )}
+                  {sendMode === "phone" && remoteError && (
+                    <div className="banner error">
+                      <div className="banner-title">Couldn't send to phone</div>
+                      <div className="banner-message">{remoteError}</div>
+                    </div>
+                  )}
                   <div className="composer">
                     <div className="composer-row">
                       <input
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Type a message"
+                        placeholder={sendMode === "phone" ? "Tell your phone what to do" : "Type a message"}
                         disabled={!user}
                         className={overLimit ? "over-limit" : ""}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && sendMode === "phone") handleRunOnPhone();
+                        }}
                       />
-                      <button onClick={sendMessage} disabled={!canSend}>
-                        Send
-                      </button>
+                      {sendMode === "phone" ? (
+                        <button onClick={handleRunOnPhone} disabled={!canSendRemote}>
+                          {remoteSending ? "Sending…" : "Run on phone"}
+                        </button>
+                      ) : (
+                        <button onClick={sendMessage} disabled={!canSend}>
+                          Send
+                        </button>
+                      )}
                     </div>
                     <div className="composer-meta">
                       {showCounter && (
@@ -943,8 +1079,49 @@ export default function App() {
                           Message too long. Trim to {maxMessageLength} characters.
                         </span>
                       )}
+                      {sendMode === "phone" && remoteConfirmation && (
+                        <span className="remote-confirmation">{remoteConfirmation}</span>
+                      )}
                     </div>
                   </div>
+                  {remoteCommands.length > 0 && (
+                    <div className="remote-commands">
+                      <div className="remote-commands-header">
+                        <h3>Phone commands</h3>
+                        <span>{remoteCommands.length} recent</span>
+                      </div>
+                      <div className="remote-commands-list">
+                        {remoteCommands.map((cmd) => (
+                          <article key={cmd.id} className="remote-command-card">
+                            <div className="remote-command-top">
+                              <span className={`remote-status status-${cmd.status}`}>
+                                {cmd.status.replace("_", " ")}
+                              </span>
+                              <span className="remote-command-time">
+                                {new Date(cmd.createdAt).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            <p className="remote-command-text">{cmd.content}</p>
+                            {cmd.status === "awaiting_approval" && (
+                              <p className="remote-command-hint">
+                                Waiting for approval on the phone.
+                              </p>
+                            )}
+                            {cmd.assistantResponse && (
+                              <p className="remote-command-response">{cmd.assistantResponse}</p>
+                            )}
+                            {typeof cmd.toolsRequested === "number" && cmd.toolsRequested > 0 && (
+                              <p className="remote-command-meta">
+                                {cmd.toolsRequested} tool{cmd.toolsRequested === 1 ? "" : "s"} requested
+                                {cmd.toolsRan ? " · ran" : ""}
+                              </p>
+                            )}
+                            {cmd.error && <p className="remote-command-error">{cmd.error}</p>}
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

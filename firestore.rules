@@ -50,15 +50,39 @@ service cloud.firestore {
       // command written here while authenticated as the owner is trusted
       // and runs through the normal chat pipeline -- see
       // RemoteCommandSyncManager.
+      //
+      // Limitation: Firestore rules authenticate the *owner*, not the
+      // *device*. There is no rule-level way to tell the Android app's
+      // client apart from the owner's own web client -- both hold the same
+      // Firebase Auth identity. The boundary these rules enforce is field
+      // scoping (which keys a write may touch, and what values are legal),
+      // not "only the phone may claim/complete a command". That is
+      // acceptable because both sides are the authenticated owner, but it
+      // is not a substitute for a real device-identity check -- do not
+      // treat it as one.
       match /remote_commands/{commandId} {
         allow read, delete: if ownsUser(userId);
         allow create: if ownsUser(userId)
           && request.resource.data.keys().hasOnly(['content', 'status', 'createdAt', 'source'])
           && request.resource.data.content is string
           && request.resource.data.status == 'pending';
+        // Lifecycle/result fields written after creation. 'status' is
+        // restricted to non-initial values here -- only `create` may set
+        // 'pending' -- so a client cannot rewind a command to re-trigger
+        // execution. Result fields are intentionally coarse (see
+        // RemoteCommandSyncManager): no tool arguments, plan text, or raw
+        // provider output ever lands here.
         allow update: if ownsUser(userId)
           && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['status', 'error']);
+            .hasOnly([
+              'status', 'error', 'assistantResponse', 'toolsRequested',
+              'toolsRan', 'approvalRequired', 'claimedAt', 'completedAt',
+              'conversationId'
+            ])
+          && (
+            !('status' in request.resource.data.diff(resource.data).affectedKeys())
+            || request.resource.data.status in ['processing', 'awaiting_approval', 'done', 'error']
+          );
       }
     }
   }

@@ -100,9 +100,19 @@ provenance tag — can never themselves initiate a tool call.
   verification, failure recovery, interruption/resume.
 - Append-only audit log (`action_log`) backing an Audit tab, a state-based eval harness
   (`evaluation/`), and an explicit, content-free telemetry export.
+- Chat shelf: multiple concurrent chat sessions, each independently persisted — new chat,
+  switch, rename, delete, from a left-hand drawer in `ChatScreen`.
+- Remote command channel (`RemoteCommandSyncManager`): commands written to
+  `users/{uid}/remote_commands` while signed in as the owner run as real turns through
+  `ChatManager.sendUserMessage`. Deliberately a separate Firestore collection from the
+  read-only companion mirror below, gated the same owner-provenance way `TrustGate` gates
+  everything else.
+- Voice-drivable workflows extended to notifications, GitHub, and calendar reminders.
 - Optional Firebase sync (chat/feed/prefs) and a PC companion web client that mirrors
   conversations read-only — it cannot execute tools; anything it sends is tagged `UNTRUSTED`.
-- GitHub Pages update card + checksum-verified APK install, rollback backup, and Android installer confirmation.
+- GitHub Pages update card + checksum-verified APK install, rollback backup, and Android
+  installer confirmation; the same signed build now also publishes as a GitHub Release, and
+  a verified update starts automatically rather than waiting on a tap.
 
 ## Android setup
 
