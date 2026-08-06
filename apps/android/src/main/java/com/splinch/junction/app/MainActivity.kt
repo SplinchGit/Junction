@@ -43,21 +43,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import com.splinch.junction.BuildConfig
 import com.splinch.junction.assistant.runtime.ChatManager
-import com.splinch.junction.assistant.conversation.RoomConversationStore
-import com.splinch.junction.assistant.conversation.SyncingConversationStore
-import com.splinch.junction.assistant.provider.ProviderRegistry
-import com.splinch.junction.data.database.JunctionDatabase
 import com.splinch.junction.feature.feed.FeedRepository
 import com.splinch.junction.feature.notification.NotificationAccessHelper
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.UserPrefsRepository
 import com.splinch.junction.feature.onboarding.resolveOnboardingCompleted
-import com.splinch.junction.data.sync.firebase.AuditSyncManager
 import com.splinch.junction.data.sync.firebase.AuthManager
-import com.splinch.junction.data.sync.firebase.ChatSyncManager
-import com.splinch.junction.data.sync.firebase.FeedSyncManager
-import com.splinch.junction.data.sync.firebase.PrefsSyncManager
-import com.splinch.junction.data.sync.firebase.RemoteCommandSyncManager
+import com.splinch.junction.data.sync.firebase.RemoteCommandForegroundService
 import com.splinch.junction.feature.chat.ui.ChatScreen
 import com.splinch.junction.feature.feed.ui.FeedScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
@@ -84,7 +76,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         foregroundTicks.value = foregroundTicks.value + 1
     }
-    private val prefsRepository by lazy { UserPrefsRepository(this) }
+    private val prefsRepository by lazy { (application as JunctionApplication).container.prefs }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,34 +88,21 @@ class MainActivity : ComponentActivity() {
                 val context = LocalContext.current
                 val lifecycle = (context as? ComponentActivity)?.lifecycle
                 val scope = rememberCoroutineScope()
-                val database = remember { JunctionDatabase.getInstance(context) }
-                val prefs = remember { UserPrefsRepository(context) }
-                val authManager = remember { AuthManager(context) }
-                val chatSyncManager = remember { ChatSyncManager(database.chatDao(), authManager) }
-                val feedSyncManager = remember { FeedSyncManager(database.feedDao(), authManager) }
-                val prefsSyncManager = remember { PrefsSyncManager(prefs, authManager) }
-                val auditSyncManager = remember { AuditSyncManager(database.actionLogDao(), authManager) }
-                val roomStore = remember { RoomConversationStore(database.chatDao()) }
-                val conversationStore = remember { SyncingConversationStore(roomStore, chatSyncManager) }
-                val feedRepository = remember { FeedRepository(database.feedDao(), feedSyncManager) }
-                val updateState = remember { MutableStateFlow<UpdateInfo?>(null) }
-                val providerRegistry = remember { ProviderRegistry(context, prefs) }
-                val chatManager = remember {
-                    ChatManager(
-                        context = context,
-                        store = conversationStore,
-                        feedRepository = feedRepository,
-                        prefs = prefs,
-                        authManager = authManager,
-                        updateState = updateState,
-                        providerRegistry = providerRegistry,
-                        actionLogDao = database.actionLogDao(),
-                        modelUsageDao = database.modelUsageDao(),
-                        planDao = database.planDao(),
-                        memoryFactDao = database.memoryFactDao()
-                    )
-                }
-                val remoteCommandSyncManager = remember { RemoteCommandSyncManager(chatManager, authManager) }
+                // Application-scoped: see AppContainer for why ChatManager and the sync
+                // managers can no longer live in this Composable's remember{} the way they
+                // used to. MainActivity and RemoteCommandForegroundService share this same
+                // instance.
+                val container = remember { (context.applicationContext as JunctionApplication).container }
+                val database = container.database
+                val prefs = container.prefs
+                val authManager = container.authManager
+                val chatSyncManager = container.chatSyncManager
+                val feedSyncManager = container.feedSyncManager
+                val prefsSyncManager = container.prefsSyncManager
+                val auditSyncManager = container.auditSyncManager
+                val feedRepository = container.feedRepository
+                val updateState = container.updateState
+                val chatManager = container.chatManager
                 val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
@@ -183,14 +162,17 @@ class MainActivity : ComponentActivity() {
                             feedSyncManager.start()
                             prefsSyncManager.start()
                             auditSyncManager.start()
-                            remoteCommandSyncManager.start()
                         }.onFailure { ex ->
                             Log.e(TAG, "Firebase sync initialization failed", ex)
                         }
+                        // Owns RemoteCommandSyncManager's start/stop exclusively from here on,
+                        // so it keeps listening after the Activity backgrounds or is swiped
+                        // away -- see RemoteCommandForegroundService.
+                        RemoteCommandForegroundService.start(context)
                     } else {
                         authManager.stop()
                         auditSyncManager.stop()
-                        remoteCommandSyncManager.stop()
+                        RemoteCommandForegroundService.stop(context)
                     }
                 }
 

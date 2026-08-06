@@ -33,7 +33,14 @@ class AuthManager(private val context: Context) {
     // start() and signInWithGoogle() below both call FirebaseProvider.initialize()
     // lazily, only when actually invoked.
 
+    /**
+     * A no-op if already started. Now called from both MainActivity and
+     * RemoteCommandForegroundService (each needs the auth listener live independent of the
+     * other), so this has to tolerate being called more than once without leaking a second
+     * FirebaseAuth listener that [stop] could never reach.
+     */
     fun start() {
+        if (authListener != null) return
         if (!FirebaseProvider.initialize(context)) {
             _userFlow.value = null
             return
@@ -53,6 +60,7 @@ class AuthManager(private val context: Context) {
         if (auth != null && listener != null) {
             auth.removeAuthStateListener(listener)
         }
+        authListener = null
     }
 
     fun currentUser(): FirebaseUser? {

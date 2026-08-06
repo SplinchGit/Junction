@@ -18,6 +18,13 @@ class JunctionApplication : Application() {
     }
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
+    // Built lazily rather than eagerly in onCreate: touching it for the first time is what
+    // constructs ChatManager and friends, and the app should not pay that cost (or start
+    // pulling in the Room database) on every cold start before anything actually needs it.
+    // MainActivity and RemoteCommandForegroundService both read this same instance, so
+    // whichever one runs first builds it and the other reuses it.
+    val container: AppContainer by lazy { AppContainer(this) }
+
     override fun onCreate() {
         super.onCreate()
         runCatching { NotificationHelper.createChannels(this) }

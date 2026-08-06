@@ -7,6 +7,10 @@
          owner locks the phone, and the call goes silently deaf. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Keeps RemoteCommandSyncManager's Firestore listener alive while Junction is off
+         screen, so a command sent from the PC companion still arrives; see
+         RemoteCommandForegroundService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Bluetooth audio thrower: connect/disconnect the phone's link to paired headphones -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -83,6 +87,11 @@
             android:name=".feature.voice.service.VoiceCallService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <service
+            android:name=".data.sync.firebase.RemoteCommandForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <service
             android:name=".feature.notification.service.JunctionNotificationListenerService"
