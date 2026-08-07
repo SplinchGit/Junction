@@ -276,4 +276,6 @@ dependencies {
     // Android port of JavaMail, used by GmailCopilot to build/send MIME replies.
     implementation("com.sun.mail:android-mail:1.6.7")
     implementation("com.sun.mail:android-activation:1.6.7")
+
+    implementation(project(":avatar"))
 }

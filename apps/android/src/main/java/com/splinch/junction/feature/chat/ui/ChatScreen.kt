@@ -89,6 +89,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.junction.avatar.AvatarState
+import com.junction.avatar.AvatarView
 import com.splinch.junction.assistant.runtime.ChatManager
 import com.splinch.junction.assistant.conversation.ChatMessage
 import com.splinch.junction.assistant.planning.Plan
@@ -218,12 +220,20 @@ fun ChatScreen(
             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                 Icon(Icons.Filled.Menu, contentDescription = "Chats")
             }
+            AvatarView(
+                state = when {
+                    voiceSpeaking || streaming != null -> AvatarState.TALKING
+                    micEnabled && voiceListening -> AvatarState.LISTENING
+                    else -> AvatarState.IDLE
+                },
+                sizeDp = 40
+            )
             Text(
                 text = "Chat",
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
