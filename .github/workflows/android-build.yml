@@ -180,7 +180,10 @@ jobs:
           FULL_SHA=$(git rev-parse HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' apps/android/build.gradle.kts)
+          # Must mirror apps/android/build.gradle.kts: recreated workflow counters can
+          # be lower than APKs already installed on devices.
           VERSION_CODE="${{ github.run_number }}"
+          if [ "$VERSION_CODE" -lt 100 ]; then VERSION_CODE=100; fi
           REPO="${GITHUB_REPOSITORY}"
           BASE_URL="https://splinchgit.github.io/Junction"
 
