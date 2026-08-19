@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.DynamicFeed
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -51,6 +52,8 @@ import com.splinch.junction.feature.onboarding.resolveOnboardingCompleted
 import com.splinch.junction.data.sync.firebase.AuthManager
 import com.splinch.junction.data.sync.firebase.RemoteCommandForegroundService
 import com.splinch.junction.feature.chat.ui.ChatScreen
+import com.splinch.junction.feature.calculator.CalculatorClient
+import com.splinch.junction.feature.calculator.ui.CalculatorScreen
 import com.splinch.junction.feature.feed.ui.FeedScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
 import com.splinch.junction.feature.onboarding.ui.OnboardingScreen
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
                 val feedRepository = container.feedRepository
                 val updateState = container.updateState
                 val chatManager = container.chatManager
+                val calculatorClient = container.calculatorClient
                 val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
@@ -207,6 +211,7 @@ class MainActivity : ComponentActivity() {
 
                 JunctionApp(
                     chatManager = chatManager,
+                    calculatorClient = calculatorClient,
                     feedRepository = feedRepository,
                     prefs = prefs,
                     authManager = authManager,
@@ -273,6 +278,7 @@ class MainActivity : ComponentActivity() {
 private enum class JunctionTab {
     FEED,
     CHAT,
+    CALCULATOR,
     AUDIT,
     SETTINGS
 }
@@ -290,6 +296,7 @@ private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
 @Composable
 private fun JunctionApp(
     chatManager: ChatManager,
+    calculatorClient: CalculatorClient,
     feedRepository: FeedRepository,
     prefs: UserPrefsRepository,
     authManager: AuthManager,
@@ -343,6 +350,12 @@ private fun JunctionApp(
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
+                    selected = selectedTab == JunctionTab.CALCULATOR,
+                    onClick = { selectedTab = JunctionTab.CALCULATOR },
+                    icon = { Icon(Icons.Default.Calculate, contentDescription = null) },
+                    label = { Text("Build") }
+                )
+                NavigationBarItem(
                     selected = selectedTab == JunctionTab.FEED,
                     onClick = { selectedTab = JunctionTab.FEED },
                     icon = { Icon(Icons.Default.DynamicFeed, contentDescription = null) },
@@ -392,6 +405,10 @@ private fun JunctionApp(
             )
             JunctionTab.CHAT -> ChatScreen(
                 chatManager = chatManager,
+                modifier = Modifier.padding(padding)
+            )
+            JunctionTab.CALCULATOR -> CalculatorScreen(
+                client = calculatorClient,
                 modifier = Modifier.padding(padding)
             )
             JunctionTab.AUDIT -> AuditScreen(

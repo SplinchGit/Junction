@@ -13,6 +13,7 @@ import com.splinch.junction.data.sync.firebase.ChatSyncManager
 import com.splinch.junction.data.sync.firebase.FeedSyncManager
 import com.splinch.junction.data.sync.firebase.PrefsSyncManager
 import com.splinch.junction.data.sync.firebase.RemoteCommandSyncManager
+import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.feed.FeedRepository
 import com.splinch.junction.feature.update.UpdateInfo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,7 @@ class AppContainer(context: Context) {
     val feedRepository = FeedRepository(database.feedDao(), feedSyncManager)
     val updateState = MutableStateFlow<UpdateInfo?>(null)
     val providerRegistry = ProviderRegistry(appContext, prefs)
+    val calculatorClient = CalculatorClient(prefs)
 
     val chatManager: ChatManager = ChatManager(
         context = appContext,

@@ -53,6 +53,7 @@ class UserPrefsRepository(private val context: Context) {
     private val alwaysAllowedToolsKey = stringSetPreferencesKey("always_allowed_tools")
     private val voiceBackendKey = stringPreferencesKey("voice_backend")
     private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
+    private val calculatorBackendUrlKey = stringPreferencesKey("calculator_backend_url")
 
     val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[firebaseSyncEnabledKey] ?: false
@@ -120,6 +121,19 @@ class UserPrefsRepository(private val context: Context) {
 
     val webClientIdOverrideFlow: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[webClientIdOverrideKey] ?: ""
+    }
+
+    /**
+     * LAN address of the PC-side build-calculator daemon (services/build-calculator).
+     * Not a build-time constant: it changes depending on whether the phone is USB-tethered
+     * to the PC or the PC has joined the phone's hotspot, so this is owner-set only.
+     */
+    val calculatorBackendUrlFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[calculatorBackendUrlKey] ?: ""
+    }
+
+    suspend fun setCalculatorBackendUrl(url: String) {
+        context.dataStore.edit { it[calculatorBackendUrlKey] = url }
     }
 
     /** Gmail account explicitly configured by the owner for triage/unsubscribe tools (device-scoped; not synced). */

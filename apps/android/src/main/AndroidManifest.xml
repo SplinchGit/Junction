@@ -46,6 +46,7 @@
         android:label="Junction"
         android:icon="@drawable/ic_junction"
         android:roundIcon="@drawable/ic_junction"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Junction"
         android:supportsRtl="true">
         <provider

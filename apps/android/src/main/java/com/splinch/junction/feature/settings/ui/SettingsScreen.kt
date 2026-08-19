@@ -92,6 +92,7 @@ fun SettingsScreen(
     val digestProfile by userPrefs.digestProfileFlow.collectAsState(initial = com.splinch.junction.feature.scheduler.DigestProfile.ALL)
     val realtimeEndpoint by userPrefs.realtimeEndpointFlow.collectAsState(initial = "")
     val realtimeClientSecretEndpoint by userPrefs.realtimeClientSecretEndpointFlow.collectAsState(initial = "")
+    val calculatorBackendUrl by userPrefs.calculatorBackendUrlFlow.collectAsState(initial = "")
     val gmailAccountEmail by userPrefs.gmailAccountEmailFlow.collectAsState(initial = "")
     val allowedWebDomains by userPrefs.allowedWebDomainsFlow.collectAsState(initial = emptySet())
     val notificationAck by userPrefs.notificationAccessAcknowledgedFlow.collectAsState(initial = false)
@@ -129,6 +130,7 @@ fun SettingsScreen(
         mutableStateOf(keyStorage.getApiKey(com.splinch.junction.feature.voice.local.AzureNeuralVoice.KEY_ID))
     }
     var realtimeClientSecretInput by remember { mutableStateOf(realtimeClientSecretEndpoint) }
+    var calculatorBackendUrlInput by remember { mutableStateOf(calculatorBackendUrl) }
     var gmailAccountEmailInput by remember { mutableStateOf(gmailAccountEmail) }
     var allowedWebDomainsInput by remember { mutableStateOf(allowedWebDomains.joinToString("\n")) }
     var understandChecked by remember { mutableStateOf(false) }
@@ -203,6 +205,7 @@ fun SettingsScreen(
     }
     LaunchedEffect(realtimeEndpoint) { realtimeEndpointInput = realtimeEndpoint }
     LaunchedEffect(realtimeClientSecretEndpoint) { realtimeClientSecretInput = realtimeClientSecretEndpoint }
+    LaunchedEffect(calculatorBackendUrl) { calculatorBackendUrlInput = calculatorBackendUrl }
     LaunchedEffect(gmailAccountEmail) { gmailAccountEmailInput = gmailAccountEmail }
     LaunchedEffect(allowedWebDomains) { allowedWebDomainsInput = allowedWebDomains.sorted().joinToString("\n") }
 
@@ -490,6 +493,27 @@ fun SettingsScreen(
                 scope.launch { userPrefs.setRealtimeClientSecretEndpoint(realtimeClientSecretInput.trim()) }
             }) {
                 Text("Save client secret endpoint")
+            }
+        }
+
+        item {
+            Text(text = "Build Calculator", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Address of the build-calculator daemon running on your PC (services/build-calculator). " +
+                    "This changes depending on whether the phone is USB-tethered to the PC or the PC has " +
+                    "joined the phone's hotspot -- update it here whenever that setup changes.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            JunctionTextField(
+                value = calculatorBackendUrlInput,
+                onValueChange = { calculatorBackendUrlInput = it },
+                label = "Build calculator backend URL",
+                placeholder = "http://192.168.49.1:4001"
+            )
+            Button(onClick = {
+                scope.launch { userPrefs.setCalculatorBackendUrl(calculatorBackendUrlInput.trim()) }
+            }) {
+                Text("Save backend URL")
             }
         }
 
