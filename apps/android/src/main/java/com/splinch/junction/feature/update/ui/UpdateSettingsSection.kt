@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
 private sealed interface CheckState {
     data object Idle : CheckState
     data object Checking : CheckState
-    data class UpToDate(val publishedVersionCode: Int) : CheckState
+    data class UpToDate(val publishedBuildNumber: Int) : CheckState
     data class Available(val update: UpdateInfo) : CheckState
     data class Failed(val message: String) : CheckState
 }
@@ -72,7 +72,7 @@ fun UpdateSettingsSection(modifier: Modifier = Modifier) {
             fontWeight = FontWeight.SemiBold
         )
         Text(
-            text = "Version ${BuildConfig.VERSION_NAME} · build ${BuildConfig.JUNCTION_VERSION_CODE}",
+            text = "Version ${BuildConfig.VERSION_NAME} · build ${BuildConfig.JUNCTION_BUILD_NUMBER}",
             style = MaterialTheme.typography.bodyMedium
         )
         Text(
@@ -100,7 +100,7 @@ fun UpdateSettingsSection(modifier: Modifier = Modifier) {
                         // old build convinced it is the current one.
                         state = when (val result = UpdateChecker().check(BuildConfig.JUNCTION_VERSION_CODE)) {
                             is UpdateCheck.Available -> CheckState.Available(result.update)
-                            is UpdateCheck.UpToDate -> CheckState.UpToDate(result.publishedVersionCode)
+                            is UpdateCheck.UpToDate -> CheckState.UpToDate(result.publishedBuildNumber)
                             is UpdateCheck.Failed -> CheckState.Failed(result.reason)
                         }
                     }
@@ -131,7 +131,7 @@ fun UpdateSettingsSection(modifier: Modifier = Modifier) {
                         }
                     }
                 ) {
-                    Text("Install build ${available.update.versionCode}")
+                    Text("Install build ${available.update.buildNumber}")
                 }
             }
         }
@@ -186,11 +186,11 @@ private fun StatusLine(state: CheckState, stage: UpdateStage?, needsPermission: 
         stage == UpdateStage.Installing -> "Ready — confirm the install when Android asks."
         needsPermission -> "Android needs your go-ahead before Junction can install its own updates."
         state is CheckState.Available ->
-            "Build ${state.update.versionCode} is available. Installing keeps your keys, " +
+            "Build ${state.update.buildNumber} is available. Installing keeps your keys, " +
                 "history and memory."
 
         state is CheckState.UpToDate ->
-            "Up to date — build ${state.publishedVersionCode} is the latest published."
+            "Up to date — build ${state.publishedBuildNumber} is the latest published."
 
         state is CheckState.Failed -> state.message
         else -> null

@@ -1,9 +1,16 @@
 const http = require("node:http");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const readline = require("node:readline/promises");
 
 const PORT = Number(process.env.PORT || 4001);
-const EBAY_APP_ID = process.env.EBAY_APP_ID || "";
-const EBAY_CERT_ID = process.env.EBAY_CERT_ID || "";
-const MARKETPLACE = process.env.EBAY_MARKETPLACE || "EBAY_GB";
+const SETTINGS_FILE = path.join(__dirname, "PC Build Calculator.settings.json");
+let saved = {};
+try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8")); } catch {}
+let EBAY_APP_ID = process.env.EBAY_APP_ID || saved.ebayAppId || "";
+let EBAY_CERT_ID = process.env.EBAY_CERT_ID || saved.ebayCertId || "";
+let MARKETPLACE = process.env.EBAY_MARKETPLACE || saved.ebayMarketplace || "EBAY_GB";
 let token = "";
 let tokenExpiresAt = 0;
 
@@ -124,8 +131,44 @@ server.on("error", error => {
   console.error(error.code === "EADDRINUSE" ? `Port ${PORT} is already in use. Close the other calculator window first.` : error);
   process.exit(1);
 });
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`PC Build Calculator is running on port ${PORT}.`);
-  console.log("Keep this window open. Press Ctrl+C or close the window to stop it completely.");
-});
+async function configure() {
+  const prompt = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log("\nLive pricing uses an eBay production keyset.");
+  console.log("1. Visit https://developer.ebay.com/my/keys and sign in.");
+  console.log("2. Create an application if needed, then open its Production keyset.");
+  console.log("3. Copy the App ID (Client ID) and Cert ID (Client Secret) below.");
+  console.log("   Your secret is saved only in this Desktop folder and is never sent to Junction.\n");
+  const appId = (await prompt.question("Paste eBay App ID / Client ID: ")).trim();
+  const certId = (await prompt.question("Paste eBay Cert ID / Client Secret: ")).trim();
+  if (!appId || !certId) {
+    console.log("No settings saved. The calculator still works without live prices.");
+  } else {
+    EBAY_APP_ID = appId;
+    EBAY_CERT_ID = certId;
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ebayAppId: appId, ebayCertId: certId, ebayMarketplace: MARKETPLACE }, null, 2));
+    console.log("Settings saved locally. Live eBay pricing is enabled.");
+  }
+  prompt.close();
+}
+
+async function main() {
+  if (!EBAY_APP_ID || !EBAY_CERT_ID || process.argv.includes("--configure")) {
+    const prompt = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = (await prompt.question("Live eBay prices are not configured. Set them up now? (Y/n): ")).trim().toLowerCase();
+    prompt.close();
+    if (answer !== "n") await configure();
+  } else {
+    console.log("eBay production keys loaded from local settings.");
+  }
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`\nPC Build Calculator is running on port ${PORT}.`);
+    const addresses = Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === "IPv4" && !x.internal);
+    console.log("In Junction > Settings > Build Calculator, use one of these addresses:");
+    for (const address of addresses) console.log(`  http://${address.address}:${PORT}`);
+    console.log("Keep this window open. Press Ctrl+C or close the window to stop it completely.");
+  });
+}
+
 process.on("SIGINT", () => server.close(() => process.exit(0)));
+main().catch(error => { console.error(error); process.exit(1); });

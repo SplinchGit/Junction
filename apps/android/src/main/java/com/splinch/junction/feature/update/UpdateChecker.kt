@@ -11,7 +11,10 @@ sealed interface UpdateCheck {
     data class Available(val update: UpdateInfo) : UpdateCheck
 
     /** Nothing newer. [publishedVersionCode] is what is on the server right now. */
-    data class UpToDate(val publishedVersionCode: Int) : UpdateCheck
+    data class UpToDate(
+        val publishedVersionCode: Int,
+        val publishedBuildNumber: Int = publishedVersionCode
+    ) : UpdateCheck
 
     /** The manifest could not be read, which is not the same as being up to date. */
     data class Failed(val reason: String) : UpdateCheck
@@ -20,6 +23,7 @@ sealed interface UpdateCheck {
 data class UpdateInfo(
     val version: String,
     val versionCode: Int,
+    val buildNumber: Int = versionCode,
     val url: String,
     val apkUrl: String? = null,
     val sha256Url: String? = null
@@ -67,14 +71,18 @@ class UpdateChecker(
                     ?: return@use UpdateCheck.Failed("The build manifest was empty.")
                 val json = JSONObject(body)
                 val versionCode = json.optInt("versionCode", 0)
+                val buildNumber = json.optInt("buildNumber", versionCode)
                 if (versionCode <= 0) {
                     return@use UpdateCheck.Failed("The build manifest carried no version code.")
                 }
-                if (versionCode <= currentVersionCode) return@use UpdateCheck.UpToDate(versionCode)
+                if (versionCode <= currentVersionCode) {
+                    return@use UpdateCheck.UpToDate(versionCode, buildNumber)
+                }
                 UpdateCheck.Available(
                     UpdateInfo(
                         version = json.optString("versionName").trim().ifBlank { "build $versionCode" },
                         versionCode = versionCode,
+                        buildNumber = buildNumber,
                         url = json.optString("pageUrl").trim().ifBlank { DOWNLOAD_PAGE_URL },
                         apkUrl = json.optString("apkUrl").trim().takeIf { it.startsWith("https://") },
                         sha256Url = json.optString("sha256Url").trim().takeIf { it.startsWith("https://") }

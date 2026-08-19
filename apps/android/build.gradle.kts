@@ -109,7 +109,7 @@ configure<ApplicationExtension> {
         // Keep this above every APK published by older/recreated workflows. GitHub's
         // per-workflow run number can restart below versions already installed on
         // devices (for example, run 77 could not update an installed build 82).
-        val baselineVersionCode = 100
+        val baselineVersionCode = 101
         val versionCodeValue =
             (
                 findProperty("JUNCTION_VERSION_CODE")?.toString()
@@ -126,6 +126,7 @@ configure<ApplicationExtension> {
             "JUNCTION_VERSION_CODE",
             versionCodeValue.toString()
         )
+        buildConfigField("int", "JUNCTION_BUILD_NUMBER", "84")
 
         val chatModel =
             findProperty("JUNCTION_CHAT_MODEL")?.toString()

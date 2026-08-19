@@ -24,6 +24,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
@@ -118,7 +119,7 @@ fun CalculatorScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
 
         SectionCard(title = "Build tier") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -128,17 +129,19 @@ fun CalculatorScreen(
                         tierId = t.id
                         listingsForKey = null
                     }
-                    if (selected) {
-                        Button(onClick = onClick, modifier = Modifier.weight(1f)) {
-                            Text(t.label, style = MaterialTheme.typography.labelSmall)
-                        }
-                    } else {
-                        OutlinedButton(onClick = onClick, modifier = Modifier.weight(1f)) {
-                            Text(t.label, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
+                    FilterChip(
+                        selected = selected,
+                        onClick = onClick,
+                        label = { Text("Tier ${t.id}") },
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
+            Text(
+                text = tier.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         Spacer(Modifier.height(12.dp))

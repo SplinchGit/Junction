@@ -183,7 +183,8 @@ jobs:
           # Must mirror apps/android/build.gradle.kts: recreated workflow counters can
           # be lower than APKs already installed on devices.
           VERSION_CODE="${{ github.run_number }}"
-          if [ "$VERSION_CODE" -lt 100 ]; then VERSION_CODE=100; fi
+          if [ "$VERSION_CODE" -lt 101 ]; then VERSION_CODE=101; fi
+          BUILD_NUMBER=84
           REPO="${GITHUB_REPOSITORY}"
           BASE_URL="https://splinchgit.github.io/Junction"
 
@@ -193,8 +194,9 @@ jobs:
           # signing key. versionCode is the comparison; versionName is display only.
           cat > site/latest.json <<JSON
           {
-            "version": "${VERSION_NAME} (build ${VERSION_CODE})",
+            "version": "${VERSION_NAME} (build ${BUILD_NUMBER})",
             "versionCode": ${VERSION_CODE},
+            "buildNumber": ${BUILD_NUMBER},
             "versionName": "${VERSION_NAME}",
             "commit": "${FULL_SHA}",
             "shortCommit": "${SHORT_SHA}",
