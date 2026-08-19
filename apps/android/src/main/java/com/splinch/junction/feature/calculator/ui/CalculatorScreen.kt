@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,7 @@ import com.splinch.junction.feature.calculator.model.TIERS
 import com.splinch.junction.feature.calculator.model.Tier
 import com.splinch.junction.feature.calculator.model.rankColor
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.Locale
 
 private fun fmt(value: Double): String = "£" + String.format(Locale.UK, "%.2f", value)
@@ -98,6 +100,21 @@ fun CalculatorScreen(
     var suggestion by remember(tierId) { mutableStateOf<SuggestedBuild?>(null) }
     var suggestLoading by remember { mutableStateOf(false) }
     var suggestError by remember { mutableStateOf<String?>(null) }
+    var backendConnected by remember { mutableStateOf<Boolean?>(null) }
+    var backendEbayConfigured by remember { mutableStateOf(false) }
+
+    LaunchedEffect(client) {
+        while (true) {
+            client.checkHealth().fold(
+                onSuccess = { ebayReady ->
+                    backendConnected = true
+                    backendEbayConfigured = ebayReady
+                },
+                onFailure = { backendConnected = false }
+            )
+            delay(10_000)
+        }
+    }
 
     val totalCost = ITEM_KEYS.sumOf { key -> costs[key]?.toDoubleOrNull() ?: 0.0 }
     val sellPrice = sellPriceInput.toDoubleOrNull() ?: 0.0
@@ -118,6 +135,19 @@ fun CalculatorScreen(
             text = "Pick a tier, choose parts, price them live against your PC's eBay daemon.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = when (backendConnected) {
+                true -> if (backendEbayConfigured) "● PC connected · eBay ready" else "● PC connected · eBay keys needed"
+                false -> "● PC not connected"
+                null -> "● Checking PC connection…"
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = when (backendConnected) {
+                true -> if (backendEbayConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                false -> MaterialTheme.colorScheme.error
+                null -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
         )
         Spacer(Modifier.height(10.dp))
 
@@ -243,7 +273,8 @@ fun CalculatorScreen(
 
         SectionCard(title = "Suggested build (daemon)") {
             Text(
-                "Prices every candidate part for this tier against your PC's eBay daemon and picks the " +
+                "Works from the tier alone—even with the worksheet blank. It prices candidate parts " +
+                    "against your PC's eBay daemon and picks the " +
                     "cheapest sensible combination, then estimates a sale price from comparable current listings.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

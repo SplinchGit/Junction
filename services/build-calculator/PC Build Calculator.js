@@ -13,6 +13,7 @@ let EBAY_CERT_ID = process.env.EBAY_CERT_ID || saved.ebayCertId || "";
 let MARKETPLACE = process.env.EBAY_MARKETPLACE || saved.ebayMarketplace || "EBAY_GB";
 let token = "";
 let tokenExpiresAt = 0;
+const seenClients = new Set();
 
 function reply(response, status, body) {
   response.writeHead(status, {
@@ -71,6 +72,9 @@ async function search(query, limit = 20) {
 }
 
 async function suggest(body) {
+  // Authenticate once up front. Candidate searches may legitimately return no
+  // listings, but bad credentials must not be swallowed as dozens of empty picks.
+  await accessToken();
   const pairs = await Promise.all(Object.entries(body.categories || {}).map(async ([name, spec]) => {
     const candidates = (await Promise.all((spec.options || []).map(async option => {
       try {
@@ -87,6 +91,9 @@ async function suggest(body) {
   const picks = Object.fromEntries(pairs.filter(([, pick]) => pick).map(([name, pick]) => [name, {
     option: pick.option, price: pick.price, itemWebUrl: pick.itemWebUrl, title: pick.title,
   }]));
+  if (!Object.keys(picks).length) {
+    throw new Error("eBay returned no priced parts for this tier. Check the Production keyset and try again.");
+  }
   const totalCost = Object.values(picks).reduce((sum, pick) => sum + pick.price, 0);
   const query = ["CPU", "GPU", "RAM", "SSD"].map(key => picks[key]?.option).filter(Boolean).join(" ") || body.comparableQuery || "";
   let comparable = [];
@@ -108,6 +115,13 @@ async function suggest(body) {
 
 const server = http.createServer(async (request, response) => {
   try {
+    const client = request.socket.remoteAddress || "unknown device";
+    if (!seenClients.has(client)) {
+      seenClients.add(client);
+      console.log(`[CONNECTED] Junction reached this PC from ${client}`);
+    } else if (request.url !== "/health") {
+      console.log(`[JUNCTION] ${request.method} ${request.url}`);
+    }
     if (request.method === "OPTIONS") return reply(response, 204, {});
     if (request.method === "GET" && request.url === "/health") {
       return reply(response, 200, { ok: true, ebayConfigured: Boolean(EBAY_APP_ID && EBAY_CERT_ID) });
@@ -138,23 +152,53 @@ async function configure() {
   console.log("2. Create an application if needed, then open its Production keyset.");
   console.log("3. Copy the App ID (Client ID) and Cert ID (Client Secret) below.");
   console.log("   Your secret is saved only in this Desktop folder and is never sent to Junction.\n");
-  const appId = (await prompt.question("Paste eBay App ID / Client ID: ")).trim();
-  const certId = (await prompt.question("Paste eBay Cert ID / Client Secret: ")).trim();
-  if (!appId || !certId) {
-    console.log("No settings saved. The calculator still works without live prices.");
-  } else {
+  while (true) {
+    const appId = (await prompt.question("Paste eBay App ID / Client ID (blank to skip): ")).trim();
+    if (!appId) {
+      console.log("No settings saved. The calculator still works without live prices.");
+      break;
+    }
+    const certId = (await prompt.question("Paste matching eBay Cert ID / Client Secret: ")).trim();
+    if (!certId) continue;
     EBAY_APP_ID = appId;
     EBAY_CERT_ID = certId;
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ebayAppId: appId, ebayCertId: certId, ebayMarketplace: MARKETPLACE }, null, 2));
-    console.log("Settings saved locally. Live eBay pricing is enabled.");
+    token = "";
+    tokenExpiresAt = 0;
+    process.stdout.write("Testing the key pair with eBay... ");
+    try {
+      await accessToken();
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ ebayAppId: appId, ebayCertId: certId, ebayMarketplace: MARKETPLACE }, null, 2));
+      console.log("success.");
+      console.log("Settings saved locally. Live eBay pricing is enabled.");
+      break;
+    } catch (error) {
+      console.log("failed.");
+      console.log(error.message);
+      console.log("Use both values from the same PRODUCTION keyset, not the Sandbox keyset.");
+      const retry = (await prompt.question("Try entering them again? (Y/n): ")).trim().toLowerCase();
+      if (retry === "n") break;
+    }
   }
   prompt.close();
 }
 
 async function main() {
-  if (!EBAY_APP_ID || !EBAY_CERT_ID || process.argv.includes("--configure")) {
+  let needsConfiguration = !EBAY_APP_ID || !EBAY_CERT_ID || process.argv.includes("--configure");
+  if (!needsConfiguration) {
+    process.stdout.write("Checking saved eBay keys... ");
+    try {
+      await accessToken();
+      console.log("valid.");
+    } catch (error) {
+      console.log("invalid.");
+      console.log(error.message);
+      console.log("The saved pair is usually from Sandbox, copied incorrectly, or taken from different keysets.");
+      needsConfiguration = true;
+    }
+  }
+  if (needsConfiguration) {
     const prompt = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const answer = (await prompt.question("Live eBay prices are not configured. Set them up now? (Y/n): ")).trim().toLowerCase();
+    const answer = (await prompt.question("Set up or replace the eBay Production keys now? (Y/n): ")).trim().toLowerCase();
     prompt.close();
     if (answer !== "n") await configure();
   } else {
