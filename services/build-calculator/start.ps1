@@ -15,6 +15,18 @@ if (-not (Test-Path -LiteralPath (Join-Path $serviceDirectory "node_modules"))) 
     npm install
 }
 
+try {
+    $existing = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2
+    if ($existing.ok) {
+        Write-Host "PC Build Calculator is already running on port $Port." -ForegroundColor Green
+        Write-Host "You can keep using the existing server."
+        Read-Host "Press Enter to close this window"
+        exit 0
+    }
+} catch {
+    # No calculator server answered, so start one below.
+}
+
 $lanAddresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Where-Object {
         $_.IPAddress -ne "127.0.0.1" -and

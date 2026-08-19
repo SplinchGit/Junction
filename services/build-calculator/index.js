@@ -51,9 +51,19 @@ app.post("/suggest/build", async (req, res) => {
   }
 });
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`Junction build-calculator daemon listening on ${config.port}`);
   if (!isEbayConfigured()) {
     console.warn("EBAY_APP_ID/EBAY_CERT_ID not set — pricing endpoints will return errors until configured.");
   }
+});
+
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(`Port ${config.port} is already in use. The PC Build Calculator may already be running.`);
+    console.error(`Open http://127.0.0.1:${config.port}/health to check it, or close the other server first.`);
+    process.exitCode = 1;
+    return;
+  }
+  throw error;
 });
