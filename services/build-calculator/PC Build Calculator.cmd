@@ -1,4 +1,4 @@
 @echo off
-title PC Build Calculator
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1"
+title PC Build Calculator - Ctrl+C to stop
+node "%~dp0PC Build Calculator.js"
 if errorlevel 1 pause
