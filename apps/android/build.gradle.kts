@@ -106,7 +106,10 @@ configure<ApplicationExtension> {
 
         // CI passes its run number so every published build outranks the previous
         // one and installs over it. Local builds keep the checked-in baseline.
-        val baselineVersionCode = 67
+        // Keep this above every APK published by older/recreated workflows. GitHub's
+        // per-workflow run number can restart below versions already installed on
+        // devices (for example, run 77 could not update an installed build 82).
+        val baselineVersionCode = 100
         val versionCodeValue =
             (
                 findProperty("JUNCTION_VERSION_CODE")?.toString()
