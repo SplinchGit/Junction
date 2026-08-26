@@ -77,17 +77,19 @@ service cloud.firestore {
           && request.resource.data.createdByDeviceId.size() <= 160
           && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == null || request.resource.data.deletedAt is int);
         allow update: if ownsUser(userId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title','updatedAt','deletedAt'])
-          && request.resource.data.id == resource.data.id
-          && request.resource.data.schemaVersion == resource.data.schemaVersion
-          && request.resource.data.createdByDeviceId == resource.data.createdByDeviceId
-          && request.resource.data.title is string
-          && request.resource.data.title.size() <= 80
-          && request.resource.data.updatedAt is int
           && (
-            !('deletedAt' in resource.data)
-            || resource.data.deletedAt == null
-            || request.resource.data.deletedAt == resource.data.deletedAt
+            request.resource.data == resource.data
+            || (
+              (!('deletedAt' in resource.data) || resource.data.deletedAt == null)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title','updatedAt','deletedAt'])
+              && request.resource.data.id == resource.data.id
+              && request.resource.data.schemaVersion == resource.data.schemaVersion
+              && request.resource.data.createdByDeviceId == resource.data.createdByDeviceId
+              && request.resource.data.title is string
+              && request.resource.data.title.size() <= 80
+              && request.resource.data.updatedAt is int
+              && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == null || request.resource.data.deletedAt is int)
+            )
           );
         allow delete: if false;
 
@@ -101,7 +103,10 @@ service cloud.firestore {
             && request.resource.data.content.size() <= 20000
             && validProvenance(request.resource.data.provenance)
             && request.resource.data.sourceRef is string
+            && request.resource.data.sourceRef.size() <= 500
             && request.resource.data.deviceId is string
+            && request.resource.data.deviceId.size() <= 160
+            && request.resource.data.createdAt is int
             && request.resource.data.schemaVersion == 1;
           allow update: if ownsUser(userId) && request.resource.data == resource.data;
           allow delete: if false;
@@ -124,17 +129,20 @@ service cloud.firestore {
           && request.resource.data.category.size() <= 80
           && request.resource.data.createdAt is int
           && request.resource.data.deviceId is string
+          && request.resource.data.deviceId.size() <= 160
           && request.resource.data.schemaVersion == 1
           && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == null || request.resource.data.deletedAt is int);
         allow update: if ownsUser(userId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt'])
-          && request.resource.data.id == resource.data.id
-          && request.resource.data.content == resource.data.content
-          && request.resource.data.provenance == resource.data.provenance
           && (
-            !('deletedAt' in resource.data)
-            || resource.data.deletedAt == null
-            || request.resource.data.deletedAt == resource.data.deletedAt
+            request.resource.data == resource.data
+            || (
+              (!('deletedAt' in resource.data) || resource.data.deletedAt == null)
+              && request.resource.data.deletedAt is int
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt'])
+              && request.resource.data.id == resource.data.id
+              && request.resource.data.content == resource.data.content
+              && request.resource.data.provenance == resource.data.provenance
+            )
           );
         allow delete: if false;
       }
@@ -151,9 +159,14 @@ service cloud.firestore {
           ])
           && request.resource.data.deviceId == deviceId
           && request.resource.data.platform in ['windows', 'android']
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 120
+          && request.resource.data.appVersion is string
+          && request.resource.data.appVersion.size() <= 40
           && request.resource.data.syncEnabled is bool
           && request.resource.data.createdAt is timestamp
-          && request.resource.data.lastSeenAt is timestamp;
+          && request.resource.data.lastSeenAt is timestamp
+          && (!('disabledAt' in request.resource.data) || request.resource.data.disabledAt is timestamp);
       }
 
       // Separate from /conversations/{id}/messages on purpose: those are

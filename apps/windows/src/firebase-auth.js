@@ -41,9 +41,10 @@ function createCallbackServer(expectedState) {
   });
 }
 
-async function refreshFirebaseSession(session, firebaseApiKey) {
+async function refreshFirebaseSession(session, firebaseApiKey, fetchImpl = fetch) {
   if (!session?.refreshToken) throw new Error("Sign in to Junction again to refresh this device session.");
-  const response = await fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(firebaseApiKey)}`, {
+  if (!firebaseApiKey) throw new Error("This Junction build cannot refresh its Firebase session.");
+  const response = await fetchImpl(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(firebaseApiKey)}`, {
     method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: session.refreshToken })
   });

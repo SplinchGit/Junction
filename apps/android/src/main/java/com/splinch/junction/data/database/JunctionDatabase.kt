@@ -34,7 +34,7 @@ import com.splinch.junction.feature.feed.model.FeedItemEntity
         StepEntity::class,
         MemoryFactEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class)
@@ -56,7 +56,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -217,6 +217,13 @@ abstract class JunctionDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Owner-editable label for the chat shelf (multiple concurrent chats/projects).
                 db.execSQL("ALTER TABLE `chat_sessions` ADD COLUMN `title` TEXT")
+            }
+        }
+
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `chat_sessions` ADD COLUMN `sharedUpdatedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE `chat_sessions` SET `sharedUpdatedAt` = `startedAt`")
             }
         }
     }

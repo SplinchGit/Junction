@@ -26,6 +26,18 @@ class AuthManager(private val context: Context) {
     private val userPrefs by lazy { UserPrefsRepository(context.applicationContext) }
 
     private var authListener: com.google.firebase.auth.FirebaseAuth.AuthStateListener? = null
+    private val syncOwnerPrefs = context.applicationContext.getSharedPreferences("junction_sync_owner", Context.MODE_PRIVATE)
+
+    /** Junction is a one-owner device. Refuse to cross-load local state into another account. */
+    @Synchronized
+    fun claimSyncOwner(uid: String): Boolean {
+        val bound = syncOwnerPrefs.getString("owner_uid", null)
+        if (bound != null) return bound == uid
+        syncOwnerPrefs.edit().putString("owner_uid", uid).apply()
+        return true
+    }
+
+    fun boundSyncOwner(): String? = syncOwnerPrefs.getString("owner_uid", null)
 
     // Deliberately no eager init here (Phase 0.4): Firebase must not touch the
     // network or register with Google until the owner opts in via the

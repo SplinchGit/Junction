@@ -10,7 +10,8 @@ data class ChatSessionEntity(
     val speechModeEnabled: Boolean = false,
     val agentToolsEnabled: Boolean = true,
     /** Owner-editable label shown in the chat shelf; null falls back to a generated one. */
-    val title: String? = null
+    val title: String? = null,
+    val sharedUpdatedAt: Long = startedAt
 )
 
 @Entity(tableName = "chat_messages")

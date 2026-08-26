@@ -19,11 +19,21 @@ class SyncingConversationStore(
 
     override suspend fun saveSession(session: ChatSession) {
         delegate.saveSession(session)
+        runCatching { syncManager.onLocalSessionSaved(
+            com.splinch.junction.data.database.chat.ChatSessionEntity(
+                id = session.sessionId,
+                startedAt = session.startedAt.toEpochMilli(),
+                speechModeEnabled = session.speechModeEnabled,
+                agentToolsEnabled = session.agentToolsEnabled,
+                title = session.title,
+                sharedUpdatedAt = session.sharedUpdatedAt
+            )
+        ) }
     }
 
     override suspend fun appendMessage(sessionId: String, message: ChatMessage) {
         delegate.appendMessage(sessionId, message)
-        syncManager.onLocalMessageAppended(sessionId, message.toEntity(sessionId))
+        runCatching { syncManager.onLocalMessageAppended(sessionId, message.toEntity(sessionId)) }
     }
 
     override suspend fun clear() {
@@ -47,12 +57,12 @@ class SyncingConversationStore(
 
     override suspend fun renameSession(sessionId: String, title: String) {
         delegate.renameSession(sessionId, title)
-        syncManager.renameConversation(sessionId, title)
+        runCatching { syncManager.renameConversation(sessionId, title) }
     }
 
     override suspend fun deleteSession(sessionId: String) {
-        delegate.deleteSession(sessionId)
         syncManager.tombstoneConversation(sessionId)
+        delegate.deleteSession(sessionId)
     }
 
     private fun ChatMessage.toEntity(sessionId: String): ChatMessageEntity {

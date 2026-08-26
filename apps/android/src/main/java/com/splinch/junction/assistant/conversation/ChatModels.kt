@@ -49,7 +49,9 @@ data class ChatSession(
     val messages: List<ChatMessage> = emptyList(),
     val speechModeEnabled: Boolean = false,
     val agentToolsEnabled: Boolean = true,
-    val title: String? = null
+    val title: String? = null,
+    /** Last owner-visible metadata change, used only to converge the shared shelf. */
+    val sharedUpdatedAt: Long = startedAt.toEpochMilli()
 )
 
 /** Lightweight row for the chat shelf -- no message list, so listing many sessions stays cheap. */

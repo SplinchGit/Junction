@@ -38,7 +38,7 @@ class AppContainer(context: Context) {
     val database: JunctionDatabase = JunctionDatabase.getInstance(appContext)
     val prefs = UserPrefsRepository(appContext)
     val authManager = AuthManager(appContext)
-    val chatSyncManager = ChatSyncManager(database.chatDao(), authManager)
+    val chatSyncManager = ChatSyncManager(appContext, database.chatDao(), authManager)
     val feedSyncManager = FeedSyncManager(database.feedDao(), authManager)
     val prefsSyncManager = PrefsSyncManager(prefs, authManager)
     val auditSyncManager = AuditSyncManager(database.actionLogDao(), authManager)

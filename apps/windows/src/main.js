@@ -25,12 +25,28 @@ async function createWindow() {
   companion = await companionModule().startCompanion({ port: 0, token: crypto.randomBytes(32).toString("base64url"), auditPath });
   const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   await window.loadFile(path.join(__dirname, "../renderer/index.html"));
+  reconcilePendingDeregistration().catch(()=>{});
   scheduleSharedSync();
+}
+
+function bindOwner(session){
+  if(identity.ownerUid&&identity.ownerUid!==session.uid)throw new Error("This PC is already bound to another Junction owner. Reset local Junction data before linking a different account.");
+  if(!identity.ownerUid)identity=identityStore.claimOwner(session.uid)
+}
+async function freshSession(){
+  let session=identityStore.getSession();if(!session)throw new Error("Sign in to Junction first.");
+  if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}
+  return session;
+}
+async function reconcilePendingDeregistration(){
+  if(!identity?.deregisterPending)return;const session=await freshSession();bindOwner(session);
+  await registerDevice({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,device:{...identity,appVersion:app.getVersion()},syncEnabled:false});
+  identity={...identity,deregisterPending:false};identityStore.save(identity);
 }
 
 async function syncSharedState(){
   if(sharedSyncPromise)return sharedSyncPromise;
-  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");let session=identityStore.getSession();if(!session)throw new Error("Sign in to Junction first.");if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
+  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
 }
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
@@ -40,18 +56,17 @@ ipcMain.handle("junction:sign-in", async () => {
   identityStore.setSession(session); return { uid: session.uid, email: session.email, displayName: session.displayName };
 });
 ipcMain.handle("junction:set-sync", async (_event, enabled) => {
-  let session = identityStore.getSession();
-  if (!session) throw new Error("Sign in to Junction first.");
-  if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}
-  await registerDevice({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, session, device: { ...identity, appVersion: app.getVersion() }, syncEnabled: Boolean(enabled) });
-  identity = { ...identity, syncEnabled: Boolean(enabled) }; identityStore.save(identity);if(enabled)scheduleSharedSync();else clearTimeout(sharedSyncTimer); return identity;
+  if(!enabled){clearTimeout(sharedSyncTimer);identity={...identity,syncEnabled:false,deregisterPending:true};identityStore.save(identity);try{await reconcilePendingDeregistration()}catch{}return identity}
+  const session=await freshSession();bindOwner(session);
+  await registerDevice({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, session, device: { ...identity, appVersion: app.getVersion() }, syncEnabled: true });
+  identity = { ...identity, syncEnabled: true, deregisterPending:false }; identityStore.save(identity);scheduleSharedSync();return identity;
 });
 ipcMain.handle("junction:sync-shared", async () => {
   return syncSharedState();
 });
 ipcMain.handle("junction:shared-status",()=>lastSharedSync);
 ipcMain.handle("junction:shared-feed",()=>sharedFeed);
-ipcMain.handle("junction:sign-out", async () => { clearTimeout(sharedSyncTimer);const session=identityStore.getSession();if(session&&identity.syncEnabled){await registerDevice({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,device:{...identity,appVersion:app.getVersion()},syncEnabled:false})} identityStore.clearSession(); identity = { ...identity, syncEnabled: false }; identityStore.save(identity); });
+ipcMain.handle("junction:sign-out", async () => { clearTimeout(sharedSyncTimer);const wasLinked=identity.syncEnabled;identity={...identity,syncEnabled:false,deregisterPending:wasLinked||identity.deregisterPending};identityStore.save(identity);if(identity.deregisterPending){try{await reconcilePendingDeregistration()}catch{}}identityStore.clearSession(); });
 ipcMain.handle("junction:inspect", async () => {
   const headers = { authorization: `Bearer ${companion.token}`, "content-type": "application/json" };
   const proposed = await fetch(`http://${companion.host}:${companion.port}/v1/proposals`, { method: "POST", headers, body: JSON.stringify({ capability: "inspect_windows_context", triggerProvenance: "OWNER" }) });

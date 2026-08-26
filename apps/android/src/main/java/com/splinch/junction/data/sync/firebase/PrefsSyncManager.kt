@@ -24,8 +24,8 @@ class PrefsSyncManager(
         if (authJob != null) return
         authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
-                currentUserId = user?.uid
-                if (user == null) {
+                currentUserId = user?.uid?.takeIf { authManager.claimSyncOwner(it) }
+                if (currentUserId == null) {
                     stopListening()
                 } else {
                     attachListener()

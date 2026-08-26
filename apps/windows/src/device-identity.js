@@ -17,6 +17,11 @@ class DeviceIdentityStore {
     return stored;
   }
   save(value) { fs.mkdirSync(this.directory, { recursive: true }); fs.writeFileSync(this.file, JSON.stringify(value, null, 2), { mode: 0o600 }); }
+  claimOwner(uid) {
+    const value=this.load();
+    if(value.ownerUid&&value.ownerUid!==uid)throw new Error("This PC is already bound to another Junction owner.");
+    const claimed={...value,ownerUid:uid};this.save(claimed);return claimed;
+  }
   setSession(session) {
     if (!this.safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is unavailable.");
     const encrypted = this.safeStorage.encryptString(JSON.stringify(session)).toString("base64");

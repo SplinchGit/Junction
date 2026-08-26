@@ -17,11 +17,17 @@ interface ChatDao {
     @Query("SELECT * FROM chat_sessions ORDER BY startedAt DESC")
     fun sessionsStream(): Flow<List<ChatSessionEntity>>
 
+    @Query("SELECT * FROM chat_sessions ORDER BY startedAt DESC")
+    suspend fun getAllSessions(): List<ChatSessionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSession(session: ChatSessionEntity)
 
-    @Query("UPDATE chat_sessions SET title = :title WHERE id = :id")
-    suspend fun updateSessionTitle(id: String, title: String)
+    @Query("UPDATE chat_sessions SET title = :title, sharedUpdatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateSessionTitle(id: String, title: String, updatedAt: Long)
+
+    @Query("UPDATE chat_sessions SET sharedUpdatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateSharedTimestamp(id: String, updatedAt: Long)
 
     @Query("DELETE FROM chat_sessions WHERE id = :id")
     suspend fun deleteSessionById(id: String)

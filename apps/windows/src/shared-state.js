@@ -18,11 +18,11 @@ class SharedStateClient {
     const memories=await this.list("shared_memory"); for(const memory of memories)store.mergeSharedMemory(memory);
     const queuedBefore=store.pendingSharedCount(),snapshot=store.sharedSnapshot();
     for(const conversation of snapshot.conversations) {
-      await this.put(`shared_conversations/${conversation.id}`,{id:conversation.id,title:conversation.title,createdAt:conversation.createdAt,updatedAt:conversation.updatedAt,createdByDeviceId:"owner",schemaVersion:1});
+      await this.put(`shared_conversations/${conversation.id}`,{id:conversation.id,title:conversation.title,createdAt:conversation.createdAt,updatedAt:conversation.updatedAt,createdByDeviceId:conversation.createdByDeviceId||this.deviceId,schemaVersion:1});
       store.markSharedPublished("conversations",conversation.id);
       for(const message of conversation.messages){await this.put(`shared_conversations/${conversation.id}/messages/${message.id}`,messageContract(message,this.deviceId));store.markSharedPublished("messages",`${conversation.id}/${message.id}`)}
     }
-    for(const item of snapshot.conversationTombstones){await this.put(`shared_conversations/${item.id}`,{id:item.id,title:item.title||"Deleted conversation",createdAt:item.createdAt||item.deletedAt,updatedAt:item.updatedAt||item.deletedAt,createdByDeviceId:"owner",schemaVersion:1,deletedAt:item.deletedAt});store.markSharedPublished("conversationTombstones",item.id)}
+    for(const item of snapshot.conversationTombstones){await this.put(`shared_conversations/${item.id}`,{id:item.id,title:item.title||"Deleted conversation",createdAt:item.createdAt||item.deletedAt,updatedAt:item.updatedAt||item.deletedAt,createdByDeviceId:item.createdByDeviceId||this.deviceId,schemaVersion:1,deletedAt:item.deletedAt});store.markSharedPublished("conversationTombstones",item.id)}
     for(const memory of snapshot.memories){await this.put(`shared_memory/${memory.id}`,memoryContract(memory,this.deviceId));store.markSharedPublished("memories",memory.id)}
     for(const memory of snapshot.memoryTombstones){await this.put(`shared_memory/${memory.id}`,memoryContract(memory,this.deviceId));store.markSharedPublished("memoryTombstones",memory.id)}
     const feed=await this.list("feed_items"); return {conversations:conversations.length,memories:memories.length,uploaded:queuedBefore-store.pendingSharedCount(),pending:store.pendingSharedCount(),feed};

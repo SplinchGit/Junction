@@ -33,7 +33,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             messages = messages,
             speechModeEnabled = session.speechModeEnabled,
             agentToolsEnabled = session.agentToolsEnabled,
-            title = session.title
+            title = session.title,
+            sharedUpdatedAt = session.sharedUpdatedAt
         )
     }
 
@@ -51,7 +52,7 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     }
 
     override suspend fun renameSession(sessionId: String, title: String) {
-        chatDao.updateSessionTitle(sessionId, title)
+        chatDao.updateSessionTitle(sessionId, title, System.currentTimeMillis())
     }
 
     override suspend fun deleteSession(sessionId: String) {
@@ -60,13 +61,16 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     }
 
     override suspend fun saveSession(session: ChatSession) {
+        val existing = chatDao.getSessionById(session.sessionId)
+        val preserveNewerSharedMetadata = existing != null && existing.sharedUpdatedAt > session.sharedUpdatedAt
         chatDao.upsertSession(
             ChatSessionEntity(
                 id = session.sessionId,
                 startedAt = session.startedAt.toEpochMilli(),
                 speechModeEnabled = session.speechModeEnabled,
                 agentToolsEnabled = session.agentToolsEnabled,
-                title = session.title
+                title = if (preserveNewerSharedMetadata) existing?.title else session.title,
+                sharedUpdatedAt = if (preserveNewerSharedMetadata) existing!!.sharedUpdatedAt else session.sharedUpdatedAt
             )
         )
     }

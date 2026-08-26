@@ -1,219 +1,236 @@
 package com.splinch.junction.data.sync.firebase
 
+import android.content.Context
+import android.provider.Settings
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
-import com.splinch.junction.assistant.conversation.senderFromString
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import org.json.JSONArray
+import org.json.JSONObject
 
-class ChatSyncManager(
-    private val chatDao: ChatDao,
-    private val authManager: AuthManager
-) {
+/** Account-scoped, context-only conversation convergence. Imported turns never trigger a send or tool. */
+class ChatSyncManager(context: Context, private val chatDao: ChatDao, private val authManager: AuthManager) {
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val deviceId = "android-" + Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
+    private val outbox = appContext.getSharedPreferences("junction_chat_sync_outbox", Context.MODE_PRIVATE)
     private var currentUserId: String? = null
     private var activeConversationId: String? = null
-    private var messageListener: ListenerRegistration? = null
-    private var conversationListener: ListenerRegistration? = null
     private var authJob: Job? = null
+    private var conversationListener: ListenerRegistration? = null
+    private val messageListeners = mutableMapOf<String, ListenerRegistration>()
 
     fun start() {
         if (authJob != null) return
         authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
-                currentUserId = user?.uid
-                if (user == null) {
-                    stopAllListeners()
-                } else {
-                    attachConversationShelf(user.uid)
-                    attachListenerIfReady()
-                }
+                stopUserWork()
+                val uid = user?.uid?.takeIf { authManager.claimSyncOwner(it) } ?: return@collectLatest
+                currentUserId = uid
+                flushTombstones(uid)
+                backfillLocal(uid)
+                attachConversationShelf(uid)
             }
         }
     }
 
-    fun stop() {
-        authJob?.cancel()
-        authJob = null
-        currentUserId = null
-        stopAllListeners()
-    }
+    fun stop() { authJob?.cancel(); authJob = null; stopUserWork() }
+    fun setActiveConversation(conversationId: String) { activeConversationId = conversationId }
 
-    fun setActiveConversation(conversationId: String) {
-        if (conversationId == activeConversationId) return
-        activeConversationId = conversationId
-        attachListenerIfReady()
+    suspend fun onLocalSessionSaved(session: ChatSessionEntity) {
+        val uid = currentUserId ?: return
+        if (pendingTombstones(uid).any { it.id == session.id }) return
+        putConversation(uid, session)
     }
 
     suspend fun onLocalMessageAppended(conversationId: String, message: ChatMessageEntity) {
         val uid = currentUserId ?: return
-        val firestore = FirebaseProvider.firestoreOrNull() ?: return
-        val conversationRef = firestore
-            .collection("users")
-            .document(uid)
-            .collection("shared_conversations")
-            .document(conversationId)
-
-        val session = chatDao.getSessionById(conversationId)
-        val conversationData = mapOf(
-            "id" to conversationId,
-            "title" to (session?.title ?: "New conversation"),
-            "createdAt" to (session?.startedAt ?: message.timestamp),
-            "updatedAt" to message.timestamp,
-            "createdByDeviceId" to "owner",
-            "schemaVersion" to 1,
-            // Do not write a null tombstone during a normal append: merge writes
-            // must never resurrect a conversation deleted on another device.
-        )
-
-        conversationRef.set(conversationData, SetOptions.merge()).await()
-        conversationRef.collection("messages")
-            .document(message.id)
-            .set(
-                mapOf(
-                    "id" to message.id,
-                    "role" to message.sender,
-                    "content" to message.content,
-                    "createdAt" to message.timestamp,
-                    "provenance" to message.provenance,
-                    "sourceRef" to (message.sourceRef ?: "shared:android:${message.id}"),
-                    "deviceId" to "android",
-                    "schemaVersion" to 1
-                ),
-                SetOptions.merge()
-            ).await()
+        val session = chatDao.getSessionById(conversationId) ?: return
+        if (pendingTombstones(uid).any { it.id == conversationId }) return
+        chatDao.updateSharedTimestamp(conversationId, message.timestamp)
+        putConversation(uid, session.copy(sharedUpdatedAt = message.timestamp))
+        putMessage(uid, conversationId, message)
     }
 
-    suspend fun updateConversationMetadata(
-        conversationId: String,
-        speechModeEnabled: Boolean,
-        agentToolsEnabled: Boolean
-    ) {
-        val uid = currentUserId ?: return
-        val firestore = FirebaseProvider.firestoreOrNull() ?: return
-        firestore
-            .collection("users")
-            .document(uid)
-            .collection("shared_conversations")
-            .document(conversationId)
-            .set(
-                mapOf(
-                    "updatedAt" to System.currentTimeMillis()
-                ),
-                SetOptions.merge()
-            ).await()
+    suspend fun updateConversationMetadata(conversationId: String, speechModeEnabled: Boolean, agentToolsEnabled: Boolean) {
+        // Speech/tool toggles stay device-local.
+        chatDao.getSessionById(conversationId)?.let { onLocalSessionSaved(it) }
     }
 
     suspend fun renameConversation(conversationId: String, title: String) {
         val uid = currentUserId ?: return
-        val firestore = FirebaseProvider.firestoreOrNull() ?: return
-        firestore.collection("users").document(uid).collection("shared_conversations")
-            .document(conversationId).update(mapOf("title" to title.take(80), "updatedAt" to System.currentTimeMillis())).await()
+        val session = chatDao.getSessionById(conversationId) ?: return
+        putConversation(uid, session.copy(title = title.take(80), sharedUpdatedAt = System.currentTimeMillis()))
     }
 
     suspend fun tombstoneConversation(conversationId: String) {
-        val uid = currentUserId ?: return
-        val firestore = FirebaseProvider.firestoreOrNull() ?: return
+        val uid = currentUserId ?: authManager.boundSyncOwner() ?: return
+        val session = chatDao.getSessionById(conversationId)
         val now = System.currentTimeMillis()
-        firestore.collection("users").document(uid).collection("shared_conversations")
-            .document(conversationId).update(mapOf("deletedAt" to now, "updatedAt" to now)).await()
+        saveTombstone(uid, PendingTombstone(conversationId, now, session?.startedAt ?: now, session?.title ?: "Deleted conversation"))
+        if (currentUserId == uid) scope.launch { runCatching { flushTombstones(uid) } }
     }
 
-    /** Reconciles the durable shelf so chats created on Windows appear on Android. */
+    private suspend fun backfillLocal(uid: String) {
+        val deleted = pendingTombstones(uid).mapTo(mutableSetOf()) { it.id }
+        for (session in chatDao.getAllSessions()) {
+            if (session.id in deleted) continue
+            putConversation(uid, session)
+            chatDao.getMessages(session.id)
+                .filterNot { it.sourceRef?.startsWith("shared:") == true }
+                .forEach { putMessage(uid, session.id, it) }
+        }
+    }
+
     private fun attachConversationShelf(uid: String) {
-        conversationListener?.remove()
         val firestore = FirebaseProvider.firestoreOrNull() ?: return
-        conversationListener = firestore.collection("users").document(uid)
-            .collection("shared_conversations")
+        conversationListener = firestore.collection("users").document(uid).collection("shared_conversations").limit(200)
             .addSnapshotListener { snapshot, _ ->
-                snapshot?.documents?.forEach { doc ->
-                    scope.launch {
-                        val data = doc.data ?: return@launch
-                        if (data["deletedAt"] != null) {
-                            chatDao.clearMessagesForSession(doc.id)
-                            chatDao.deleteSessionById(doc.id)
-                            return@launch
-                        }
-                        val existing = chatDao.getSessionById(doc.id)
-                        val title = (data["title"] as? String)?.take(80)
-                        chatDao.upsertSession(
-                            ChatSessionEntity(
-                                id = doc.id,
-                                startedAt = (data["createdAt"] as? Number)?.toLong()
-                                    ?: existing?.startedAt
-                                    ?: System.currentTimeMillis(),
-                                speechModeEnabled = existing?.speechModeEnabled ?: false,
-                                agentToolsEnabled = existing?.agentToolsEnabled ?: true,
-                                title = title ?: existing?.title
-                            )
-                        )
-                        val remoteMessages = doc.reference.collection("messages").limit(500).get().await()
-                        for (messageDoc in remoteMessages.documents) importMessage(doc.id, messageDoc.id, messageDoc.data ?: continue)
-                    }
-                }
-            }
-    }
-
-    private suspend fun importMessage(conversationId: String, id: String, data: Map<String, Any>) {
-        if (chatDao.getMessageById(id) != null) return
-        chatDao.insertMessage(
-            ChatMessageEntity(
-                id = id,
-                sessionId = conversationId,
-                timestamp = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                sender = senderFromString(data["role"] as? String).name,
-                content = (data["content"] as? String)?.take(20000) ?: "",
-                provenance = (data["provenance"] as? String)
-                    ?.takeIf { it in setOf("OWNER", "JUNCTION", "UNTRUSTED") }
-                    ?: "UNTRUSTED",
-                sourceRef = (data["sourceRef"] as? String)
-                    ?.takeIf { it.isNotBlank() }
-                    ?: "shared:firestore:$id"
-            )
-        )
-    }
-
-    private fun attachListenerIfReady() {
-        val uid = currentUserId ?: return
-        val conversationId = activeConversationId ?: return
-        val firestore = FirebaseProvider.firestoreOrNull() ?: return
-
-        stopListening()
-
-        messageListener = firestore
-            .collection("users")
-            .document(uid)
-            .collection("shared_conversations")
-            .document(conversationId)
-            .collection("messages")
-            .addSnapshotListener { snapshot, _ ->
-                if (snapshot == null) return@addSnapshotListener
+                snapshot ?: return@addSnapshotListener
                 scope.launch {
                     for (doc in snapshot.documents) {
-                        val id = doc.id
                         val data = doc.data ?: continue
-                        importMessage(conversationId, id, data)
+                        val deletedAt = (data["deletedAt"] as? Number)?.toLong()
+                        if (deletedAt != null) {
+                            messageListeners.remove(doc.id)?.remove()
+                            chatDao.clearMessagesForSession(doc.id)
+                            chatDao.deleteSessionById(doc.id)
+                            removeTombstone(uid, doc.id)
+                            continue
+                        }
+                        val remoteUpdatedAt = (data["updatedAt"] as? Number)?.toLong() ?: continue
+                        val local = chatDao.getSessionById(doc.id)
+                        if (local == null || remoteUpdatedAt > local.sharedUpdatedAt) {
+                            chatDao.upsertSession(ChatSessionEntity(
+                                id = doc.id,
+                                startedAt = (data["createdAt"] as? Number)?.toLong() ?: remoteUpdatedAt,
+                                speechModeEnabled = local?.speechModeEnabled ?: false,
+                                agentToolsEnabled = local?.agentToolsEnabled ?: true,
+                                title = (data["title"] as? String)?.take(80),
+                                sharedUpdatedAt = remoteUpdatedAt
+                            ))
+                        }
+                        attachMessageListener(uid, doc.id)
                     }
                 }
             }
     }
 
-    private fun stopListening() {
-        messageListener?.remove()
-        messageListener = null
+    private fun attachMessageListener(uid: String, conversationId: String) {
+        if (messageListeners.containsKey(conversationId)) return
+        messageListeners[conversationId] = conversationRef(uid, conversationId).collection("messages").limit(200)
+            .addSnapshotListener { snapshot, _ ->
+                snapshot ?: return@addSnapshotListener
+                scope.launch {
+                    for (doc in snapshot.documents) {
+                        if (chatDao.getMessageById(doc.id) != null) continue
+                        val data = doc.data ?: continue
+                        val content = (data["content"] as? String)?.take(20_000) ?: continue
+                        val provenance = (data["provenance"] as? String)?.takeIf { it in VALID_PROVENANCE } ?: "UNTRUSTED"
+                        val sourceRef = (data["sourceRef"] as? String)?.take(500) ?: "shared:firestore:${doc.id}"
+                        chatDao.insertMessage(ChatMessageEntity(
+                            id = doc.id,
+                            sessionId = conversationId,
+                            timestamp = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                            sender = senderValue(data["role"] as? String),
+                            content = content,
+                            provenance = provenance,
+                            sourceRef = sourceRef
+                        ))
+                    }
+                }
+            }
     }
 
-    private fun stopAllListeners() {
-        stopListening()
-        conversationListener?.remove()
-        conversationListener = null
+    private suspend fun putConversation(uid: String, session: ChatSessionEntity) {
+        val title = (session.title ?: chatDao.lastMessageContent(session.id)?.take(60) ?: "New conversation").take(80)
+        val ref = conversationRef(uid, session.id)
+        val existing = ref.get().await()
+        if (existing.get("deletedAt") != null) return
+        val remoteUpdatedAt = (existing.get("updatedAt") as? Number)?.toLong()
+        if (remoteUpdatedAt != null && remoteUpdatedAt > session.sharedUpdatedAt) return
+        val creator = (existing.get("createdByDeviceId") as? String)?.take(160) ?: deviceId.take(160)
+        ref.set(mapOf(
+            "id" to session.id,
+            "title" to title,
+            "createdAt" to session.startedAt,
+            "updatedAt" to session.sharedUpdatedAt.coerceAtLeast(session.startedAt),
+            "createdByDeviceId" to creator,
+            "schemaVersion" to 1,
+            "deletedAt" to null
+        ), SetOptions.merge()).await()
     }
+
+    private suspend fun putMessage(uid: String, conversationId: String, message: ChatMessageEntity) {
+        conversationRef(uid, conversationId).collection("messages").document(message.id).set(mapOf(
+            "id" to message.id,
+            "role" to message.sender,
+            "content" to message.content.take(20_000),
+            "createdAt" to message.timestamp,
+            "provenance" to (message.provenance.takeIf { it in VALID_PROVENANCE } ?: "UNTRUSTED"),
+            "sourceRef" to (message.sourceRef ?: "shared:android:${message.id}").take(500),
+            "deviceId" to deviceId,
+            "schemaVersion" to 1
+        )).await()
+    }
+
+    private suspend fun flushTombstones(uid: String) {
+        for (item in pendingTombstones(uid)) {
+            val ref = conversationRef(uid, item.id)
+            val existing = ref.get().await()
+            if (existing.exists() && existing.get("deletedAt") != null) { removeTombstone(uid, item.id); continue }
+            val creator = (existing.get("createdByDeviceId") as? String)?.take(160) ?: deviceId.take(160)
+            ref.set(mapOf(
+                "id" to item.id,
+                "title" to item.title.take(80),
+                "createdAt" to item.createdAt,
+                "updatedAt" to item.deletedAt,
+                "createdByDeviceId" to creator,
+                "schemaVersion" to 1,
+                "deletedAt" to item.deletedAt
+            ), SetOptions.merge()).await()
+            removeTombstone(uid, item.id)
+        }
+    }
+
+    private fun conversationRef(uid: String, id: String): DocumentReference = FirebaseProvider.firestoreOrNull()!!
+        .collection("users").document(uid).collection("shared_conversations").document(id)
+
+    private fun stopUserWork() {
+        currentUserId = null
+        conversationListener?.remove(); conversationListener = null
+        messageListeners.values.forEach { it.remove() }; messageListeners.clear()
+    }
+
+    private data class PendingTombstone(val id: String, val deletedAt: Long, val createdAt: Long, val title: String)
+    private fun pendingTombstones(uid: String): List<PendingTombstone> {
+        val rows = runCatching { JSONArray(outbox.getString("tombstones:$uid", "[]")) }.getOrDefault(JSONArray())
+        return buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                val id = row.optString("id")
+                if (id.isNotBlank()) add(PendingTombstone(id, row.optLong("deletedAt"), row.optLong("createdAt"), row.optString("title", "Deleted conversation")))
+            }
+        }
+    }
+    private fun saveTombstone(uid: String, item: PendingTombstone) = writeTombstones(uid, pendingTombstones(uid).filterNot { it.id == item.id } + item)
+    private fun removeTombstone(uid: String, id: String) = writeTombstones(uid, pendingTombstones(uid).filterNot { it.id == id })
+    private fun writeTombstones(uid: String, values: List<PendingTombstone>) {
+        val rows = JSONArray()
+        values.forEach { rows.put(JSONObject().put("id", it.id).put("deletedAt", it.deletedAt).put("createdAt", it.createdAt).put("title", it.title)) }
+        outbox.edit().putString("tombstones:$uid", rows.toString()).apply()
+    }
+    private fun senderValue(value: String?): String = when (value?.uppercase()) { "USER" -> "USER"; "ASSISTANT", "MODEL" -> "ASSISTANT"; else -> "SYSTEM" }
+
+    companion object { private val VALID_PROVENANCE = setOf("OWNER", "JUNCTION", "UNTRUSTED") }
 }

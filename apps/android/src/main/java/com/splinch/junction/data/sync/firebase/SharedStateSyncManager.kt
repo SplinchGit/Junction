@@ -39,18 +39,19 @@ class SharedStateSyncManager(
         authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
                 stopUserWork()
-                currentUserId = user?.uid
-                if (user == null) return@collectLatest
+                currentUserId = user?.uid?.takeIf { authManager.claimSyncOwner(it) }
+                val uid = currentUserId ?: return@collectLatest
                 val firestore = FirebaseProvider.firestoreOrNull() ?: return@collectLatest
-                firestore.collection("users").document(user.uid).collection("devices").document(deviceId).set(
+                firestore.collection("users").document(uid).collection("devices").document(deviceId).set(
                     mapOf("deviceId" to deviceId, "name" to "Junction Android", "platform" to "android", "appVersion" to BuildConfig.VERSION_NAME, "syncEnabled" to true, "createdAt" to Timestamp.now(), "lastSeenAt" to Timestamp.now()),
                     SetOptions.merge()
                 ).await()
-                val memories = firestore.collection("users").document(user.uid).collection("shared_memory")
+                syncState.edit().remove("device_disable_pending_uid").apply()
+                val memories = firestore.collection("users").document(uid).collection("shared_memory")
                 // Reconcile the durable local publication index before attaching
                 // the remote listener. A deletion made before process death must
                 // become a tombstone, not be re-imported from Firestore.
-                val publishedKey = "published_memory_${user.uid}"
+                val publishedKey = "published_memory_$uid"
                 publishedMemoryIds.clear()
                 publishedMemoryIds.addAll(syncState.getStringSet(publishedKey, emptySet()).orEmpty())
                 val startupFacts = memoryDao.allFlow().first()
@@ -66,7 +67,7 @@ class SharedStateSyncManager(
                         scope.launch {
                             if (data["deletedAt"] != null) { memoryDao.delete(doc.id); publishedMemoryIds.remove(doc.id);syncState.edit().putStringSet(publishedKey,publishedMemoryIds.toSet()).apply();return@launch }
                             if (data["provenance"] != "OWNER") return@launch
-                            memoryDao.insert(MemoryFactEntity(doc.id, data["content"] as? String ?: return@launch, data["category"] as? String ?: "other", (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(), "shared:firestore:${doc.id}"))
+                            memoryDao.insert(MemoryFactEntity(doc.id, data["content"] as? String ?: return@launch, data["category"] as? String ?: "other", (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(), "shared:$uid:firestore:${doc.id}"))
                             publishedMemoryIds.add(doc.id)
                             syncState.edit().putStringSet(publishedKey,publishedMemoryIds.toSet()).apply()
                         }
@@ -96,12 +97,16 @@ class SharedStateSyncManager(
 
     fun stop() {
         val uid = currentUserId
-        if (uid != null) scope.launch {
+        if (uid != null) {
+            syncState.edit().putString("device_disable_pending_uid", uid).apply()
+            scope.launch {
             FirebaseProvider.firestoreOrNull()?.collection("users")?.document(uid)
                 ?.collection("devices")?.document(deviceId)?.set(
                     mapOf("syncEnabled" to false, "lastSeenAt" to Timestamp.now(), "disabledAt" to Timestamp.now()),
                     SetOptions.merge()
                 )?.await()
+            syncState.edit().remove("device_disable_pending_uid").apply()
+            }
         }
         currentUserId = null
         authJob?.cancel()

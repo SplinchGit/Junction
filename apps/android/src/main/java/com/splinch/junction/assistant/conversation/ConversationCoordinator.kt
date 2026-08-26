@@ -83,7 +83,9 @@ class ConversationCoordinator(
 
     suspend fun renameSession(targetSessionId: String, title: String) {
         store.renameSession(targetSessionId, title)
-        if (targetSessionId == session.sessionId) session = session.copy(title = title)
+        if (targetSessionId == session.sessionId) {
+            session = session.copy(title = title, sharedUpdatedAt = System.currentTimeMillis())
+        }
     }
 
     /** Deletes a session; if it was the active one, switches to a fresh session. */

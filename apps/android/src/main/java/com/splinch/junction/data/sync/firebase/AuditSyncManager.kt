@@ -30,9 +30,9 @@ class AuditSyncManager(
         if (authJob != null) return
         authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
-                currentUserId = user?.uid
+                currentUserId = user?.uid?.takeIf { authManager.claimSyncOwner(it) }
                 job?.cancel()
-                if (user != null) attachMirror(user.uid)
+                currentUserId?.let(::attachMirror)
             }
         }
     }
