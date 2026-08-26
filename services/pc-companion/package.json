@@ -1,0 +1,12 @@
+{
+  "name": "junction-pc-companion",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first, trust-gated Windows context companion for Junction",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/run.js"
+  }
+}

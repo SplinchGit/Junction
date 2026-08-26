@@ -22,6 +22,8 @@ apps/web/.env.local
 apps/web/.env.*.local
 apps/web/dist/
 apps/web/*.tsbuildinfo
+apps/windows/.npm-cache/
+apps/windows/dist/
 **/node_modules/
 
 .vscode/*

@@ -89,8 +89,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.junction.avatar.AvatarState
-import com.junction.avatar.AvatarView
 import com.splinch.junction.assistant.runtime.ChatManager
 import com.splinch.junction.assistant.conversation.ChatMessage
 import com.splinch.junction.assistant.planning.Plan
@@ -220,14 +218,6 @@ fun ChatScreen(
             IconButton(onClick = { scope.launch { drawerState.open() } }) {
                 Icon(Icons.Filled.Menu, contentDescription = "Chats")
             }
-            AvatarView(
-                state = when {
-                    voiceSpeaking || streaming != null -> AvatarState.TALKING
-                    micEnabled && voiceListening -> AvatarState.LISTENING
-                    else -> AvatarState.IDLE
-                },
-                sizeDp = 40
-            )
             Text(
                 text = "Chat",
                 style = MaterialTheme.typography.titleMedium,
@@ -392,27 +382,35 @@ fun ChatScreen(
             }
         }
 
-        LazyColumn(
-            state = listState,
+        // Keep the chat canvas independent from the parked avatar module. The
+        // replacement can return as a separate presentation layer without
+        // coupling conversation state or voice behavior to rendering.
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(top = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(messages, key = { it.id }) { message ->
-                MessageBubble(message)
-            }
-            streaming?.let { active ->
-                item(key = active.itemId) {
-                    MessageBubble(
-                        message = ChatMessage(
-                            id = active.itemId,
-                            timestamp = Instant.now(),
-                            sender = Sender.ASSISTANT,
-                            content = active.content
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(messages, key = { it.id }) { message ->
+                    MessageBubble(message)
+                }
+                streaming?.let { active ->
+                    item(key = active.itemId) {
+                        MessageBubble(
+                            message = ChatMessage(
+                                id = active.itemId,
+                                timestamp = Instant.now(),
+                                sender = Sender.ASSISTANT,
+                                content = active.content
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

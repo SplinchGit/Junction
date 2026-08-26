@@ -166,6 +166,7 @@ class MainActivity : ComponentActivity() {
                             feedSyncManager.start()
                             prefsSyncManager.start()
                             auditSyncManager.start()
+                            container.sharedStateSyncManager.start()
                         }.onFailure { ex ->
                             Log.e(TAG, "Firebase sync initialization failed", ex)
                         }
@@ -174,9 +175,13 @@ class MainActivity : ComponentActivity() {
                         // away -- see RemoteCommandForegroundService.
                         RemoteCommandForegroundService.start(context)
                     } else {
-                        authManager.stop()
+                        chatSyncManager.stop()
+                        feedSyncManager.stop()
+                        prefsSyncManager.stop()
                         auditSyncManager.stop()
+                        container.sharedStateSyncManager.stop()
                         RemoteCommandForegroundService.stop(context)
+                        authManager.stop()
                     }
                 }
 

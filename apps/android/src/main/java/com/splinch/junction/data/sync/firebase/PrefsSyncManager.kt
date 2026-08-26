@@ -1,13 +1,11 @@
 package com.splinch.junction.data.sync.firebase
 
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.SetOptions
-import com.splinch.junction.BuildConfig
-import com.splinch.junction.data.preference.PrefsSnapshot
 import com.splinch.junction.data.preference.UserPrefsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -19,9 +17,12 @@ class PrefsSyncManager(
     private var currentUserId: String? = null
     private var prefsListener: ListenerRegistration? = null
     private var lastSnapshotHash: Int? = null
+    private var authJob: Job? = null
+    private var uploadJob: Job? = null
 
     fun start() {
-        scope.launch {
+        if (authJob != null) return
+        authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
                 currentUserId = user?.uid
                 if (user == null) {
@@ -35,14 +36,21 @@ class PrefsSyncManager(
     }
 
     fun stop() {
+        authJob?.cancel()
+        authJob = null
+        uploadJob?.cancel()
+        uploadJob = null
+        currentUserId = null
+        lastSnapshotHash = null
         stopListening()
     }
 
     private fun startUploadLoop() {
-        scope.launch {
-            prefsRepository.snapshotFlow.collectLatest { snapshot ->
+        uploadJob?.cancel()
+        uploadJob = scope.launch {
+            prefsRepository.chatModelFlow.collectLatest { chatModel ->
                 val uid = currentUserId ?: return@collectLatest
-                val hash = snapshot.hashCode()
+                val hash = chatModel.hashCode()
                 if (hash == lastSnapshotHash) return@collectLatest
                 lastSnapshotHash = hash
                 val firestore = FirebaseProvider.firestoreOrNull() ?: return@collectLatest
@@ -51,7 +59,7 @@ class PrefsSyncManager(
                     .document(uid)
                     .collection("preferences")
                     .document("main")
-                docRef.set(snapshot.toFirestoreMap(), SetOptions.merge())
+                docRef.set(mapOf("chatModel" to chatModel))
             }
         }
     }
@@ -67,9 +75,12 @@ class PrefsSyncManager(
             .document("main")
             .addSnapshotListener { snapshot, _ ->
                 val data = snapshot?.data ?: return@addSnapshotListener
-                val remote = prefsSnapshotFromFirestore(data) ?: return@addSnapshotListener
+                val remoteModel = (data["chatModel"] as? String)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() && it.length <= 120 }
+                    ?: return@addSnapshotListener
                 scope.launch {
-                    prefsRepository.applySnapshot(remote)
+                    prefsRepository.setChatModel(remoteModel)
                 }
             }
     }
@@ -78,50 +89,4 @@ class PrefsSyncManager(
         prefsListener?.remove()
         prefsListener = null
     }
-}
-
-private fun PrefsSnapshot.toFirestoreMap(): Map<String, Any?> {
-    return mapOf(
-        "lastOpenedAt" to lastOpenedAt,
-        "digestIntervalMinutes" to digestIntervalMinutes,
-        "notificationAccessAcknowledged" to notificationAccessAcknowledged,
-        "notificationListenerEnabled" to notificationListenerEnabled,
-        "appWeights" to appWeights,
-        "disabledPackages" to disabledPackages.toList(),
-        "lastUpdateCheckAt" to lastUpdateCheckAt,
-        "realtimeClientSecretEndpoint" to realtimeClientSecretEndpoint,
-        "chatModel" to chatModel,
-        "connectedIntegrations" to connectedIntegrations.toList()
-    )
-}
-
-private fun prefsSnapshotFromFirestore(data: Map<String, Any?>): PrefsSnapshot? {
-    val lastOpenedAt = (data["lastOpenedAt"] as? Number)?.toLong() ?: return null
-    val digestInterval = (data["digestIntervalMinutes"] as? Number)?.toInt() ?: 30
-    val notificationAck = data["notificationAccessAcknowledged"] as? Boolean ?: false
-    val listenerEnabled = data["notificationListenerEnabled"] as? Boolean ?: false
-    val appWeights = (data["appWeights"] as? Map<*, *>)?.mapNotNull { (k, v) ->
-        val key = k as? String ?: return@mapNotNull null
-        val value = (v as? Number)?.toInt() ?: return@mapNotNull null
-        key to value
-    }?.toMap() ?: emptyMap()
-    val disabledPackages = (data["disabledPackages"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
-        ?: emptySet()
-    val lastUpdateCheckAt = (data["lastUpdateCheckAt"] as? Number)?.toLong() ?: 0L
-    val realtimeClientSecretEndpoint = data["realtimeClientSecretEndpoint"] as? String ?: ""
-    val chatModel = data["chatModel"] as? String ?: BuildConfig.JUNCTION_CHAT_MODEL
-    val connectedIntegrations = (data["connectedIntegrations"] as? List<*>)?.mapNotNull { it as? String }?.toSet()
-        ?: emptySet()
-    return PrefsSnapshot(
-        lastOpenedAt = lastOpenedAt,
-        digestIntervalMinutes = digestInterval,
-        notificationAccessAcknowledged = notificationAck,
-        notificationListenerEnabled = listenerEnabled,
-        appWeights = appWeights,
-        disabledPackages = disabledPackages,
-        lastUpdateCheckAt = lastUpdateCheckAt,
-        realtimeClientSecretEndpoint = realtimeClientSecretEndpoint,
-        chatModel = chatModel,
-        connectedIntegrations = connectedIntegrations
-    )
 }

@@ -8,6 +8,7 @@ import com.splinch.junction.feature.feed.model.FeedItemEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -18,9 +19,11 @@ class FeedSyncManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentUserId: String? = null
     private var feedListener: ListenerRegistration? = null
+    private var authJob: Job? = null
 
     fun start() {
-        scope.launch {
+        if (authJob != null) return
+        authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
                 currentUserId = user?.uid
                 if (user == null) {
@@ -33,6 +36,9 @@ class FeedSyncManager(
     }
 
     fun stop() {
+        authJob?.cancel()
+        authJob = null
+        currentUserId = null
         stopListening()
     }
 

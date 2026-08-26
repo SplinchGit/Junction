@@ -1,0 +1,30 @@
+{
+  "name": "junction-windows",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Native Windows companion for Junction",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run.js",
+    "pack": "electron-builder --dir --win",
+    "pack:workspace": "node scripts/pack-workspace.js",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "37.10.3",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.splinch.junction.windows",
+    "productName": "Junction",
+    "asar": true,
+    "npmRebuild": false,
+    "files": ["src/**/*", "renderer/**/*", "package.json"],
+    "extraResources": [{ "from": "../../services/pc-companion/src", "to": "pc-companion" }],
+    "win": { "target": ["nsis"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}

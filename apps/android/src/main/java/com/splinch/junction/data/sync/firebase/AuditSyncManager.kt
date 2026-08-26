@@ -24,9 +24,11 @@ class AuditSyncManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentUserId: String? = null
     private var job: kotlinx.coroutines.Job? = null
+    private var authJob: kotlinx.coroutines.Job? = null
 
     fun start() {
-        scope.launch {
+        if (authJob != null) return
+        authJob = scope.launch {
             authManager.userFlow.collectLatest { user ->
                 currentUserId = user?.uid
                 job?.cancel()
@@ -36,6 +38,9 @@ class AuditSyncManager(
     }
 
     fun stop() {
+        authJob?.cancel()
+        authJob = null
+        currentUserId = null
         job?.cancel()
         job = null
     }

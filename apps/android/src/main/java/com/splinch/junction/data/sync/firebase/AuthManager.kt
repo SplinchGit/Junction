@@ -61,10 +61,11 @@ class AuthManager(private val context: Context) {
             auth.removeAuthStateListener(listener)
         }
         authListener = null
+        _userFlow.value = null
     }
 
     fun currentUser(): FirebaseUser? {
-        return FirebaseProvider.authOrNull()?.currentUser
+        return _userFlow.value
     }
 
     suspend fun signInWithGoogle(activity: Activity): Result<Unit> {

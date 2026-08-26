@@ -1,0 +1,105 @@
+"use strict";
+
+const path = require("node:path");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
+const { DeviceIdentityStore } = require("./device-identity");
+const { nativeGoogleFirebaseSignIn, refreshFirebaseSession } = require("./firebase-auth");
+const { registerDevice } = require("./firebase-sync");
+const { LocalDataStore } = require("./local-data");
+const { sendChat } = require("./provider-client");
+const { providers, estimate } = require("./model-catalog");
+const { SharedStateClient } = require("./shared-state");
+const { DelegationCoordinator } = require("./delegation-coordinator");
+
+let companion, identityStore, identity, auditPath, localData, delegation, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
+function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
+
+async function createWindow() {
+  identityStore = new DeviceIdentityStore(path.join(app.getPath("userData"), "identity"), safeStorage);
+  identity = identityStore.load();
+  localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
+  delegation = new DelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
+  companion = await companionModule().startCompanion({ port: 0, token: crypto.randomBytes(32).toString("base64url"), auditPath });
+  const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  await window.loadFile(path.join(__dirname, "../renderer/index.html"));
+  scheduleSharedSync();
+}
+
+async function syncSharedState(){
+  if(sharedSyncPromise)return sharedSyncPromise;
+  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");let session=identityStore.getSession();if(!session)throw new Error("Sign in to Junction first.");if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
+}
+function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
+
+ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
+ipcMain.handle("junction:sign-in", async () => {
+  const session = await nativeGoogleFirebaseSignIn({ shell, googleClientId: process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID, firebaseApiKey: process.env.JUNCTION_FIREBASE_API_KEY });
+  identityStore.setSession(session); return { uid: session.uid, email: session.email, displayName: session.displayName };
+});
+ipcMain.handle("junction:set-sync", async (_event, enabled) => {
+  let session = identityStore.getSession();
+  if (!session) throw new Error("Sign in to Junction first.");
+  if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}
+  await registerDevice({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, session, device: { ...identity, appVersion: app.getVersion() }, syncEnabled: Boolean(enabled) });
+  identity = { ...identity, syncEnabled: Boolean(enabled) }; identityStore.save(identity);if(enabled)scheduleSharedSync();else clearTimeout(sharedSyncTimer); return identity;
+});
+ipcMain.handle("junction:sync-shared", async () => {
+  return syncSharedState();
+});
+ipcMain.handle("junction:shared-status",()=>lastSharedSync);
+ipcMain.handle("junction:shared-feed",()=>sharedFeed);
+ipcMain.handle("junction:sign-out", async () => { clearTimeout(sharedSyncTimer);const session=identityStore.getSession();if(session&&identity.syncEnabled){await registerDevice({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,device:{...identity,appVersion:app.getVersion()},syncEnabled:false})} identityStore.clearSession(); identity = { ...identity, syncEnabled: false }; identityStore.save(identity); });
+ipcMain.handle("junction:inspect", async () => {
+  const headers = { authorization: `Bearer ${companion.token}`, "content-type": "application/json" };
+  const proposed = await fetch(`http://${companion.host}:${companion.port}/v1/proposals`, { method: "POST", headers, body: JSON.stringify({ capability: "inspect_windows_context", triggerProvenance: "OWNER" }) });
+  const proposal = (await proposed.json()).proposal;
+  if (!proposal) throw new Error("Context request was blocked.");
+  const executed = await fetch(`http://${companion.host}:${companion.port}/v1/proposals/${proposal.id}/execute`, { method: "POST", headers });
+  const result = await executed.json(); if (!executed.ok) throw new Error(result.message || result.error); return result.output;
+});
+ipcMain.handle("junction:audit", () => {
+  try {
+    return fs.readFileSync(auditPath, "utf8").trim().split(/\r?\n/).filter(Boolean).slice(-50).reverse().map(line => {
+      const row = JSON.parse(line);
+      return { id: row.id, timestamp: row.timestamp, event: row.event, capability: row.capability, decision: row.decision, outcome: row.outcome, reason: row.reason };
+    });
+  } catch { return []; }
+});
+ipcMain.handle("junction:conversations", () => localData.conversations());
+ipcMain.handle("junction:conversation", (_event, id) => localData.conversation(id));
+ipcMain.handle("junction:new-conversation", () => {const value=localData.createConversation();scheduleSharedSync();return value});
+ipcMain.handle("junction:rename-conversation", (_event, value) => {const result=localData.renameConversation(value.id,value.title);scheduleSharedSync();return result});
+ipcMain.handle("junction:delete-conversation", (_event, id) => {localData.deleteConversation(id);scheduleSharedSync()});
+ipcMain.handle("junction:send-message", async (_event, request) => {
+  const content=String(request.content||"").trim(); if(!content) throw new Error("Message cannot be blank."); if(content.length>20000) throw new Error("Message is too long.");
+  let conversation=localData.conversation(request.conversationId); if(!conversation) conversation=localData.createConversation();
+  localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
+  const config=localData.provider();
+  const reply=await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null});
+  const message=localData.addMessage(conversation.id,"assistant",reply.content,"JUNCTION");
+  const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);
+  localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens)});
+  scheduleSharedSync();
+  return {conversationId:conversation.id,message,usage:reply.usage,model:reply.model};
+});
+ipcMain.handle("junction:memories", () => localData.memories());
+ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
+ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});
+ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:Boolean(config.id&&identityStore.getProviderKey(config.id))}; });
+ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:Boolean(identityStore.getProviderKey(config.id))}; });
+ipcMain.handle("junction:model-catalog", () => providers);
+ipcMain.handle("junction:usage", () => localData.usage());
+ipcMain.handle("junction:delegations",()=>delegation.list());
+ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
+ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));
+ipcMain.handle("junction:review-delegation",(_event,value)=>delegation.review(value.planId,value.projectId));
+ipcMain.handle("junction:merge-delegation",(_event,value)=>delegation.approveMerge(value.planId,value.projectId));
+ipcMain.handle("junction:answer-delegation",(_event,value)=>delegation.answer(value.planId,value.projectId,value.decision));
+ipcMain.handle("junction:cancel-delegation",(_event,value)=>delegation.cancel(value.planId,value.projectId));
+
+app.whenReady().then(createWindow);
+app.on("window-all-closed", () => app.quit());
+app.on("before-quit", () => companion?.server.close());

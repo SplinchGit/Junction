@@ -5,6 +5,11 @@ the UI and voice surfaces, builds assistant context, asks an LLM provider for a
 response, then routes any requested action through planning, trust checks, owner
 approval, execution, verification, and audit logging.
 
+The first PC companion integration lives in `services/pc-companion`. It is a
+separate loopback-only Windows platform adapter rather than a second assistant
+runtime. Its typed proposals, provenance labels, and audit events preserve this
+pipeline; its initial capability is bounded, read-only UI Automation inspection.
+
 ```text
 UI
   -> Assistant runtime

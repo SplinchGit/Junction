@@ -20,4 +20,5 @@ dependencyResolutionManagement {
 rootProject.name = "Junction"
 include(":app")
 project(":app").projectDir = file("apps/android")
-include(":avatar")
+// Avatar module is intentionally parked while the replacement is designed.
+// Its source/assets remain in /avatar but are not compiled or packaged.

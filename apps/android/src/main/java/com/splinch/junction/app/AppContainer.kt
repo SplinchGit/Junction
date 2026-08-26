@@ -13,6 +13,7 @@ import com.splinch.junction.data.sync.firebase.ChatSyncManager
 import com.splinch.junction.data.sync.firebase.FeedSyncManager
 import com.splinch.junction.data.sync.firebase.PrefsSyncManager
 import com.splinch.junction.data.sync.firebase.RemoteCommandSyncManager
+import com.splinch.junction.data.sync.firebase.SharedStateSyncManager
 import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.feed.FeedRepository
 import com.splinch.junction.feature.update.UpdateInfo
@@ -41,6 +42,7 @@ class AppContainer(context: Context) {
     val feedSyncManager = FeedSyncManager(database.feedDao(), authManager)
     val prefsSyncManager = PrefsSyncManager(prefs, authManager)
     val auditSyncManager = AuditSyncManager(database.actionLogDao(), authManager)
+    val sharedStateSyncManager = SharedStateSyncManager(appContext, database.memoryFactDao(), authManager)
     private val roomStore = RoomConversationStore(database.chatDao())
     private val conversationStore = SyncingConversationStore(roomStore, chatSyncManager)
     val feedRepository = FeedRepository(database.feedDao(), feedSyncManager)

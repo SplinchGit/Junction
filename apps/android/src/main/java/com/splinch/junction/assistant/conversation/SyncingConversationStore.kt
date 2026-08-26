@@ -47,10 +47,12 @@ class SyncingConversationStore(
 
     override suspend fun renameSession(sessionId: String, title: String) {
         delegate.renameSession(sessionId, title)
+        syncManager.renameConversation(sessionId, title)
     }
 
     override suspend fun deleteSession(sessionId: String) {
         delegate.deleteSession(sessionId)
+        syncManager.tombstoneConversation(sessionId)
     }
 
     private fun ChatMessage.toEntity(sessionId: String): ChatMessageEntity {

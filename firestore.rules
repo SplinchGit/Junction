@@ -5,6 +5,7 @@ service cloud.firestore {
     function ownsUser(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
+    function validProvenance(value) { return value in ['OWNER', 'JUNCTION', 'UNTRUSTED']; }
 
     match /users/{userId} {
       allow read, write: if ownsUser(userId);
@@ -42,7 +43,117 @@ service cloud.firestore {
       }
 
       match /preferences/{preferenceId} {
-        allow read, write: if ownsUser(userId);
+        allow read: if ownsUser(userId);
+        allow create: if ownsUser(userId)
+          && preferenceId == 'main'
+          && request.resource.data.keys().hasOnly(['chatModel'])
+          && request.resource.data.chatModel is string
+          && request.resource.data.chatModel.size() > 0
+          && request.resource.data.chatModel.size() <= 120;
+        // Replacement also acts as a one-time migration that removes fields
+        // synced by older clients (device permissions/endpoints/integrations).
+        allow update: if ownsUser(userId)
+          && preferenceId == 'main'
+          && request.resource.data.keys().hasOnly(['chatModel'])
+          && request.resource.data.chatModel is string
+          && request.resource.data.chatModel.size() > 0
+          && request.resource.data.chatModel.size() <= 120;
+        allow delete: if false;
+      }
+
+      // v1 authoritative shared history. Messages are immutable facts. Synced
+      // history is context only and never enters /remote_commands.
+      match /shared_conversations/{conversationId} {
+        allow read: if ownsUser(userId);
+        allow create: if ownsUser(userId)
+          && request.resource.data.keys().hasOnly(['id','title','createdAt','updatedAt','createdByDeviceId','schemaVersion','deletedAt'])
+          && request.resource.data.id == conversationId
+          && request.resource.data.title is string
+          && request.resource.data.title.size() <= 80
+          && request.resource.data.createdAt is int
+          && request.resource.data.updatedAt is int
+          && request.resource.data.schemaVersion == 1
+          && request.resource.data.createdByDeviceId is string
+          && request.resource.data.createdByDeviceId.size() <= 160
+          && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == null || request.resource.data.deletedAt is int);
+        allow update: if ownsUser(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title','updatedAt','deletedAt'])
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.schemaVersion == resource.data.schemaVersion
+          && request.resource.data.createdByDeviceId == resource.data.createdByDeviceId
+          && request.resource.data.title is string
+          && request.resource.data.title.size() <= 80
+          && request.resource.data.updatedAt is int
+          && (
+            !('deletedAt' in resource.data)
+            || resource.data.deletedAt == null
+            || request.resource.data.deletedAt == resource.data.deletedAt
+          );
+        allow delete: if false;
+
+        match /messages/{messageId} {
+          allow read: if ownsUser(userId);
+          allow create: if ownsUser(userId)
+            && request.resource.data.keys().hasOnly(['id','role','content','createdAt','provenance','sourceRef','deviceId','schemaVersion'])
+            && request.resource.data.id == messageId
+            && request.resource.data.role in ['USER','ASSISTANT','SYSTEM','user','assistant','system']
+            && request.resource.data.content is string
+            && request.resource.data.content.size() <= 20000
+            && validProvenance(request.resource.data.provenance)
+            && request.resource.data.sourceRef is string
+            && request.resource.data.deviceId is string
+            && request.resource.data.schemaVersion == 1;
+          allow update: if ownsUser(userId) && request.resource.data == resource.data;
+          allow delete: if false;
+        }
+      }
+
+      // Owner-confirmed durable memory. Content/provenance never mutate; delete
+      // is a tombstone so devices converge without resurrecting an old fact.
+      match /shared_memory/{memoryId} {
+        allow read: if ownsUser(userId);
+        allow create: if ownsUser(userId)
+          && request.resource.data.keys().hasOnly(['id','content','category','createdAt','provenance','sourceRef','deviceId','schemaVersion','deletedAt'])
+          && request.resource.data.id == memoryId
+          && request.resource.data.content is string
+          && request.resource.data.content.size() <= 2000
+          && request.resource.data.provenance == 'OWNER'
+          && request.resource.data.sourceRef is string
+          && request.resource.data.sourceRef.size() <= 500
+          && request.resource.data.category is string
+          && request.resource.data.category.size() <= 80
+          && request.resource.data.createdAt is int
+          && request.resource.data.deviceId is string
+          && request.resource.data.schemaVersion == 1
+          && (!('deletedAt' in request.resource.data) || request.resource.data.deletedAt == null || request.resource.data.deletedAt is int);
+        allow update: if ownsUser(userId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedAt'])
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.content == resource.data.content
+          && request.resource.data.provenance == resource.data.provenance
+          && (
+            !('deletedAt' in resource.data)
+            || resource.data.deletedAt == null
+            || request.resource.data.deletedAt == resource.data.deletedAt
+          );
+        allow delete: if false;
+      }
+
+      // Explicitly registered companion devices. Authentication proves the
+      // Firebase owner; deviceId is a stable local identifier, not an authority
+      // token. Provider credentials and raw PC context are never valid fields.
+      match /devices/{deviceId} {
+        allow read, delete: if ownsUser(userId);
+        allow create, update: if ownsUser(userId)
+          && request.resource.data.keys().hasOnly([
+            'deviceId', 'name', 'platform', 'appVersion', 'syncEnabled',
+            'createdAt', 'lastSeenAt', 'disabledAt'
+          ])
+          && request.resource.data.deviceId == deviceId
+          && request.resource.data.platform in ['windows', 'android']
+          && request.resource.data.syncEnabled is bool
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.lastSeenAt is timestamp;
       }
 
       // Separate from /conversations/{id}/messages on purpose: those are
