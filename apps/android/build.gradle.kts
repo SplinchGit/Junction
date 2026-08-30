@@ -104,20 +104,31 @@ configure<ApplicationExtension> {
         minSdk = 26
         targetSdk = 36
 
-        // CI passes its run number so every published build outranks the previous
-        // one and installs over it. Local builds keep the checked-in baseline.
-        // Keep this above every APK published by older/recreated workflows. GitHub's
-        // per-workflow run number can restart below versions already installed on
-        // devices (for example, run 77 could not update an installed build 82).
-        val baselineVersionCode = 102
-        val versionCodeValue =
+        // GitHub workflow run numbers are monotonic until a workflow is recreated, but
+        // older Junction builds used a hand-maintained floor (102). Once the run number
+        // fell below that floor, every new APK was also version 102 and Android correctly
+        // considered it the same build. Put CI run numbers in a dedicated high range so
+        // every push is newer than every legacy APK without hand-editing this file again.
+        val ciVersionOffset = 100_000
+        val suppliedVersionCode =
             (
                 findProperty("JUNCTION_VERSION_CODE")?.toString()
                     ?: localProps.getProperty("JUNCTION_VERSION_CODE")
                     ?: System.getenv("JUNCTION_VERSION_CODE")
                 )?.toIntOrNull()
-                ?.coerceAtLeast(baselineVersionCode)
-                ?: baselineVersionCode
+        val versionCodeValue = when {
+            suppliedVersionCode == null -> ciVersionOffset
+            suppliedVersionCode >= ciVersionOffset -> suppliedVersionCode
+            else -> ciVersionOffset + suppliedVersionCode
+        }
+        val buildNumberValue =
+            (
+                findProperty("JUNCTION_BUILD_NUMBER")?.toString()
+                    ?: localProps.getProperty("JUNCTION_BUILD_NUMBER")
+                    ?: System.getenv("JUNCTION_BUILD_NUMBER")
+                )?.toIntOrNull()
+                ?: suppliedVersionCode
+                ?: 0
         versionCode = versionCodeValue
         versionName = "0.5.0"
 
@@ -126,7 +137,7 @@ configure<ApplicationExtension> {
             "JUNCTION_VERSION_CODE",
             versionCodeValue.toString()
         )
-        buildConfigField("int", "JUNCTION_BUILD_NUMBER", "85")
+        buildConfigField("int", "JUNCTION_BUILD_NUMBER", buildNumberValue.toString())
 
         val chatModel =
             findProperty("JUNCTION_CHAT_MODEL")?.toString()

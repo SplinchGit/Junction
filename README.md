@@ -272,10 +272,10 @@ decodes it over the committed file before building. Set it only if you want publ
 with a key that isn't public — and keep it backed up, because losing it breaks updates for everyone
 who installed a build signed with it.
 
-Version codes come from CI, not from a hand-edited constant. `versionCode` is
-`JUNCTION_VERSION_CODE` when the environment sets it and the workflow passes the run number, so every
-published build outranks the one before it and installs cleanly over it. Local builds fall back to
-the checked-in baseline.
+Version codes come from CI, not from a hand-edited release counter. Published builds use
+`100000 + github.run_number`, placing them above legacy builds while making every subsequent push
+strictly newer to Android. The manifest and APK derive the code from the same run number; local
+builds fall back to the start of that reserved range.
 
 One caveat remains for anyone building locally: `connectedDebugAndroidTest` against a phone that has
 Junction installed replaces the install, with the same data loss, because the instrumentation build
