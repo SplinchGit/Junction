@@ -10,26 +10,32 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.FactCheck
-import androidx.compose.material.icons.filled.DynamicFeed
-import androidx.compose.material.icons.filled.Calculate
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -37,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -52,15 +59,15 @@ import com.splinch.junction.feature.onboarding.resolveOnboardingCompleted
 import com.splinch.junction.data.sync.firebase.AuthManager
 import com.splinch.junction.data.sync.firebase.RemoteCommandForegroundService
 import com.splinch.junction.feature.chat.ui.ChatScreen
+import com.splinch.junction.feature.chat.ui.JunctionDrawerContent
 import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.calculator.ui.CalculatorScreen
-import com.splinch.junction.feature.feed.ui.FeedScreen
+import com.splinch.junction.feature.music.ui.MusicEditorScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
 import com.splinch.junction.feature.onboarding.ui.OnboardingScreen
 import com.splinch.junction.feature.settings.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
 import com.splinch.junction.feature.update.UpdateChecker
-import com.splinch.junction.feature.update.UpdateInfo
 import com.splinch.junction.feature.update.UpdateInstaller
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -113,12 +120,10 @@ class MainActivity : ComponentActivity() {
                 val sessionId by chatManager.sessionId.collectAsState()
                 val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
                 val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
-                var lastOpenedAt by remember { mutableLongStateOf(0L) }
-
                 LaunchedEffect(Unit) {
                     runCatching {
                         chatManager.initialize()
-                        lastOpenedAt = prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
+                        prefs.markOpenedAndGetPrevious(System.currentTimeMillis())
                         prefs.setNotificationListenerEnabled(
                             NotificationAccessHelper.isNotificationListenerEnabled(context)
                         )
@@ -220,8 +225,6 @@ class MainActivity : ComponentActivity() {
                     feedRepository = feedRepository,
                     prefs = prefs,
                     authManager = authManager,
-                    updateState = updateState,
-                    lastOpenedAt = lastOpenedAt,
                     voiceToken = voiceToken,
                     chatToken = chatToken,
                     actionLogDao = database.actionLogDao(),
@@ -281,10 +284,14 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class JunctionTab {
-    FEED,
     CHAT,
-    CALCULATOR,
-    AUDIT,
+    AUDIT
+}
+
+private enum class JunctionWorkspace {
+    CHAT,
+    BUILD,
+    MUSIC,
     SETTINGS
 }
 
@@ -305,8 +312,6 @@ private fun JunctionApp(
     feedRepository: FeedRepository,
     prefs: UserPrefsRepository,
     authManager: AuthManager,
-    updateState: MutableStateFlow<UpdateInfo?>,
-    lastOpenedAt: Long,
     voiceToken: Int,
     chatToken: Int,
     actionLogDao: com.splinch.junction.data.database.audit.ActionLogDao,
@@ -315,16 +320,23 @@ private fun JunctionApp(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(JunctionTab.FEED) }
-    val feedItems by feedRepository.feedFlow.collectAsState(initial = emptyList())
+    var selectedTab by remember { mutableStateOf(JunctionTab.CHAT) }
+    var selectedWorkspace by remember { mutableStateOf(JunctionWorkspace.CHAT) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val sessionSummaries by chatManager.sessionSummaries.collectAsState(initial = emptyList())
+    val currentSessionId by chatManager.sessionId.collectAsState()
 
     LaunchedEffect(chatToken) {
-        if (chatToken > 0) selectedTab = JunctionTab.CHAT
+        if (chatToken > 0) {
+            selectedTab = JunctionTab.CHAT
+            selectedWorkspace = JunctionWorkspace.CHAT
+        }
     }
 
     LaunchedEffect(voiceToken) {
         if (voiceToken > 0) {
             selectedTab = JunctionTab.CHAT
+            selectedWorkspace = JunctionWorkspace.CHAT
             chatManager.setSpeechMode(true)
             chatManager.setMicEnabled(true)
         }
@@ -351,24 +363,50 @@ private fun JunctionApp(
         return
     }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == JunctionTab.CALCULATOR,
-                    onClick = { selectedTab = JunctionTab.CALCULATOR },
-                    icon = { Icon(Icons.Default.Calculate, contentDescription = null) },
-                    label = { Text("Build") }
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = selectedTab == JunctionTab.CHAT,
+        drawerContent = {
+            ModalDrawerSheet {
+                JunctionDrawerContent(
+                    sessions = sessionSummaries,
+                    currentSessionId = currentSessionId,
+                    onNewChat = {
+                        scope.launch {
+                            chatManager.startNewChat()
+                            selectedWorkspace = JunctionWorkspace.CHAT
+                            drawerState.close()
+                        }
+                    },
+                    onSelect = { id ->
+                        scope.launch {
+                            chatManager.switchToSession(id)
+                            selectedWorkspace = JunctionWorkspace.CHAT
+                            drawerState.close()
+                        }
+                    },
+                    onDelete = { id -> scope.launch { chatManager.deleteSession(id) } },
+                    onOpenBuild = {
+                        selectedWorkspace = JunctionWorkspace.BUILD
+                        scope.launch { drawerState.close() }
+                    },
+                    onOpenMusic = {
+                        selectedWorkspace = JunctionWorkspace.MUSIC
+                        scope.launch { drawerState.close() }
+                    }
                 )
-                NavigationBarItem(
-                    selected = selectedTab == JunctionTab.FEED,
-                    onClick = { selectedTab = JunctionTab.FEED },
-                    icon = { Icon(Icons.Default.DynamicFeed, contentDescription = null) },
-                    label = { Text("Feed") }
-                )
+            }
+        }
+    ) {
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.CHAT,
-                    onClick = { selectedTab = JunctionTab.CHAT },
+                    onClick = {
+                        selectedTab = JunctionTab.CHAT
+                        selectedWorkspace = JunctionWorkspace.CHAT
+                    },
                     icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
                     label = { Text("Chat") }
                 )
@@ -378,58 +416,79 @@ private fun JunctionApp(
                     icon = { Icon(Icons.AutoMirrored.Filled.FactCheck, contentDescription = null) },
                     label = { Text("Audit") }
                 )
-                NavigationBarItem(
-                    selected = selectedTab == JunctionTab.SETTINGS,
-                    onClick = { selectedTab = JunctionTab.SETTINGS },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("Settings") }
+                }
+            }
+        ) { padding ->
+            when (selectedTab) {
+                JunctionTab.CHAT -> when (selectedWorkspace) {
+                    JunctionWorkspace.CHAT -> ChatScreen(
+                        chatManager = chatManager,
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onOpenSettings = { selectedWorkspace = JunctionWorkspace.SETTINGS },
+                        modifier = Modifier.padding(padding)
+                    )
+                    JunctionWorkspace.BUILD -> WorkspaceScreen(
+                        title = "Build",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier ->
+                        CalculatorScreen(client = calculatorClient, modifier = contentModifier)
+                    }
+                    JunctionWorkspace.MUSIC -> WorkspaceScreen(
+                        title = "Music",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier ->
+                        MusicEditorScreen(modifier = contentModifier)
+                    }
+                    JunctionWorkspace.SETTINGS -> WorkspaceScreen(
+                        title = "Settings",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier ->
+                        SettingsScreen(
+                            userPrefs = prefs,
+                            feedRepository = feedRepository,
+                            authManager = authManager,
+                            chatManager = chatManager,
+                            actionLogDao = actionLogDao,
+                            memoryFactDao = memoryFactDao,
+                            modifier = contentModifier
+                        )
+                    }
+                }
+                JunctionTab.AUDIT -> AuditScreen(
+                    actionLogDao = actionLogDao,
+                    modelUsageDao = modelUsageDao,
+                    modifier = Modifier.padding(padding)
                 )
             }
         }
-    ) { padding ->
-        when (selectedTab) {
-            JunctionTab.FEED -> FeedScreen(
-                items = feedItems,
-                lastOpenedAt = lastOpenedAt,
-                feedRepository = feedRepository,
-                updateInfo = updateState.collectAsState().value,
-                onAskChat = { item, voice ->
-                    selectedTab = JunctionTab.CHAT
-                    scope.launch {
-                        chatManager.reviewFeedItem(item)
-                        if (voice) {
-                            chatManager.setSpeechMode(true)
-                            chatManager.setMicEnabled(true)
-                        } else {
-                            chatManager.setSpeechMode(false)
-                            chatManager.setMicEnabled(false)
-                        }
-                    }
-                },
-                modifier = Modifier.padding(padding)
-            )
-            JunctionTab.CHAT -> ChatScreen(
-                chatManager = chatManager,
-                modifier = Modifier.padding(padding)
-            )
-            JunctionTab.CALCULATOR -> CalculatorScreen(
-                client = calculatorClient,
-                modifier = Modifier.padding(padding)
-            )
-            JunctionTab.AUDIT -> AuditScreen(
-                actionLogDao = actionLogDao,
-                modelUsageDao = modelUsageDao,
-                modifier = Modifier.padding(padding)
-            )
-            JunctionTab.SETTINGS -> SettingsScreen(
-                userPrefs = prefs,
-                feedRepository = feedRepository,
-                authManager = authManager,
-                chatManager = chatManager,
-                actionLogDao = actionLogDao,
-                memoryFactDao = memoryFactDao,
-                modifier = Modifier.padding(padding)
-            )
+    }
+}
+
+@Composable
+private fun WorkspaceScreen(
+    title: String,
+    onOpenNavigation: () -> Unit,
+    onBackToChat: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable (Modifier) -> Unit
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onOpenNavigation) {
+                Icon(Icons.Default.Menu, contentDescription = "Open navigation")
+            }
+            Text(text = title, modifier = Modifier.weight(1f))
+            TextButton(onClick = onBackToChat) { Text("Back to chat") }
         }
+        content(Modifier.weight(1f).fillMaxWidth())
     }
 }

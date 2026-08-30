@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Build
@@ -48,7 +49,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
@@ -56,7 +58,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -64,12 +65,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -122,6 +121,8 @@ private const val BOTTOM_SCROLL_OFFSET = 100_000
 @Composable
 fun ChatScreen(
     chatManager: ChatManager,
+    onOpenNavigation: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val messages by chatManager.messages.collectAsState()
@@ -140,9 +141,6 @@ fun ChatScreen(
     val context = LocalContext.current
     var pendingSpeechEnable by remember { mutableStateOf(false) }
     val sendEnabled = input.isNotBlank() || pendingImagePath != null
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val sessionSummaries by chatManager.sessionSummaries.collectAsState(initial = emptyList())
-    val currentSessionId by chatManager.sessionId.collectAsState()
 
     DisposableEffect(Unit) {
         chatManager.setChatVisible(true)
@@ -185,38 +183,14 @@ fun ChatScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet {
-                ChatShelf(
-                    sessions = sessionSummaries,
-                    currentSessionId = currentSessionId,
-                    onNewChat = {
-                        scope.launch {
-                            chatManager.startNewChat()
-                            drawerState.close()
-                        }
-                    },
-                    onSelect = { id ->
-                        scope.launch {
-                            chatManager.switchToSession(id)
-                            drawerState.close()
-                        }
-                    },
-                    onDelete = { id -> scope.launch { chatManager.deleteSession(id) } }
-                )
-            }
-        }
-    ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                Icon(Icons.Filled.Menu, contentDescription = "Chats")
+            IconButton(onClick = onOpenNavigation) {
+                Icon(Icons.Filled.Menu, contentDescription = "Open navigation")
             }
             Text(
                 text = "Chat",
@@ -233,6 +207,9 @@ fun ChatScreen(
                 )
                 BluetoothThrower()
                 ConnectionPill(state = connectionState)
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                }
             }
         }
 
@@ -471,20 +448,38 @@ fun ChatScreen(
             onRemoveImage = { pendingImagePath = null }
         )
     }
-    }
 }
 
 /** Left-hand pop-out: every chat/project on this device, newest first, with a way to start another. */
 @Composable
-private fun ChatShelf(
+fun JunctionDrawerContent(
     sessions: List<com.splinch.junction.assistant.conversation.ChatSessionSummary>,
     currentSessionId: String,
     onNewChat: () -> Unit,
     onSelect: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    onOpenBuild: () -> Unit,
+    onOpenMusic: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Text(text = "Chats", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Junction", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        NavigationDrawerItem(
+            label = { Text("Build") },
+            selected = false,
+            onClick = onOpenBuild,
+            icon = { Icon(Icons.Default.Build, contentDescription = null) }
+        )
+        NavigationDrawerItem(
+            label = { Text("Music") },
+            selected = false,
+            onClick = onOpenMusic,
+            icon = { Icon(Icons.Default.MusicNote, contentDescription = null) }
+        )
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(12.dp))
+        Text(text = "Chats", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
         Button(onClick = onNewChat, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -622,7 +617,7 @@ fun ChatInputRow(
                 enabled = sendEnabled,
                 modifier = Modifier.size(56.dp)
             ) {
-                Icon(Icons.Default.Send, contentDescription = "Send")
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }
         }
     }
