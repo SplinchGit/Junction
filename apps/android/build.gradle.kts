@@ -94,8 +94,14 @@ configure<ApplicationExtension> {
     }
 
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "PLAY_DISTRIBUTION", "false")
+        }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
+            // Play builds must use Play's update mechanism. Shipping the sideload
+            // installer in a store build creates a second, untrusted update channel.
+            buildConfigField("boolean", "PLAY_DISTRIBUTION", "true")
         }
     }
 

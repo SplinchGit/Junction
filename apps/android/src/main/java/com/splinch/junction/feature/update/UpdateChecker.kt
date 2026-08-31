@@ -1,5 +1,6 @@
 package com.splinch.junction.feature.update
 
+import com.splinch.junction.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -62,6 +63,9 @@ class UpdateChecker(
      * current one.
      */
     suspend fun check(currentVersionCode: Int): UpdateCheck = withContext(Dispatchers.IO) {
+        if (BuildConfig.PLAY_DISTRIBUTION) {
+            return@withContext UpdateCheck.UpToDate(currentVersionCode, BuildConfig.JUNCTION_BUILD_NUMBER)
+        }
         try {
             httpClient.newCall(Request.Builder().url(MANIFEST_URL).get().build()).execute().use { response ->
                 if (!response.isSuccessful) {
