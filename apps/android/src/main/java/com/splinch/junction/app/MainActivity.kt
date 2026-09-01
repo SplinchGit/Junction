@@ -63,6 +63,7 @@ import com.splinch.junction.feature.chat.ui.JunctionDrawerContent
 import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.calculator.ui.CalculatorScreen
 import com.splinch.junction.feature.music.ui.MusicEditorScreen
+import com.splinch.junction.feature.mafioso.ui.MafiosoScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
 import com.splinch.junction.feature.onboarding.ui.OnboardingScreen
 import com.splinch.junction.feature.settings.ui.SettingsScreen
@@ -292,6 +293,7 @@ private enum class JunctionWorkspace {
     CHAT,
     BUILD,
     MUSIC,
+    MAFIOSO,
     SETTINGS
 }
 
@@ -393,6 +395,10 @@ private fun JunctionApp(
                     onOpenMusic = {
                         selectedWorkspace = JunctionWorkspace.MUSIC
                         scope.launch { drawerState.close() }
+                    },
+                    onOpenMafioso = {
+                        selectedWorkspace = JunctionWorkspace.MAFIOSO
+                        scope.launch { drawerState.close() }
                     }
                 )
             }
@@ -442,6 +448,14 @@ private fun JunctionApp(
                         modifier = Modifier.padding(padding)
                     ) { contentModifier ->
                         MusicEditorScreen(modifier = contentModifier)
+                    }
+                    JunctionWorkspace.MAFIOSO -> WorkspaceScreen(
+                        title = "Mafioso",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier ->
+                        MafiosoScreen(url = BuildConfig.JUNCTION_MAFIOSO_URL, modifier = contentModifier)
                     }
                     JunctionWorkspace.SETTINGS -> WorkspaceScreen(
                         title = "Settings",

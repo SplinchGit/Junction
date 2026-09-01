@@ -107,6 +107,20 @@ ipcMain.handle("junction:provider", () => { const config=localData.provider(); r
 ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:Boolean(identityStore.getProviderKey(config.id))}; });
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
+ipcMain.handle("junction:open-mafioso", async () => {
+  const configuredUrl = String(
+    process.env.JUNCTION_MAFIOSO_URL || "https://d2t8pi3n8wgmgj.cloudfront.net"
+  ).trim();
+  if (configuredUrl) {
+    if (!/^https?:\/\//i.test(configuredUrl)) throw new Error("JUNCTION_MAFIOSO_URL must use http or https.");
+    await shell.openExternal(configuredUrl);
+    return { kind: "url", target: configuredUrl };
+  }
+  const projectPath = path.join(app.getPath("documents"), "0Mafioso", "Mafioso");
+  const openError = await shell.openPath(projectPath);
+  if (openError) throw new Error(openError);
+  return { kind: "folder", target: projectPath };
+});
 ipcMain.handle("junction:delegations",()=>delegation.list());
 ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
 ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));

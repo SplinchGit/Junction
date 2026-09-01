@@ -169,6 +169,18 @@ configure<ApplicationExtension> {
             "\"$webClientId\""
         )
 
+        val mafiosoUrl =
+            findProperty("JUNCTION_MAFIOSO_URL")?.toString()
+                ?: localProps.getProperty("JUNCTION_MAFIOSO_URL")
+                ?: System.getenv("JUNCTION_MAFIOSO_URL")
+                ?: "https://d2t8pi3n8wgmgj.cloudfront.net"
+
+        buildConfigField(
+            "String",
+            "JUNCTION_MAFIOSO_URL",
+            "\"$mafiosoUrl\""
+        )
+
         val realtimeEndpoint =
             findProperty("JUNCTION_REALTIME_ENDPOINT")?.toString()
                 ?: localProps.getProperty("JUNCTION_REALTIME_ENDPOINT")

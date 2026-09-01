@@ -44,6 +44,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -459,7 +460,8 @@ fun JunctionDrawerContent(
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
     onOpenBuild: () -> Unit,
-    onOpenMusic: () -> Unit
+    onOpenMusic: () -> Unit,
+    onOpenMafioso: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         Text(text = "Junction", style = MaterialTheme.typography.titleMedium)
@@ -475,6 +477,12 @@ fun JunctionDrawerContent(
             selected = false,
             onClick = onOpenMusic,
             icon = { Icon(Icons.Default.MusicNote, contentDescription = null) }
+        )
+        NavigationDrawerItem(
+            label = { Text("Mafioso") },
+            selected = false,
+            onClick = onOpenMafioso,
+            icon = { Icon(Icons.Default.Casino, contentDescription = null) }
         )
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()

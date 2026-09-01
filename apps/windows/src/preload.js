@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("junction", {
   provider: () => ipcRenderer.invoke("junction:provider"), setProvider: value => ipcRenderer.invoke("junction:set-provider", value),
   modelCatalog: () => ipcRenderer.invoke("junction:model-catalog"), usage: () => ipcRenderer.invoke("junction:usage"),
   syncShared: () => ipcRenderer.invoke("junction:sync-shared"), sharedStatus: () => ipcRenderer.invoke("junction:shared-status"), sharedFeed: () => ipcRenderer.invoke("junction:shared-feed"),
+  openMafioso: () => ipcRenderer.invoke("junction:open-mafioso"),
   delegations: () => ipcRenderer.invoke("junction:delegations"), createDelegation: value => ipcRenderer.invoke("junction:create-delegation",value), approveDelegation: id => ipcRenderer.invoke("junction:approve-delegation",id),
   reviewDelegation: value => ipcRenderer.invoke("junction:review-delegation",value), mergeDelegation: value => ipcRenderer.invoke("junction:merge-delegation",value), answerDelegation: value => ipcRenderer.invoke("junction:answer-delegation",value), cancelDelegation: value => ipcRenderer.invoke("junction:cancel-delegation",value)
 });

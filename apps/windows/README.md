@@ -18,6 +18,8 @@ it is never exposed to the LAN.
   raw UI metadata sync, or desktop mutation capability.
 - Local desktop Chat, Feed, Audit, Context & devices, Settings, memory, provider
   routing/usage, and a keyboard-accessible conversation drawer.
+- A Mafioso menu destination that opens the hosted game when configured and the
+  local Mafioso workspace during development.
 - Explicit manual same-owner sync for authoritative conversations, immutable
   provenance, owner memory, and a read-only shared Feed.
 - A local Projects command centre for up to three repositories. It refuses dirty
@@ -57,6 +59,7 @@ provider. Set these variables in the launch environment (do not commit them):
 $env:JUNCTION_FIREBASE_API_KEY = '<firebase web api key>'
 $env:JUNCTION_FIREBASE_PROJECT_ID = '<firebase project id>'
 $env:JUNCTION_GOOGLE_DESKTOP_CLIENT_ID = '<desktop oauth client id>'
+$env:JUNCTION_MAFIOSO_URL = '<optional hosted Mafioso URL>'
 npm install
 npm test
 npm start

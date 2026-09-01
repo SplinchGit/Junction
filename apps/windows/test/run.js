@@ -34,6 +34,7 @@ fs.rmSync(directory, { recursive: true, force: true });
 const renderer = fs.readFileSync(path.join(__dirname, "../renderer/index.html"), "utf8");
 assert.match(renderer, /data-view="chat"/); assert.match(renderer, />Feed</); assert.match(renderer, />Audit</); assert.match(renderer, /Context &amp; devices/); assert.match(renderer, />Settings</);
 assert.match(renderer, /data-view="projects"/); assert.match(renderer, /No automatic merges/);
+assert.match(renderer, /data-view="mafioso"/); assert.match(renderer, /id="open-mafioso"/);
 assert.match(renderer, /API calls happen only when you send/); assert.match(renderer, /does not continuously capture/i); assert.match(renderer, /include once/i); assert.match(renderer, /Content-Security-Policy/);
 const drawerScript = fs.readFileSync(path.join(__dirname, "../renderer/parity.js"), "utf8"); assert.match(drawerScript,/renameConversation/); assert.match(drawerScript,/deleteConversation/); assert.match(drawerScript,/Ctrl\+B/); assert.match(drawerScript,/ArrowDown/); assert.match(drawerScript,/F2/);
 const productScript = fs.readFileSync(path.join(__dirname, "../renderer/product-parity.js"), "utf8"); assert.match(productScript,/modelCatalog/); assert.match(productScript,/loadUsage/); assert.match(productScript,/loadFeed/); assert.match(productScript,/loadMetrics/); assert.match(renderer,/mobile-system.css/);
