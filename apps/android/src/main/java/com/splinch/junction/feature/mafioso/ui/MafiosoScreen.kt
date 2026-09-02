@@ -1,15 +1,25 @@
 package com.splinch.junction.feature.mafioso.ui
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import android.webkit.CookieManager
+import android.webkit.PermissionRequest
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,6 +52,8 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
         return
     }
 
+    val trustedHost = remember(url) { Uri.parse(url).host.orEmpty().lowercase() }
+
     BackHandler(enabled = webView?.canGoBack() == true) { webView?.goBack() }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -53,8 +65,25 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                     settings.setSupportMultipleWindows(false)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        settings.safeBrowsingEnabled = true
+                    }
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                     webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val destination = request?.url ?: return true
+                            val isTrusted = destination.scheme == "https" && destination.host?.lowercase() == trustedHost
+                            if (isTrusted) return false
+
+                            if (destination.scheme == "https") {
+                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, destination)) }
+                            }
+                            return true
+                        }
+
                         override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
                             loading = true
                             error = null
@@ -75,6 +104,11 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
                             }
                         }
                     }
+                    webChromeClient = object : android.webkit.WebChromeClient() {
+                        override fun onPermissionRequest(request: PermissionRequest?) {
+                            request?.deny()
+                        }
+                    }
                     loadUrl(url)
                     webView = this
                 }
@@ -88,11 +122,11 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
             CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
         }
         error?.let { message ->
-            Text(
-                text = message,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.align(Alignment.Center).padding(24.dp)
-            )
+            Column(modifier = Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = message, color = MaterialTheme.colorScheme.error)
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(onClick = { error = null; loading = true; webView?.reload() }) { Text("Try again") }
+            }
         }
     }
 
