@@ -45,6 +45,16 @@ class DeviceIdentityStore {
   getProviderKey(providerId) {
     try { if(!/^[a-z0-9_-]{1,40}$/i.test(providerId)||!this.safeStorage.isEncryptionAvailable()) return ""; return this.safeStorage.decryptString(Buffer.from(fs.readFileSync(path.join(this.directory, `provider-${providerId}.bin`),"utf8"),"base64")); } catch { return ""; }
   }
+  /** DPAPI-backed storage for Junction-owned device capabilities. */
+  setSecureValue(name, value) {
+    if (!/^[a-z0-9_-]{1,80}$/i.test(name) || !this.safeStorage.isEncryptionAvailable()) throw new Error("Windows credential encryption is unavailable.");
+    const file = path.join(this.directory, `secure-${name}.bin`);
+    if (!value) { try { fs.unlinkSync(file); } catch {} return; }
+    fs.writeFileSync(file, this.safeStorage.encryptString(value).toString("base64"), { mode: 0o600 });
+  }
+  getSecureValue(name) {
+    try { if(!/^[a-z0-9_-]{1,80}$/i.test(name)||!this.safeStorage.isEncryptionAvailable()) return ""; return this.safeStorage.decryptString(Buffer.from(fs.readFileSync(path.join(this.directory, `secure-${name}.bin`),"utf8"),"base64")); } catch { return ""; }
+  }
 }
 
 module.exports = { DeviceIdentityStore };

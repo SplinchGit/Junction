@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("junction", {
   addMemory: value => ipcRenderer.invoke("junction:add-memory", value), deleteMemory: id => ipcRenderer.invoke("junction:delete-memory", id),
   provider: () => ipcRenderer.invoke("junction:provider"), setProvider: value => ipcRenderer.invoke("junction:set-provider", value),
   codexStatus: () => ipcRenderer.invoke("junction:codex-status"),
+  localBrainStatus: () => ipcRenderer.invoke("junction:local-brain-status"), localBrainPair: () => ipcRenderer.invoke("junction:enable-local-brain"), revokeLocalBrain: () => ipcRenderer.invoke("junction:revoke-local-brain"),
   modelCatalog: () => ipcRenderer.invoke("junction:model-catalog"), usage: () => ipcRenderer.invoke("junction:usage"),
   syncShared: () => ipcRenderer.invoke("junction:sync-shared"), sharedStatus: () => ipcRenderer.invoke("junction:shared-status"), sharedFeed: () => ipcRenderer.invoke("junction:shared-feed"),
   openMafioso: () => ipcRenderer.invoke("junction:open-mafioso"),

@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
 const { DeviceIdentityStore } = require("./device-identity");
-const { nativeGoogleFirebaseSignIn, refreshFirebaseSession } = require("./firebase-auth");
+const { nativeGoogleFirebaseSignIn, refreshFirebaseSession, anonymousFirebaseSignIn } = require("./firebase-auth");
 const { registerDevice } = require("./firebase-sync");
 const { LocalDataStore } = require("./local-data");
 const { sendChat } = require("./provider-client");
@@ -17,13 +17,26 @@ const { LocalBrainRelay } = require("./local-brain-relay");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
+function hydrateFirebaseEnvironment() {
+  if (process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID) return;
+  // Deployment configuration is public Firebase client metadata, kept outside
+  // source so a dev build can never accidentally point at a production project.
+  try {
+    const config = JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "firebase-runtime.json"), "utf8"));
+    if (/^[A-Za-z0-9_-]{20,}$/.test(String(config.apiKey)) && /^[a-z0-9-]{6,64}$/.test(String(config.projectId))) {
+      process.env.JUNCTION_FIREBASE_API_KEY = config.apiKey;
+      process.env.JUNCTION_FIREBASE_PROJECT_ID = config.projectId;
+    }
+  } catch {}
+}
 
 async function createWindow() {
+  hydrateFirebaseEnvironment();
   identityStore = new DeviceIdentityStore(path.join(app.getPath("userData"), "identity"), safeStorage);
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new DelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
-  localBrainRelay = new LocalBrainRelay({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, getSession: freshSession });
+  localBrainRelay = new LocalBrainRelay({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, getState: freshLocalBrainState });
   localBrainRelay.start();
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   // Fixed loopback port: a private overlay can forward *only* to this local
@@ -45,6 +58,20 @@ async function freshSession(){
   if(Number(session.expiresAt)<Date.now()+60_000){session=await refreshFirebaseSession(session,process.env.JUNCTION_FIREBASE_API_KEY);identityStore.setSession(session)}
   return session;
 }
+async function freshLocalBrainState(){
+  const raw=identityStore.getSecureValue("local-brain-v1"); if(!raw)return null;
+  let state=JSON.parse(raw);
+  if(Number(state.session?.expiresAt)<Date.now()+60_000){state={...state,session:await refreshFirebaseSession(state.session,process.env.JUNCTION_FIREBASE_API_KEY)};identityStore.setSecureValue("local-brain-v1",JSON.stringify(state));}
+  return state;
+}
+async function enableLocalBrain(){
+  let state=await freshLocalBrainState();
+  if(!state){const session=await anonymousFirebaseSignIn(process.env.JUNCTION_FIREBASE_API_KEY);state={brainId:crypto.randomBytes(32).toString("base64url"),key:crypto.randomBytes(32),session};identityStore.setSecureValue("local-brain-v1",JSON.stringify({...state,key:state.key.toString("base64url")}));state={...state,key:state.key.toString("base64url")};}
+  const session=state.session, brainId=state.brainId, pairId=crypto.randomBytes(32).toString("base64url"), secret=state.key;
+  await localBrainRelay.request(localBrainRelay.root(brainId),session,{method:"PATCH",body:JSON.stringify({fields:{pcUid:{stringValue:session.uid},status:{stringValue:"active"}}})});
+  await localBrainRelay.create(brainId,`pairings/${pairId}`,session,{status:"pending",pcUid:session.uid,expiresAtMs:Date.now()+10*60_000});
+  return { code:`JBP1.${brainId}.${pairId}.${secret}`, expiresAt:Date.now()+10*60_000, brainId };
+}
 async function reconcilePendingDeregistration(){
   if(!identity?.deregisterPending)return;const session=await freshSession();bindOwner(session);
   await registerDevice({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,device:{...identity,appVersion:app.getVersion()},syncEnabled:false});
@@ -58,6 +85,9 @@ async function syncSharedState(){
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState();return {enabled:Boolean(state),brainId:state?.brainId||null,model:"qwen3:1.7b"};});
+ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
+ipcMain.handle("junction:revoke-local-brain",()=>{identityStore.setSecureValue("local-brain-v1","");return {enabled:false};});
 ipcMain.handle("junction:sign-in", async () => {
   const session = await nativeGoogleFirebaseSignIn({ shell, googleClientId: process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID, firebaseApiKey: process.env.JUNCTION_FIREBASE_API_KEY });
   identityStore.setSession(session); return { uid: session.uid, email: session.email, displayName: session.displayName };

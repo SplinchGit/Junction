@@ -53,4 +53,15 @@ async function refreshFirebaseSession(session, firebaseApiKey, fetchImpl = fetch
   return { ...session, uid: data.user_id || session.uid, idToken: data.id_token, refreshToken: data.refresh_token || session.refreshToken, expiresAt: Date.now() + Number(data.expires_in) * 1000 };
 }
 
-module.exports = { nativeGoogleFirebaseSignIn, refreshFirebaseSession };
+/** Transport identity for paired Junction devices. This does not use Google or account sync. */
+async function anonymousFirebaseSignIn(firebaseApiKey, fetchImpl = fetch) {
+  if (!firebaseApiKey) throw new Error("This Junction build is missing its Firebase configuration.");
+  const response = await fetchImpl(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(firebaseApiKey)}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ returnSecureToken: true })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "Could not create Junction device identity.");
+  return { uid: data.localId, idToken: data.idToken, refreshToken: data.refreshToken, expiresAt: Date.now() + Number(data.expiresIn) * 1000, anonymous: true };
+}
+
+module.exports = { nativeGoogleFirebaseSignIn, refreshFirebaseSession, anonymousFirebaseSignIn };

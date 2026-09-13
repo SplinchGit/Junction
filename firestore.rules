@@ -209,5 +209,60 @@ service cloud.firestore {
           );
       }
     }
+
+    // Paired Local Junction Brain. Firebase anonymous auth identifies the device;
+    // unguessable brain/pair IDs and AES-GCM payloads provide the relay boundary.
+    match /local_brains/{brainId} {
+      function isPc() { return request.auth != null && request.auth.uid == resource.data.pcUid; }
+      allow get: if isPc();
+      allow list, delete: if false;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['pcUid','status'])
+        && request.resource.data.pcUid == request.auth.uid
+        && request.resource.data.status == 'active';
+      allow update: if isPc() && request.resource.data == resource.data;
+
+      match /pairings/{pairId} {
+        // Direct get by a 256-bit one-time ID only; no listing or secret fields.
+        allow get: if request.auth != null;
+        allow list: if request.auth != null && request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid;
+        allow create: if request.auth != null && request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid
+          && request.resource.data.keys().hasOnly(['status','pcUid','expiresAtMs'])
+          && request.resource.data.status == 'pending' && request.resource.data.pcUid == request.auth.uid
+          && request.resource.data.expiresAtMs is int;
+        allow delete: if false;
+        allow update: if request.auth != null && (
+          (request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status == 'active') ||
+          (resource.data.status == 'pending' && request.time.toMillis() < resource.data.expiresAtMs
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','clientUid'])
+            && request.resource.data.status == 'claimed' && request.resource.data.clientUid == request.auth.uid)
+        );
+      }
+      match /clients/{clientUid} {
+        allow get: if request.auth != null && (request.auth.uid == clientUid || request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid);
+        allow list, delete: if false;
+        allow create: if request.auth != null && request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid
+          && request.resource.data.keys().hasOnly(['clientUid','status']) && request.resource.data.clientUid == clientUid && request.resource.data.status == 'active';
+        allow update: if false;
+      }
+      match /commands/{commandId} {
+        function isBrainPc() { return request.auth != null && request.auth.uid == get(/databases/$(database)/documents/local_brains/$(brainId)).data.pcUid; }
+        function isPairedClient() { return request.auth != null && request.auth.uid == request.resource.data.clientUid && exists(/databases/$(database)/documents/local_brains/$(brainId)/clients/$(request.auth.uid)); }
+        allow get: if request.auth != null && (isBrainPc() || request.auth.uid == resource.data.clientUid);
+        allow list: if isBrainPc();
+        allow create: if isPairedClient()
+          && request.resource.data.keys().hasOnly(['id','clientUid','status','ciphertext','nonce','createdAt','source'])
+          && request.resource.data.id == commandId && request.resource.data.status == 'pending'
+          && request.resource.data.source == 'junction_local_llm_v2'
+          && request.resource.data.ciphertext is string && request.resource.data.ciphertext.size() <= 60000
+          && request.resource.data.nonce is string && request.resource.data.nonce.size() <= 64;
+        allow update: if isBrainPc()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','error'])
+          && request.resource.data.status in ['processing','done','error'];
+        allow delete: if false;
+      }
+    }
   }
 }

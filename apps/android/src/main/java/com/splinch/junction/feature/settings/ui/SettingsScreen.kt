@@ -55,6 +55,9 @@ import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
 import com.splinch.junction.data.preference.UserPrefsRepository
 import com.splinch.junction.data.sync.firebase.AuthManager
+import com.splinch.junction.data.sync.firebase.FirebaseProvider
+import com.splinch.junction.data.sync.firebase.LocalBrainPairing
+import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import com.splinch.junction.ui.component.JunctionTextField
 import com.splinch.junction.feature.settings.ui.component.GitHubSettingsSection
 import com.splinch.junction.ui.component.ModelCard
@@ -63,6 +66,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -112,6 +116,8 @@ fun SettingsScreen(
     var providerBaseUrlInput by remember { mutableStateOf(providerConfig.baseUrl) }
     var providerTestStatus by remember { mutableStateOf("") }
     var providerPickerExpanded by remember { mutableStateOf(false) }
+    var localPairingCode by remember { mutableStateOf("") }
+    var localPairingStatus by remember { mutableStateOf("") }
     var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
 
     LaunchedEffect(shizukuEnabled) {
@@ -317,36 +323,31 @@ fun SettingsScreen(
             }
             if (providerIdInput == "local") {
                 Spacer(Modifier.height(12.dp))
-                Text(text = "Junction account", style = MaterialTheme.typography.titleSmall)
-                if (user != null) {
-                    Text(
-                        text = "Connected as ${user?.email}. Your PC must be connected to this same Junction account.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(
-                        text = "Connect once inside Junction so your phone can securely reach your PC wherever you are. This is not a model-provider account and does not need an API key.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(onClick = {
-                        val activity = context.findActivity()
-                        if (activity == null) {
-                            Toast.makeText(context, "Can't connect your Junction account from this screen", Toast.LENGTH_SHORT).show()
-                        } else {
-                            scope.launch {
-                                userPrefs.setFirebaseSyncEnabled(true)
-                                authManager.start()
-                                authManager.signInWithGoogle(activity).onFailure { error ->
-                                    Toast.makeText(context, "Junction account connection failed: ${error.message}", Toast.LENGTH_LONG).show()
-                                }
+                Text(text = "Pair your Junction PC", style = MaterialTheme.typography.titleSmall)
+                Text("On the PC, open Junction Settings → Local Junction Brain and scan its QR code or enter its pairing code here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                JunctionTextField(value = localPairingCode, onValueChange = { localPairingCode = it }, label = "PC pairing code", placeholder = "JBP1.…")
+                Button(onClick = {
+                    scope.launch {
+                        val parsed = LocalBrainPairingStore.parseCode(localPairingCode)
+                        if (parsed == null) { localPairingStatus = "That pairing code is invalid."; return@launch }
+                        localPairingStatus = "Pairing securely…"
+                        runCatching {
+                            val uid = LocalBrainPairingStore.ensureAnonymous(context)
+                            val firestore = FirebaseProvider.firestoreOrNull() ?: error("Firebase is unavailable")
+                            val pair = firestore.collection("local_brains").document(parsed.first).collection("pairings").document(parsed.second)
+                            pair.update(mapOf("status" to "claimed", "clientUid" to uid)).await()
+                            val client = firestore.collection("local_brains").document(parsed.first).collection("clients").document(uid)
+                            repeat(12) {
+                                if (client.get().await().exists()) return@repeat
+                                delay(1_000)
                             }
-                        }
-                    }) {
-                        Text("Connect Junction account")
+                            if (!client.get().await().exists()) error("Your PC did not confirm pairing. Keep Junction open on the PC and try again.")
+                            LocalBrainPairingStore.save(context, LocalBrainPairing(parsed.first, uid, parsed.third))
+                        }.onSuccess { localPairingStatus = "Paired. Local LLM is ready." }
+                            .onFailure { localPairingStatus = "Pairing failed: ${it.message}" }
                     }
-                }
+                }) { Text("Pair this phone") }
+                if (localPairingStatus.isNotBlank()) Text(localPairingStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             JunctionTextField(
                 value = providerFrontierInput,

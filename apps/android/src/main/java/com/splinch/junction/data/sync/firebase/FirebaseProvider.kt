@@ -22,6 +22,9 @@ object FirebaseProvider {
 
     fun isInitialized(): Boolean = initialized
 
+    /** Used only by the paired Local Brain provider to reach Keystore-backed pairing state. */
+    fun applicationContextOrNull(): Context? = appContext
+
     /** Firebase clients are unavailable until an explicit owner opt-in initializes the SDK. */
     fun authOrNull(): FirebaseAuth? {
         return if (initialized) FirebaseAuth.getInstance() else null

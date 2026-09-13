@@ -134,6 +134,11 @@ class KeyStorage(private val context: Context) {
     /** Whether a key is stored, without the caller having to hold the secret to ask. */
     fun hasApiKey(providerId: String): Boolean = getApiKey(providerId).isNotBlank()
 
+    /** Junction pairing material, intentionally separate from provider API keys. */
+    fun getSecret(name: String): String = backing().read("secret_$name")
+    fun setSecret(name: String, value: String) { backing().write("secret_$name", value) }
+    fun clearSecret(name: String) { backing().delete("secret_$name") }
+
     private fun apiKeyPref(providerId: String) = "api_key_$providerId"
 
     private companion object {
