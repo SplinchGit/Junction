@@ -3,6 +3,7 @@
 const LOCAL_SOURCE = "junction_local_llm";
 const POLL_INTERVAL_MS = 10_000;
 const MAX_RESPONSE_CHARS = 12_000;
+const DEFAULT_MAX_TOKENS = 384;
 
 function decode(value) {
   if (!value) return undefined;
@@ -49,7 +50,10 @@ class LocalBrainRelay {
 
   async request(url, session, options = {}) {
     const response = await this.fetch(url, { ...options, headers: { authorization: `Bearer ${session.idToken}`, "content-type": "application/json", ...(options.headers || {}) } });
-    if (!response.ok) throw new Error(`Junction relay request failed (${response.status}).`);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null);
+      throw new Error(failure?.error?.message || `Junction relay request failed (${response.status}).`);
+    }
     return response.status === 204 ? {} : response.json();
   }
 
@@ -85,17 +89,35 @@ class LocalBrainRelay {
       await this.update(item.document, session, { status: "processing" }, item.document.updateTime);
       const payload = JSON.parse(item.data.content || "{}");
       if (!Array.isArray(payload.messages) || typeof payload.model !== "string") throw new Error("Invalid local-model request.");
-      const upstream = await this.fetch(`${this.ollamaUrl}/v1/chat/completions`, {
+      const requestedMaxTokens = Number(payload.maxTokens);
+      const maxTokens = Number.isInteger(requestedMaxTokens)
+        ? Math.max(1, Math.min(requestedMaxTokens, 1024))
+        : DEFAULT_MAX_TOKENS;
+      const upstream = await this.fetch(`${this.ollamaUrl}/api/chat`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: payload.model, messages: payload.messages, stream: false })
+        // The phone only receives the completed answer. Disable Qwen's hidden
+        // reasoning stream here and bound generation so one remote turn cannot
+        // hold the single local inference slot indefinitely.
+        body: JSON.stringify({
+          model: payload.model,
+          messages: payload.messages,
+          stream: false,
+          think: false,
+          options: { num_predict: maxTokens }
+        })
       });
       const result = await upstream.json();
       if (!upstream.ok) throw new Error(result?.error?.message || `Local model returned HTTP ${upstream.status}.`);
-      const text = String(result?.choices?.[0]?.message?.content || "").trim();
+      const text = String(result?.message?.content || "").trim();
       if (!text) throw new Error("Local model returned an empty response.");
       await this.update(item.document, session, { status: "done", assistantResponse: text.slice(0, MAX_RESPONSE_CHARS), completedAt: new Date().toISOString() });
     } catch (error) {
-      await this.update(item.document, session, { status: "error", error: String(error.message || error).slice(0, 500), completedAt: new Date().toISOString() }).catch(() => {});
+      console.warn("Local Junction relay failed:", error?.message || error);
+      try {
+        await this.update(item.document, session, { status: "error", error: String(error.message || error).slice(0, 500), completedAt: new Date().toISOString() });
+      } catch (statusError) {
+        console.warn("Local Junction relay could not record its failure:", statusError?.message || statusError);
+      }
     }
   }
 }
