@@ -18,6 +18,12 @@ async function main() {
   fs.renameSync(path.join(output, "electron.exe"), path.join(output, "Junction.exe"));
   fs.cpSync(path.join(root, "src"), path.join(staging, "src"), { recursive: true });
   fs.cpSync(path.join(root, "renderer"), path.join(staging, "renderer"), { recursive: true });
+  // Runtime dependencies are not resolved from the developer workspace once
+  // Electron is launched from app.asar. Keep this explicit and small so a
+  // packaged local QR pairing screen cannot fail at startup.
+  for (const dependency of ["qrcode", "pngjs", "dijkstrajs"]) {
+    fs.cpSync(path.join(root, "node_modules", dependency), path.join(staging, "node_modules", dependency), { recursive: true });
+  }
   fs.writeFileSync(path.join(staging, "package.json"), JSON.stringify({ name: "junction-windows", version: require("../package.json").version, main: "src/main.js" }));
   await asar.createPackage(staging, path.join(output, "resources", "app.asar"));
   fs.cpSync(path.resolve(root, "../../services/pc-companion/src"), path.join(output, "resources", "pc-companion"), { recursive: true });
