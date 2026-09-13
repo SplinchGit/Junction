@@ -40,7 +40,9 @@ data class ChatMessage(
     /** Cached one-line description, so replays cost text not image bytes. */
     val imageSummary: String? = null,
     /** Friendly "Claude Sonnet 5" / "GPT-5.6 Sol" label for an ASSISTANT message, so a fallback mid-conversation is visible at a glance instead of only showing up as a system-message aside. */
-    val modelLabel: String? = null
+    val modelLabel: String? = null,
+    /** Local-model reasoning trace, shown only on explicit expansion. */
+    val thinking: String? = null
 )
 
 data class ChatSession(

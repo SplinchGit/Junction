@@ -104,7 +104,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             sourceRef = sourceRef,
             imagePath = imagePath,
             imageSummary = imageSummary,
-            modelLabel = modelLabel
+            modelLabel = modelLabel,
+            thinking = thinking
         )
     }
 
@@ -119,7 +120,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             sourceRef = sourceRef,
             imagePath = imagePath,
             imageSummary = imageSummary,
-            modelLabel = modelLabel
+            modelLabel = modelLabel,
+            thinking = thinking
         )
     }
 }

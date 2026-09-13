@@ -30,5 +30,6 @@ data class ChatMessageEntity(
     /** Cached one-line description, so replays cost text not image bytes. */
     val imageSummary: String? = null,
     /** Friendly provider/model label ("Claude Sonnet 5") for an ASSISTANT message. */
-    val modelLabel: String? = null
+    val modelLabel: String? = null,
+    val thinking: String? = null
 )

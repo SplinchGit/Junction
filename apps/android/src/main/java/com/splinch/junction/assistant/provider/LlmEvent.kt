@@ -11,6 +11,7 @@ import com.splinch.junction.assistant.trust.*
 sealed class LlmEvent {
     data class TextDelta(val delta: String) : LlmEvent()
     data class TextDone(val text: String) : LlmEvent()
+    data class Thinking(val text: String) : LlmEvent()
     data class ToolCallRequested(
         val callId: String,
         val name: String,
