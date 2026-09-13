@@ -13,8 +13,9 @@ const { getCodexStatus, sendCodexChat } = require("./codex-client");
 const { providers, estimate } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
 const { DelegationCoordinator } = require("./delegation-coordinator");
+const { LocalBrainRelay } = require("./local-brain-relay");
 
-let companion, identityStore, identity, auditPath, localData, delegation, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
+let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
 
 async function createWindow() {
@@ -22,6 +23,8 @@ async function createWindow() {
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new DelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  localBrainRelay = new LocalBrainRelay({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, getSession: freshSession });
+  localBrainRelay.start();
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   // Fixed loopback port: a private overlay can forward *only* to this local
   // gateway. The companion never binds a LAN/public interface and Ollama stays
@@ -109,8 +112,8 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
 ipcMain.handle("junction:memories", () => localData.memories());
 ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
 ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});
-ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:Boolean(config.id&&identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
-ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(config.id!=="codex"&&String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:Boolean(identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:config.id==="local"||Boolean(config.id&&identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(config.id!=="codex"&&config.id!=="local"&&String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:config.id==="local"||Boolean(identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
 ipcMain.handle("junction:codex-status", () => getCodexStatus());
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
@@ -138,4 +141,4 @@ ipcMain.handle("junction:cancel-delegation",(_event,value)=>delegation.cancel(va
 
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => companion?.server.close());
+app.on("before-quit", () => { localBrainRelay?.stop(); companion?.server.close(); });

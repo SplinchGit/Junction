@@ -87,6 +87,10 @@ class RemoteCommandSyncManager(
     }
 
     private suspend fun handle(firestore: FirebaseFirestore, ref: DocumentReference) {
+        // Local-model relay requests are claimed only by the signed-in PC.
+        // The phone must observe the result, never execute its own request.
+        val source = runCatching { ref.get().await().getString("source") }.getOrNull()
+        if (source == "junction_local_llm") return
         if (!claim(firestore, ref)) return // already claimed, no longer pending, or a transient failure
 
         val snapshot = runCatching { ref.get().await() }.getOrNull() ?: return

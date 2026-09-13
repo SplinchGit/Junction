@@ -53,10 +53,9 @@ object ModelCatalog {
             id = "local",
             displayName = "Local LLM",
             recommendationTag = "Your PC",
-            recommendationDetail = "Your own OpenAI-compatible model service. No provider API key is required.",
+            recommendationDetail = "Your signed-in Junction PC runs this model. No API key, VPN, or endpoint setup is required.",
             apiKeyUrl = null,
             baseUrl = "",
-            requiresBaseUrl = true,
             requiresApiKey = false,
             defaultModelId = "local-model",
             models = listOf(

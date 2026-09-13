@@ -1,5 +1,6 @@
 "use strict";
 const providers=[
+  {id:"local",name:"Local LLM",tag:"This PC",detail:"Runs your loopback-only Ollama model. No API key or external endpoint.",models:[{id:"qwen3:1.7b",name:"Qwen3 1.7B",tier:"Local"}]},
   {id:"codex",name:"Codex on this PC",tag:"ChatGPT subscription",detail:"Uses the local Codex CLI signed into ChatGPT. No API key is stored.",models:[{id:"gpt-5.6-luna",name:"GPT-5.6 Luna",tier:"Fast"},{id:"gpt-5.6-terra",name:"GPT-5.6 Terra",tier:"Balanced"},{id:"gpt-5.6-sol",name:"GPT-5.6 Sol",tier:"Most capable"}]},
   {id:"anthropic",name:"Anthropic",tag:"Recommended",detail:"Best balance of quality and cost for everyday use.",models:[{id:"claude-haiku-4-5",name:"Claude Haiku 4.5",tier:"$ Cheap",input:1,output:5},{id:"claude-sonnet-5",name:"Claude Sonnet 5",tier:"$$ Balanced",input:3,output:15},{id:"claude-opus-4-8",name:"Claude Opus 4.8",tier:"$$$ Most capable",input:5,output:25}]},
   {id:"openai",name:"OpenAI",tag:"Most capable",detail:"Wide model support and strong reasoning.",models:[{id:"gpt-5.6-luna",name:"GPT-5.6 Luna",tier:"$ Efficient",input:1,output:6},{id:"gpt-5.6-terra",name:"GPT-5.6 Terra",tier:"$$ Balanced",input:2.5,output:15},{id:"gpt-5.6-sol",name:"GPT-5.6 Sol",tier:"$$$ Frontier",input:5,output:30}]},
