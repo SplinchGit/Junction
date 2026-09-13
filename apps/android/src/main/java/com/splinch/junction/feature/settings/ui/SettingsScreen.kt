@@ -294,22 +294,38 @@ fun SettingsScreen(
                         }
                     }
                 }
+                if (providerIdInput == "local") {
+                    JunctionTextField(
+                        value = providerModelIdInput,
+                        onValueChange = { providerModelIdInput = it },
+                        label = "Local model ID",
+                        placeholder = "e.g. qwen2.5:32b"
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
             }
 
-            JunctionTextField(
-                value = providerApiKeyInput,
-                onValueChange = { providerApiKeyInput = it },
-                label = "API key",
-                isPassword = true
-            )
+            if (currentProvider?.requiresApiKey != false) {
+                JunctionTextField(
+                    value = providerApiKeyInput,
+                    onValueChange = { providerApiKeyInput = it },
+                    label = "API key",
+                    isPassword = true
+                )
+            } else {
+                Text(
+                    text = "Local LLM uses its configured endpoint directly; no provider API key is stored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             JunctionTextField(
                 value = providerFrontierInput,
                 onValueChange = { providerFrontierInput = it },
                 label = "Frontier model override (optional, advanced)",
                 placeholder = "e.g. claude-sonnet-4-6 -- leave blank to use the picked model for everything"
             )
-            if (providerIdInput == "custom") {
+            if (currentProvider?.requiresBaseUrl == true) {
                 JunctionTextField(
                     value = providerBaseUrlInput,
                     onValueChange = { providerBaseUrlInput = it },
@@ -333,7 +349,7 @@ fun SettingsScreen(
                             baseUrl = providerBaseUrlInput.trim()
                         )
                         userPrefs.setProviderConfig(config)
-                        if (providerApiKeyInput.isNotBlank()) {
+                        if (currentProvider?.requiresApiKey != false && providerApiKeyInput.isNotBlank()) {
                             keyStorage.setApiKey(providerIdInput.trim(), providerApiKeyInput)
                         }
                         if (switched) {
@@ -350,7 +366,12 @@ fun SettingsScreen(
                     scope.launch {
                         // Basic connectivity check: just verify we have a key
                         val key = keyStorage.getApiKey(providerIdInput.trim())
-                        providerTestStatus = if (key.isBlank()) "No API key set." else "Key present. Send a message to test."
+                        providerTestStatus = when {
+                            currentProvider?.requiresBaseUrl == true && providerBaseUrlInput.isBlank() -> "Enter the local model base URL first."
+                            currentProvider?.requiresApiKey == false -> "Endpoint configured. Send a message to test."
+                            key.isBlank() -> "No API key set."
+                            else -> "Key present. Send a message to test."
+                        }
                     }
                 }) {
                     Text("Test")

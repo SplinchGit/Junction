@@ -72,12 +72,12 @@ class OpenAiCompatibleProvider(
             }
         }
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url("$baseUrl/chat/completions")
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Content-Type", "application/json")
-            .build()
+        if (apiKey.isNotBlank()) requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+        val request = requestBuilder.build()
 
         try {
             val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }

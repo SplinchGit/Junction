@@ -41,12 +41,28 @@ data class ProviderDefinition(
     val apiKeyUrl: String?,
     val baseUrl: String,
     val requiresBaseUrl: Boolean = false,
+    /** Local/OpenAI-compatible services can be deliberately keyless. */
+    val requiresApiKey: Boolean = true,
     val models: List<ModelEntry> = emptyList(),
     val defaultModelId: String = ""
 )
 
 object ModelCatalog {
     val providers: List<ProviderDefinition> = listOf(
+        ProviderDefinition(
+            id = "local",
+            displayName = "Local LLM",
+            recommendationTag = "Your PC",
+            recommendationDetail = "Your own OpenAI-compatible model service. No provider API key is required.",
+            apiKeyUrl = null,
+            baseUrl = "",
+            requiresBaseUrl = true,
+            requiresApiKey = false,
+            defaultModelId = "local-model",
+            models = listOf(
+                ModelEntry("local-model", "Local model", "Local", "Use the model name served by your local LLM endpoint.", 0.0, 0.0)
+            )
+        ),
         ProviderDefinition(
             id = "anthropic",
             displayName = "Anthropic",

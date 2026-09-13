@@ -708,7 +708,7 @@ private fun ProviderSwitcher(
 
     LaunchedEffect(expanded) {
         if (expanded) {
-            configuredProviders = ModelCatalog.providers.filter { keyStorage.getApiKey(it.id).isNotBlank() }
+            configuredProviders = ModelCatalog.providers.filter { !it.requiresApiKey || keyStorage.getApiKey(it.id).isNotBlank() }
         }
     }
 

@@ -25,8 +25,10 @@ class ProviderRegistry(
 
     suspend fun getActiveProvider(): LlmProvider? {
         val config = prefs.providerConfigFlow.first()
+        val definition = ModelCatalog.providerById(config.providerId)
         val apiKey = keyStorage.getApiKey(config.providerId)
-        if (apiKey.isBlank()) return null
+        if (definition?.requiresApiKey != false && apiKey.isBlank()) return null
+        if (definition?.requiresBaseUrl == true && config.baseUrl.isBlank()) return null
         return buildProvider(config, apiKey)
     }
 
@@ -56,7 +58,7 @@ class ProviderRegistry(
     fun getFallbackProvider(excludeId: String): LlmProvider? {
         val candidates = ModelCatalog.providers
             .map { it.id }
-            .filter { it != excludeId && it != "custom" && isHealthy(it) }
+            .filter { it != excludeId && it != "custom" && it != "local" && isHealthy(it) }
         for (candidateId in candidates) {
             val apiKey = keyStorage.getApiKey(candidateId)
             if (apiKey.isBlank()) continue
