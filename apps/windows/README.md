@@ -18,6 +18,10 @@ it is never exposed to the LAN.
   raw UI metadata sync, or desktop mutation capability.
 - Local desktop Chat, Feed, Audit, Context & devices, Settings, memory, provider
   routing/usage, and a keyboard-accessible conversation drawer.
+- **Codex on this PC** is a selectable chat workflow. It invokes the locally
+  installed, ChatGPT-signed-in Codex CLI in read-only, ephemeral mode, so it
+  uses the subscription attached to that CLI login instead of storing an API
+  key. Settings shows whether that subscription-backed workflow is ready.
 - A Mafioso menu destination that opens the hosted game when configured and the
   local Mafioso workspace during development.
 - Explicit manual same-owner sync for authoritative conversations, immutable
@@ -38,6 +42,13 @@ trees are dirty and Civlets is not a Git repository, so they correctly appear as
 Cloud/API-backed reasoning is the intended reasoning path for this Windows app.
 Ollama discovery remains in the local service only as a harmless optional status
 check; it is not selected by default and no model is downloaded.
+
+To use the Codex chat workflow, install the Codex CLI and sign in on the same
+Windows account (`codex login`). Then choose **Codex on this PC** and a model in
+Settings → AI & models, and save. Junction sends the current bounded chat
+context to a fresh local Codex CLI turn; it cannot edit files or run tools from
+this chat workflow. Project delegation remains a separate, explicitly approved
+workflow.
 
 Provider API keys are deliberately **per device**. A future Windows provider setup
 must encrypt them with `safeStorage`; they must never be written to Firestore or

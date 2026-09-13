@@ -9,6 +9,7 @@ const { nativeGoogleFirebaseSignIn, refreshFirebaseSession } = require("./fireba
 const { registerDevice } = require("./firebase-sync");
 const { LocalDataStore } = require("./local-data");
 const { sendChat } = require("./provider-client");
+const { getCodexStatus, sendCodexChat } = require("./codex-client");
 const { providers, estimate } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
 const { DelegationCoordinator } = require("./delegation-coordinator");
@@ -93,7 +94,9 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   let conversation=localData.conversation(request.conversationId); if(!conversation) conversation=localData.createConversation();
   localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
   const config=localData.provider();
-  const reply=await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null});
+  const reply=config.id==="codex"
+    ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, workingDirectory: app.getPath("userData") })
+    : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null});
   const message=localData.addMessage(conversation.id,"assistant",reply.content,"JUNCTION");
   const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);
   localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens)});
@@ -103,8 +106,9 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
 ipcMain.handle("junction:memories", () => localData.memories());
 ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
 ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});
-ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:Boolean(config.id&&identityStore.getProviderKey(config.id))}; });
-ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:Boolean(identityStore.getProviderKey(config.id))}; });
+ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:Boolean(config.id&&identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(config.id!=="codex"&&String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:Boolean(identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:codex-status", () => getCodexStatus());
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
 ipcMain.handle("junction:open-mafioso", async () => {

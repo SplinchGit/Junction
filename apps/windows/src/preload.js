@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("junction", {
   sendMessage: value => ipcRenderer.invoke("junction:send-message", value), memories: () => ipcRenderer.invoke("junction:memories"),
   addMemory: value => ipcRenderer.invoke("junction:add-memory", value), deleteMemory: id => ipcRenderer.invoke("junction:delete-memory", id),
   provider: () => ipcRenderer.invoke("junction:provider"), setProvider: value => ipcRenderer.invoke("junction:set-provider", value),
+  codexStatus: () => ipcRenderer.invoke("junction:codex-status"),
   modelCatalog: () => ipcRenderer.invoke("junction:model-catalog"), usage: () => ipcRenderer.invoke("junction:usage"),
   syncShared: () => ipcRenderer.invoke("junction:sync-shared"), sharedStatus: () => ipcRenderer.invoke("junction:shared-status"), sharedFeed: () => ipcRenderer.invoke("junction:shared-feed"),
   openMafioso: () => ipcRenderer.invoke("junction:open-mafioso"),
