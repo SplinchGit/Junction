@@ -32,6 +32,24 @@ class ProviderRegistry(
         return buildProvider(config, apiKey)
     }
 
+    /** Human-facing, provider-specific configuration state for the chat surface. */
+    suspend fun activeProviderConfigurationError(): String? {
+        val config = prefs.providerConfigFlow.first()
+        val definition = ModelCatalog.providerById(config.providerId)
+            ?: return "Unknown AI provider. Choose a provider in Settings."
+        if (definition.requiresBaseUrl && config.baseUrl.isBlank()) {
+            return if (definition.id == "local") {
+                "Local LLM needs its Junction gateway URL. Open Settings and add the secure PC endpoint."
+            } else {
+                "${definition.displayName} needs a base URL in Settings."
+            }
+        }
+        if (definition.requiresApiKey && keyStorage.getApiKey(config.providerId).isBlank()) {
+            return "${definition.displayName} needs an API key in Settings."
+        }
+        return null
+    }
+
     suspend fun getWorkhorseProvider(): LlmProvider? = getActiveProvider()
 
     suspend fun getFrontierProvider(): LlmProvider? {

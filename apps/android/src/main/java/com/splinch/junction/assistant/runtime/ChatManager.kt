@@ -394,10 +394,12 @@ class ChatManager(
         // Text mode: use LLM provider
         val activeProvider: com.splinch.junction.assistant.provider.LlmProvider = providerRouter.activeProvider()
             ?: run {
-                appendSystemMessage("No AI provider configured. Add your API key in Settings.")
-                endVoiceTurn("no_provider", "There's no AI provider configured. Add your API key in Settings.")
+                val configurationError = providerRegistry.activeProviderConfigurationError()
+                    ?: "No AI provider configured. Open Settings to configure one."
+                appendSystemMessage(configurationError)
+                endVoiceTurn("no_provider", configurationError)
                 onTurnComplete?.invoke(
-                    TurnOutcome(null, 0, false, false, "No AI provider configured. Add your API key in Settings.")
+                    TurnOutcome(null, 0, false, false, configurationError)
                 )
                 return
             }

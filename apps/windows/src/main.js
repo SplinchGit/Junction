@@ -23,7 +23,10 @@ async function createWindow() {
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new DelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
-  companion = await companionModule().startCompanion({ port: 0, token: crypto.randomBytes(32).toString("base64url"), auditPath });
+  // Fixed loopback port: a private overlay can forward *only* to this local
+  // gateway. The companion never binds a LAN/public interface and Ollama stays
+  // on its own loopback socket.
+  companion = await companionModule().startCompanion({ port: 43110, token: crypto.randomBytes(32).toString("base64url"), auditPath });
   const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   await window.loadFile(path.join(__dirname, "../renderer/index.html"));
   reconcilePendingDeregistration().catch(()=>{});
