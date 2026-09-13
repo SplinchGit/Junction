@@ -41,7 +41,10 @@ class JunctionPcProvider : LlmProvider {
                 when (snapshot.getString("status")) {
                     "done" -> runCatching {
                         val response = LocalBrainPairingStore.decrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|response", snapshot.getString("responseCiphertext").orEmpty(), snapshot.getString("responseNonce").orEmpty())
-                        trySend(LlmEvent.TextDelta(response)); trySend(LlmEvent.Done); close()
+                        // The relay returns one encrypted final response (rather than a
+                        // token stream), so it must use TextDone for ChatManager to persist
+                        // it as the assistant turn.
+                        trySend(LlmEvent.TextDone(response)); trySend(LlmEvent.Done); close()
                     }.onFailure { trySend(LlmEvent.Error("Local Junction returned an invalid encrypted response.")); trySend(LlmEvent.Done); close() }
                     "error" -> { trySend(LlmEvent.Error(snapshot.getString("error") ?: "Your Junction PC could not run the local model.")); trySend(LlmEvent.Done); close() }
                 }
