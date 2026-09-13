@@ -297,6 +297,7 @@ dependencies {
     // crashed PeerConnectionFactory.initialize() with NoClassDefFoundError on every attempt.
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     implementation("androidx.security:security-crypto:1.1.0-alpha07")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("com.android.billingclient:billing-ktx:8.0.0")
 

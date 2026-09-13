@@ -15,7 +15,8 @@
   },
   "devDependencies": {
     "electron": "37.10.3",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "qrcode": "1.5.4"
   },
   "build": {
     "appId": "com.splinch.junction.windows",

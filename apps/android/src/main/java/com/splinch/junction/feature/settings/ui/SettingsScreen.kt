@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,6 +63,8 @@ import com.splinch.junction.ui.component.JunctionTextField
 import com.splinch.junction.feature.settings.ui.component.GitHubSettingsSection
 import com.splinch.junction.ui.component.ModelCard
 import com.splinch.junction.ui.component.ProviderCard
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -118,6 +121,10 @@ fun SettingsScreen(
     var providerPickerExpanded by remember { mutableStateOf(false) }
     var localPairingCode by remember { mutableStateOf("") }
     var localPairingStatus by remember { mutableStateOf("") }
+    val localBrainQrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        if (result.contents.isNullOrBlank()) localPairingStatus = "QR scan cancelled."
+        else { localPairingCode = result.contents; localPairingStatus = "QR scanned. Tap Pair this phone to confirm." }
+    }
     var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
 
     LaunchedEffect(shizukuEnabled) {
@@ -324,7 +331,14 @@ fun SettingsScreen(
             if (providerIdInput == "local") {
                 Spacer(Modifier.height(12.dp))
                 Text(text = "Pair your Junction PC", style = MaterialTheme.typography.titleSmall)
-                Text("On the PC, open Junction Settings → Local Junction Brain and scan its QR code or enter its pairing code here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("On the PC, open Junction Settings → Local Junction Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = {
+                    localBrainQrScanner.launch(ScanOptions().apply {
+                        setPrompt("Scan the QR code shown by Junction on your PC")
+                        setBeepEnabled(false)
+                        setOrientationLocked(false)
+                    })
+                }) { Text("Scan PC QR code") }
                 JunctionTextField(value = localPairingCode, onValueChange = { localPairingCode = it }, label = "PC pairing code", placeholder = "JBP1.…")
                 Button(onClick = {
                     scope.launch {

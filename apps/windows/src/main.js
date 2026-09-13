@@ -3,6 +3,7 @@
 const path = require("node:path");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const QRCode = require("qrcode");
 const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
 const { DeviceIdentityStore } = require("./device-identity");
 const { nativeGoogleFirebaseSignIn, refreshFirebaseSession, anonymousFirebaseSignIn } = require("./firebase-auth");
@@ -70,7 +71,8 @@ async function enableLocalBrain(){
   const session=state.session, brainId=state.brainId, pairId=crypto.randomBytes(32).toString("base64url"), secret=state.key;
   await localBrainRelay.request(localBrainRelay.root(brainId),session,{method:"PATCH",body:JSON.stringify({fields:{pcUid:{stringValue:session.uid},status:{stringValue:"active"}}})});
   await localBrainRelay.create(brainId,`pairings/${pairId}`,session,{status:"pending",pcUid:session.uid,expiresAtMs:Date.now()+10*60_000});
-  return { code:`JBP1.${brainId}.${pairId}.${secret}`, expiresAt:Date.now()+10*60_000, brainId };
+  const code=`JBP1.${brainId}.${pairId}.${secret}`;
+  return { code, qrDataUrl:await QRCode.toDataURL(code,{errorCorrectionLevel:"M",margin:2,width:360,color:{dark:"#f3f0ff",light:"#101019"}}), expiresAt:Date.now()+10*60_000, brainId };
 }
 async function reconcilePendingDeregistration(){
   if(!identity?.deregisterPending)return;const session=await freshSession();bindOwner(session);
