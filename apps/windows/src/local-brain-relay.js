@@ -63,7 +63,10 @@ class LocalBrainRelay {
   async update(document, session, values, expectedUpdateTime = null) {
     const mask = Object.keys(values).map(key => `updateMask.fieldPaths=${encodeURIComponent(key)}`).join("&");
     const precondition = expectedUpdateTime ? `&currentDocument.updateTime=${encodeURIComponent(expectedUpdateTime)}` : "";
-    return this.request(`${document.name}?${mask}${precondition}`, session, { method: "PATCH", body: JSON.stringify(fields(values)) });
+    // Firestore returns a resource name (projects/.../documents/...), not a
+    // fetchable URL. Prefix it here so a claimed request is updated on the
+    // actual Firestore document rather than silently left pending.
+    return this.request(`https://firestore.googleapis.com/v1/${document.name}?${mask}${precondition}`, session, { method: "PATCH", body: JSON.stringify(fields(values)) });
   }
 
   async poll() {
