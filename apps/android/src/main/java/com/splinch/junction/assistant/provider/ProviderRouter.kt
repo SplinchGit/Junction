@@ -19,7 +19,10 @@ class ProviderRouter(
 
     fun afterFailure(providerId: String, allowFallback: Boolean): LlmProvider? {
         registry.markUnhealthy(providerId)
-        return if (allowFallback) registry.getFallbackProvider(providerId) else null
+        // A Local LLM is an explicit, cost/privacy-sensitive owner choice. If
+        // its private Junction gateway is unavailable, report that condition;
+        // never silently send the same turn to a paid cloud provider.
+        return if (allowFallback && providerId != "local") registry.getFallbackProvider(providerId) else null
     }
 
     fun consumeFrontierRequest(explicitlyRequested: Boolean): Boolean {
