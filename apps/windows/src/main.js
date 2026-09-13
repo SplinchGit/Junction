@@ -72,7 +72,9 @@ async function enableLocalBrain(){
   await localBrainRelay.request(localBrainRelay.root(brainId),session,{method:"PATCH",body:JSON.stringify({fields:{pcUid:{stringValue:session.uid},status:{stringValue:"active"}}})});
   await localBrainRelay.create(brainId,`pairings/${pairId}`,session,{status:"pending",pcUid:session.uid,expiresAtMs:Date.now()+10*60_000});
   const code=`JBP1.${brainId}.${pairId}.${secret}`;
-  return { code, qrDataUrl:await QRCode.toDataURL(code,{errorCorrectionLevel:"M",margin:2,width:360,color:{dark:"#f3f0ff",light:"#101019"}}), expiresAt:Date.now()+10*60_000, brainId };
+  // Pairing material is deliberately long; maximise camera readability rather
+  // than styling this like a decorative icon.
+  return { code, qrDataUrl:await QRCode.toDataURL(code,{errorCorrectionLevel:"L",margin:4,width:720,color:{dark:"#000000",light:"#ffffff"}}), expiresAt:Date.now()+10*60_000, brainId };
 }
 async function reconcilePendingDeregistration(){
   if(!identity?.deregisterPending)return;const session=await freshSession();bindOwner(session);

@@ -334,9 +334,11 @@ fun SettingsScreen(
                 Text("On the PC, open Junction Settings → Local Junction Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(onClick = {
                     localBrainQrScanner.launch(ScanOptions().apply {
-                        setPrompt("Scan the QR code shown by Junction on your PC")
+                        setPrompt("Hold the black-and-white Junction PC QR code in the frame")
                         setBeepEnabled(false)
-                        setOrientationLocked(false)
+                        // Phones are normally held portrait while pairing; allowing the
+                        // scanner activity to rotate makes the camera preview unusable.
+                        setOrientationLocked(true)
                     })
                 }) { Text("Scan PC QR code") }
                 JunctionTextField(value = localPairingCode, onValueChange = { localPairingCode = it }, label = "PC pairing code", placeholder = "JBP1.…")
