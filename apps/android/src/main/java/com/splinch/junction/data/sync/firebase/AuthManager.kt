@@ -114,8 +114,6 @@ class AuthManager(private val context: Context) {
             )
         }
 
-        Log.w("Auth", "WEB_CLIENT_ID=$webClientId")
-
         return try {
             val credentialManager = CredentialManager.create(context)
             val googleIdOption = GetGoogleIdOption.Builder()

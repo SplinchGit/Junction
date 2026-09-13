@@ -294,14 +294,6 @@ fun SettingsScreen(
                         }
                     }
                 }
-                if (providerIdInput == "local") {
-                    JunctionTextField(
-                        value = providerModelIdInput,
-                        onValueChange = { providerModelIdInput = it },
-                        label = "Local model ID",
-                        placeholder = "e.g. qwen2.5:32b"
-                    )
-                }
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -314,10 +306,47 @@ fun SettingsScreen(
                 )
             } else {
                 Text(
-                    text = "Local LLM uses its configured endpoint directly; no provider API key is stored.",
+                    text = if (providerIdInput == "local") {
+                        "Local LLM runs on your signed-in Junction PC. No API key, URL, VPN, or separate app is needed."
+                    } else {
+                        "No provider API key is stored."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (providerIdInput == "local") {
+                Spacer(Modifier.height(12.dp))
+                Text(text = "Junction account", style = MaterialTheme.typography.titleSmall)
+                if (user != null) {
+                    Text(
+                        text = "Connected as ${user?.email}. Your PC must be connected to this same Junction account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = "Connect once inside Junction so your phone can securely reach your PC wherever you are. This is not a model-provider account and does not need an API key.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(onClick = {
+                        val activity = context.findActivity()
+                        if (activity == null) {
+                            Toast.makeText(context, "Can't connect your Junction account from this screen", Toast.LENGTH_SHORT).show()
+                        } else {
+                            scope.launch {
+                                userPrefs.setFirebaseSyncEnabled(true)
+                                authManager.start()
+                                authManager.signInWithGoogle(activity).onFailure { error ->
+                                    Toast.makeText(context, "Junction account connection failed: ${error.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }) {
+                        Text("Connect Junction account")
+                    }
+                }
             }
             JunctionTextField(
                 value = providerFrontierInput,
@@ -645,9 +674,9 @@ fun SettingsScreen(
         }
 
         item {
-            Text(text = "Firebase sync (optional)", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Junction account & sync", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Off by default. Enable to use Google sign-in and cloud sync. Not required to chat.",
+                text = "Optional for cloud sync. Required only when using Local LLM remotely through your Junction PC.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -656,7 +685,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(text = "Enable Firebase sync", style = MaterialTheme.typography.bodyMedium)
+                Text(text = "Enable Junction account sync", style = MaterialTheme.typography.bodyMedium)
                 Switch(
                     checked = firebaseSyncEnabled,
                     onCheckedChange = { enabled ->
@@ -667,7 +696,7 @@ fun SettingsScreen(
             if (firebaseSyncEnabled) {
                 if (user == null) {
                     Text(
-                        text = "Sign in with Google to enable sync and voice mode.",
+                        text = "Sign in to connect this Junction client to your account, sync it, and use Local LLM through your PC.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
