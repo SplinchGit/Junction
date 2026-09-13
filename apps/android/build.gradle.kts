@@ -298,6 +298,7 @@ dependencies {
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     implementation("androidx.security:security-crypto:1.1.0-alpha07")
     implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

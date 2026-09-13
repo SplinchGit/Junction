@@ -25,7 +25,11 @@ state, plus occasional cosmetic emotes.
 
 - `assets/models/placeholder_avatar.glb` — a small procedurally-generated
   blob (icosphere) with all 5 clips already wired up, so the pipeline runs
-  end-to-end before you drop in a real Blender export.
+  end-to-end before you drop in a real Blender export. **This is a sphere,
+  not a character** — if you're looking at the app wondering where the avatar
+  is, the ball is the avatar. Swap in a real model to change that.
+- `tools/make_placeholder_glb.py` — regenerates that .glb. The placeholder is
+  generated, never hand-edited: `python avatar/tools/make_placeholder_glb.py`.
 
 ## Integration steps
 
@@ -58,15 +62,28 @@ state, plus occasional cosmetic emotes.
      writes to app-internal storage automatically, and `AvatarView` will
      pick it up over the bundled placeholder on next load.
 
-## Notes / things to verify once you build this for real
+## Status
 
-- `AvatarRenderer.renderFrame()` has the animation update logic wired but
-  the actual `engine.render(...)` / SwapChain creation is left as standard
-  Filament boilerplate (identical across all Filament Android samples) —
-  wire that up alongside `onNativeWindowChanged` in `setUpFilament()`.
-- Pin the Filament version to whatever's current when you actually build —
-  `1.51.5` was the latest stable at time of writing, verify before pulling.
-- The placeholder's 5 clips are minimal node-transform animations (scale/
-  rotate/bounce on a single mesh) — enough to prove state-switching and
-  crossfade work. Your real rig will use skeletal/blend-shape animation,
-  which gltfio handles the same way, no code changes needed.
+Verified on-device (Samsung A52s, Adreno 642L, OpenGL ES backend): the module
+loads the .glb, renders it in the Chat header, and loops the `idle` clip. The
+SwapChain/render path in `setUpFilament()` is fully wired, not boilerplate.
+
+Not yet exercised on-device: the LISTENING/TALKING transitions and the
+crossfade between them, because those are driven by live voice/streaming
+signals. The code path is implemented; it just hasn't been watched running.
+
+## Gotchas worth keeping in mind
+
+- **Filament does not loop for you.** `Animator.applyAnimation()` clamps past
+  the last keyframe, so clip time must be wrapped manually — see
+  `AvatarRenderer.clipTime()`. Forgetting this makes any model, placeholder or
+  real, play once and freeze.
+- **`applyCrossFade` must come after `applyAnimation`.** It blends the previous
+  clip into whatever `applyAnimation` just wrote; calling it first means the
+  blend is silently overwritten every frame.
+- **`setState` is called from Compose's `update` block**, which runs on every
+  recomposition. It early-returns when the state is unchanged; without that,
+  streaming chat text restarts the clip every frame and the avatar sits at t=0.
+- The placeholder's 5 clips are node-transform animations (translate/rotate/
+  scale on a single mesh). A real rig will use skeletal/blend-shape animation,
+  which gltfio handles identically — no code changes needed.

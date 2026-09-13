@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.splinch.junction.feature.mafioso.billing.MafiosoBillingBridge
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -40,6 +41,7 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var billingBridge by remember { mutableStateOf<MafiosoBillingBridge?>(null) }
 
     if (!url.startsWith("https://")) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -72,6 +74,11 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
                         settings.safeBrowsingEnabled = true
                     }
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+                    val activity = context as? android.app.Activity
+                    if (activity != null) {
+                        billingBridge = MafiosoBillingBridge(activity, this, trustedHost)
+                        addJavascriptInterface(billingBridge!!, "MafiosoBilling")
+                    }
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                             val destination = request?.url ?: return true
@@ -132,6 +139,8 @@ fun MafiosoScreen(url: String, modifier: Modifier = Modifier) {
 
     DisposableEffect(Unit) {
         onDispose {
+            billingBridge?.close()
+            billingBridge = null
             webView?.stopLoading()
             webView?.destroy()
             webView = null
