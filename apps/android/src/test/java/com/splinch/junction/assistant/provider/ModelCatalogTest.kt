@@ -26,12 +26,17 @@ class ModelCatalogTest {
     }
 
     @Test
-    fun `every provider except custom has an https key url and at least one model`() {
-        ModelCatalog.providers.filter { it.id != "custom" }.forEach { provider ->
-            assertTrue(
-                "expected ${provider.id} to have an https apiKeyUrl",
-                provider.apiKeyUrl?.startsWith("https://") == true
-            )
+    fun `every provider has models and keyed providers have an https key url`() {
+        ModelCatalog.providers.forEach { provider ->
+            if (provider.id == "custom") return@forEach
+            if (provider.requiresApiKey) {
+                assertTrue(
+                    "expected ${provider.id} to have an https apiKeyUrl",
+                    provider.apiKeyUrl?.startsWith("https://") == true
+                )
+            } else if (!provider.requiresApiKey) {
+                assertNull("expected keyless ${provider.id} to have no apiKeyUrl", provider.apiKeyUrl)
+            }
             assertTrue("expected ${provider.id} to have at least one model", provider.models.isNotEmpty())
             assertTrue(
                 "expected ${provider.id}'s defaultModelId to be one of its own models",
