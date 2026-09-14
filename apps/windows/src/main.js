@@ -16,7 +16,8 @@ const { SharedStateClient } = require("./shared-state");
 const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
 const { LocalBrainRelay } = require("./local-brain-relay");
 
-let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
+let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, isQuitting=false;
+const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
 function hydrateFirebaseEnvironment() {
   if (process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID) return;
@@ -32,6 +33,9 @@ function hydrateFirebaseEnvironment() {
 }
 
 async function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show(); mainWindow.focus(); return mainWindow;
+  }
   hydrateFirebaseEnvironment();
   identityStore = new DeviceIdentityStore(path.join(app.getPath("userData"), "identity"), safeStorage);
   identity = identityStore.load();
@@ -52,7 +56,15 @@ async function createWindow() {
   // gateway. The companion never binds a LAN/public interface and Ollama stays
   // on its own loopback socket.
   companion = await companionModule().startCompanion({ port: 43110, token: crypto.randomBytes(32).toString("base64url"), auditPath });
-  const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  mainWindow = window;
+  // The relay is the PC-side endpoint for a paired phone. Closing the visible
+  // window must not silently take that endpoint offline; explicitly quitting
+  // Junction still exits the process.
+  window.on("close", event => {
+    if (!isQuitting) { event.preventDefault(); window.hide(); }
+  });
+  window.on("closed", () => { mainWindow = null; });
   await window.loadFile(path.join(__dirname, "../renderer/index.html"));
   reconcilePendingDeregistration().catch(()=>{});
   scheduleSharedSync();
@@ -182,6 +194,19 @@ ipcMain.handle("junction:merge-delegation",(_event,value)=>delegation.approveMer
 ipcMain.handle("junction:answer-delegation",(_event,value)=>delegation.answer(value.planId,value.projectId,value.decision));
 ipcMain.handle("junction:cancel-delegation",(_event,value)=>delegation.cancel(value.planId,value.projectId));
 
-app.whenReady().then(createWindow);
-app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => { localBrainRelay?.stop(); companion?.server.close(); });
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => { createWindow().catch(() => {}); });
+  app.whenReady().then(() => {
+    // A paired phone cannot wake a powered-off Windows process securely over
+    // the relay. Starting at sign-in and retaining the background process is
+    // the reliable recovery path while keeping all inference local to this PC.
+    if (app.isPackaged && process.platform === "win32") {
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ["--background"] });
+    }
+    return createWindow();
+  });
+}
+app.on("activate", () => { createWindow().catch(() => {}); });
+app.on("before-quit", () => { isQuitting=true; localBrainRelay?.stop(); companion?.server.close(); });

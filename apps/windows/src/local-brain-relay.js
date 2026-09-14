@@ -7,6 +7,7 @@ const LEASE_MS = 90_000;
 const OLLAMA_TIMEOUT_MS = 120_000;
 const STREAM_FLUSH_MS = 180;
 const MAX_RESPONSE_CHARS = 48_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
 
 function decode(value) {
   if (!value) return undefined;
@@ -41,7 +42,7 @@ async function readNdjson(stream, onEvent) {
 /** PC-only endpoint for encrypted, paired local inference. */
 class LocalBrainRelay {
   constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, now = () => Date.now() }) {
-    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, now, timer: null, polling: false, lastError: null });
+    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
@@ -63,12 +64,19 @@ class LocalBrainRelay {
     return this.request(`https://firestore.googleapis.com/v1/${document.name}?${mask}${precondition}`, session, { method: "PATCH", body: JSON.stringify(fields(values)) });
   }
   async create(brainId, path, session, values) { return this.request(`${this.root(brainId)}/${path}`, session, { method: "PATCH", body: JSON.stringify(fields(values)) }); }
+  async heartbeat(state) {
+    if (this.now() - this.lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+    const url = `${this.root(state.brainId)}?updateMask.fieldPaths=status&updateMask.fieldPaths=lastSeenAtMs`;
+    await this.request(url, state.session, { method: "PATCH", body: JSON.stringify(fields({ status: "active", lastSeenAtMs: this.now() })) });
+    this.lastHeartbeatAt = this.now();
+  }
   async poll() {
     if (this.polling) return;
     this.polling = true;
     try {
       const state = await this.getState();
       if (!state?.brainId || !state?.session || !state?.key) return;
+      await this.heartbeat(state);
       for (const pair of await this.query(state.brainId, state.session, "pairings", "claimed")) await this.activatePair(state, pair);
       const pending = await this.query(state.brainId, state.session, "commands", "pending");
       // `processing` is the pre-lease state written by released versions. Claim

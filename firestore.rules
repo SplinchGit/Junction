@@ -214,13 +214,20 @@ service cloud.firestore {
     // unguessable brain/pair IDs and AES-GCM payloads provide the relay boundary.
     match /local_brains/{brainId} {
       function isPc() { return request.auth != null && request.auth.uid == resource.data.pcUid; }
-      allow get: if isPc();
+      // A paired client may read only the exact brain document to determine
+      // whether its already-trusted PC relay is alive. It cannot list brains
+      // or read another client's commands/pairing data.
+      allow get: if isPc() || (request.auth != null && exists(/databases/$(database)/documents/local_brains/$(brainId)/clients/$(request.auth.uid)));
       allow list, delete: if false;
       allow create: if request.auth != null
-        && request.resource.data.keys().hasOnly(['pcUid','status'])
+        && request.resource.data.keys().hasOnly(['pcUid','status','lastSeenAtMs'])
         && request.resource.data.pcUid == request.auth.uid
-        && request.resource.data.status == 'active';
-      allow update: if isPc() && request.resource.data == resource.data;
+        && request.resource.data.status == 'active'
+        && (!('lastSeenAtMs' in request.resource.data) || request.resource.data.lastSeenAtMs is int);
+      allow update: if isPc()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','lastSeenAtMs'])
+        && request.resource.data.status == 'active'
+        && request.resource.data.lastSeenAtMs is int;
 
       match /pairings/{pairId} {
         // Direct get by a 256-bit one-time ID only; no listing or secret fields.

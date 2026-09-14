@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -972,7 +973,12 @@ private fun MessageBubble(message: ChatMessage) {
                 }
             }
             if (message.content.isNotBlank()) {
-                Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+                // Long-press selection exposes Android's standard Copy action
+                // for both owner and Junction messages without adding noisy
+                // per-bubble controls.
+                SelectionContainer {
+                    Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+                }
             }
             if (message.sender == Sender.ASSISTANT &&
                 (!message.thinking.isNullOrBlank() || message.tokensPerSecond != null)
@@ -993,11 +999,13 @@ private fun MessageBubble(message: ChatMessage) {
                         Text(if (thinkingExpanded) "Hide thinking" else "Show thinking")
                     }
                     if (thinkingExpanded) {
-                        Text(
-                            text = thought,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
-                        )
+                        SelectionContainer {
+                            Text(
+                                text = thought,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
                     }
                 }
             }

@@ -31,6 +31,13 @@ class JunctionPcProvider : LlmProvider {
             val uid = LocalBrainPairingStore.ensureAnonymous(appContext)
             if (uid != pairing.clientUid) error("This phone's Junction pairing has changed. Pair it again from Settings.")
             val firestore = FirebaseProvider.firestoreOrNull() ?: error("Firebase is unavailable.")
+            val brain = firestore.collection("local_brains").document(pairing.brainId).get().await()
+            val lastSeenAtMs = brain.getLong("lastSeenAtMs") ?: 0L
+            if (!brain.exists() || brain.getString("status") != "active" ||
+                System.currentTimeMillis() - lastSeenAtMs > PC_ONLINE_WINDOW_MS
+            ) {
+                error("Your Junction PC is offline. Junction starts automatically when you sign in to Windows; open it on the PC and try again.")
+            }
             val requestId = UUID.randomUUID().toString()
             val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
             val plain = JSONObject().apply { put("model", workhorseModel); put("messages", messages) }.toString()
@@ -105,5 +112,9 @@ class JunctionPcProvider : LlmProvider {
         const val MAX_CONTEXT_BLOCKS = 18
         const val MAX_BLOCK_CHARS = 4_000
         const val REQUEST_TIMEOUT_MS = 150_000L
+        // The desktop relay updates its signed-in heartbeat every 15 seconds.
+        // This generous window tolerates a brief network handover without
+        // making the first phone message wait for the full request timeout.
+        const val PC_ONLINE_WINDOW_MS = 45_000L
     }
 }
