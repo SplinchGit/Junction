@@ -7,7 +7,27 @@ const { DelegationCoordinator } = require("./delegation-coordinator");
 const { CodexAppServer } = require("./codex-app-server");
 
 const WAITING = "waiting_for_capacity";
-const RETRY_MS = 5 * 60_000;
+const CAPACITY_THRESHOLD_PERCENT = 95;
+const RESUME_SAFETY_MS = 60_000;
+
+function capacityWindow(rateLimits, now = Date.now()) {
+  const groups = rateLimits?.rateLimitsByLimitId
+    ? Object.values(rateLimits.rateLimitsByLimitId)
+    : rateLimits?.rateLimits ? [rateLimits.rateLimits] : [];
+  const blocked = groups.flatMap(group => [group.primary, group.secondary]
+    .filter(Boolean)
+    .filter(window => Number(window.usedPercent) >= CAPACITY_THRESHOLD_PERCENT || group.rateLimitReachedType)
+    .map(window => ({
+      limitId: group.limitId || "Codex",
+      limitName: group.limitName || group.limitId || "Codex",
+      usedPercent: Number(window.usedPercent),
+      resetsAt: Number(window.resetsAt) * 1000
+    }))
+  ).filter(window => Number.isFinite(window.resetsAt) && window.resetsAt > now);
+  if (!blocked.length) return null;
+  const resumesAt = Math.max(...blocked.map(window => window.resetsAt)) + RESUME_SAFETY_MS;
+  return { resumesAt, windows: blocked };
+}
 
 /** Delegation coordinator backed by persistent Codex App Server threads. */
 class AppServerDelegationCoordinator extends DelegationCoordinator {
@@ -27,11 +47,29 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
   }
 
   scheduleResume(plan, project) {
-    const delay = Math.max(0, Math.min((project.resumeAt || Date.now()) - Date.now(), RETRY_MS));
+    const delay = Math.max(0, Math.min((project.resumeAt || Date.now()) - Date.now(), 0x7fffffff));
     clearTimeout(this.resumeTimers.get(project.id));
     this.resumeTimers.set(project.id, setTimeout(() => {
-      if (project.status === WAITING) this.runProject(plan, project).catch(error => this.fail(project, error));
+      if (project.status !== WAITING) return;
+      // JavaScript timers cap at roughly 25 days. Preserve the exact deadline
+      // if a future account window is longer than that rather than retrying it
+      // early or replacing it with a made-up interval.
+      if ((project.resumeAt || 0) > Date.now()) return this.scheduleResume(plan, project);
+      this.runProject(plan, project).catch(error => this.fail(project, error));
     }, delay));
+  }
+  async waitForConfirmedCapacity(plan, project) {
+    const availability = capacityWindow(await this.appServer.readRateLimits());
+    if (!availability) return false;
+    project.status = WAITING;
+    project.resumeAt = availability.resumesAt;
+    const names = availability.windows.map(window => `${window.limitName} ${window.usedPercent}%`).join(", ");
+    project.summary = `Codex capacity is at ${names}; resumes after ${new Date(project.resumeAt).toLocaleString()}.`;
+    this.scheduleResume(plan, project);
+    this.save();
+    this.audit("agent_waiting_for_capacity", { planId: plan.id, projectId: project.id, resumeAt: project.resumeAt, windows: availability.windows });
+    this.refresh(plan);
+    return true;
   }
   fail(project, error) {
     project.status = "failed";
@@ -39,6 +77,14 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     this.save();
   }
   async runProject(plan, project, decision = "") {
+    try {
+      if (await this.waitForConfirmedCapacity(plan, project)) return;
+    } catch (error) {
+      // A status read is advisory before a turn begins. Do not prevent an
+      // otherwise healthy Codex task from starting merely because the usage
+      // endpoint is temporarily unavailable.
+      this.audit("rate_limit_status_unavailable", { planId: plan.id, projectId: project.id, message: String(error.message || error).slice(0, 300) });
+    }
     const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
     const run = plan.id.slice(0, 8);
     project.branch = project.branch || `junction/delegation/${run}/${slug}`;
@@ -48,6 +94,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
       await this.exec("git", ["-C", project.repoPath, "worktree", "add", "-b", project.branch, project.worktree, project.baseSha], { windowsHide: true });
     }
     project.status = "running";
+    project.resumeAt = null;
     project.summary = decision ? "Codex resumed with your decision" : "Codex is working in its isolated worktree";
     project.decisionRequest = null;
     this.save(); this.audit("agent_started", { planId: plan.id, projectId: project.id, branch: project.branch, threadId: project.codexThreadId || null });
@@ -75,10 +122,15 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     } catch (error) {
       const message = String(error.message || error);
       if (/rate.?limit|usage.?limit|quota|capacity/i.test(message)) {
-        project.status = WAITING;
-        project.resumeAt = Date.now() + RETRY_MS;
-        project.summary = "Codex capacity is temporarily unavailable; this approved job will resume automatically.";
-        this.scheduleResume(plan, project);
+        try {
+          if (!await this.waitForConfirmedCapacity(plan, project)) {
+            project.status = "failed";
+            project.summary = "Codex reported a capacity problem, but Junction could not read a confirmed reset time. The task state is preserved; retry it after checking Codex usage.";
+          }
+        } catch (rateLimitError) {
+          project.status = "failed";
+          project.summary = "Codex reported a capacity problem, but Junction could not read its usage windows. The task state is preserved; retry it after checking Codex usage.";
+        }
       } else {
         project.status = "failed";
         project.summary = message.slice(0, 180);
@@ -97,4 +149,4 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
   }
 }
 
-module.exports = { AppServerDelegationCoordinator, WAITING };
+module.exports = { AppServerDelegationCoordinator, WAITING, capacityWindow };

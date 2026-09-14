@@ -41,8 +41,8 @@ async function readNdjson(stream, onEvent) {
 
 /** PC-only endpoint for encrypted, paired local inference. */
 class LocalBrainRelay {
-  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, onCommandStarted = null, now = () => Date.now() }) {
-    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
+  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, onCommandStarted = null, now = () => Date.now() }) {
+    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, runLocalAgent, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
@@ -97,8 +97,8 @@ class LocalBrainRelay {
     await this.create(state.brainId, `clients/${encodeURIComponent(uid)}`, state.session, { clientUid: uid, status: "active" });
     await this.update(item.document, state.session, { status: "active" }, item.document.updateTime);
   }
-  systemPrompt() {
-    return ["You are Junction Local Brain, the small local planning assistant for Junction.", "You are running on the owner's paired Windows PC through an encrypted relay. You have no direct computer, network, scheduling, or source-code tools.", this.workspacePath ? `The Junction repository on this PC is: ${this.workspacePath}.` : "", "For ordinary questions, answer the owner directly and concisely. Never claim that you changed files, searched the web, scheduled work, or ran a tool.", "For a request to change Junction's code, do not write or invent implementation code. First line must be exactly JUNCTION_CODE_TASK: followed by a concise owner-requested task. The PC will create a reviewable Codex draft; it never modifies the main branch automatically."].filter(Boolean).join("\n\n");
+  systemPrompt({ allowCodeDelegation = false } = {}) {
+    return ["You are Junction Local Brain, the small local assistant for Junction.", "You are running on the owner's paired Windows PC through an encrypted relay. You have no direct computer, network, scheduling, or source-code tools.", this.workspacePath ? `The Junction repository on this PC is: ${this.workspacePath}.` : "", "Answer ordinary questions directly and concisely. Never claim that you changed files, searched the web, scheduled work, created a draft, or ran a tool.", allowCodeDelegation ? "This is an explicitly approved coding-delegation request. State the requested task on the first line exactly as JUNCTION_CODE_TASK: followed by a concise task. The PC will create a reviewable Codex draft; it never modifies the main branch automatically." : "Do not propose coding drafts. Coding delegation is only available through Junction's separate, owner-approved Projects workflow."].filter(Boolean).join("\n\n");
   }
   async markError(state, item, error) {
     const message = String(error?.message || error || "Local model request failed.").slice(0, 300);
@@ -112,8 +112,12 @@ class LocalBrainRelay {
       const plaintext = crypt(state.key, `JBP1|${state.brainId}|${id}|request`, Buffer.from(item.data.ciphertext, "base64url"), Buffer.from(item.data.nonce, "base64url"), false);
       const payload = JSON.parse(plaintext);
       if (!Array.isArray(payload.messages) || typeof payload.model !== "string") throw new Error("Invalid encrypted local-model request.");
-      payload.messages = [{ role: "system", content: this.systemPrompt() }, ...payload.messages];
-      const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+      if (payload.mode === "agent") await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null);
+      // A language model is not an authority to start coding work. Ordinary
+      // phone chat intentionally cannot turn a hallucinated marker into a
+      // Codex draft; that requires a future separately-approved request shape.
+      const allowCodeDelegation = payload.mode === "code_delegation" && payload.ownerApproved === true;
+      payload.messages = [{ role: "system", content: this.systemPrompt({ allowCodeDelegation }) }, ...payload.messages];
       let answer = "", thinking = "", final = null, sequence = 0, lastFlush = 0;
       const flush = async (force = false) => {
         if (!answer || (!force && this.now() - lastFlush < STREAM_FLUSH_MS)) return;
@@ -121,16 +125,26 @@ class LocalBrainRelay {
         await this.update(item.document, state.session, { status: "streaming", partialCiphertext: partial.ciphertext, partialNonce: partial.nonce, streamSequence: ++sequence, leaseUntilMs: this.now() + LEASE_MS }, null);
         lastFlush = this.now();
       };
-      try {
-        const upstream = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ model: payload.model, messages: payload.messages, stream: true, think: process.env.JUNCTION_OLLAMA_THINK === "true", options: { num_predict: 1024 } }) });
-        if (!upstream.ok || !upstream.body) { const body = await upstream.json().catch(() => null); throw new Error(body?.error || `Local model returned HTTP ${upstream.status}.`); }
-        await readNdjson(upstream.body, async event => { answer += String(event?.message?.content || ""); thinking += String(event?.message?.thinking || ""); if (event?.done) final = event; await flush(); });
-        await flush(true);
-      } finally { clearTimeout(timeout); }
+      if (payload.mode === "agent") {
+        if (!this.runLocalAgent) throw new Error("Local Agent is unavailable on this PC.");
+        const ownerIndex = payload.messages.map(message => message.role).lastIndexOf("user");
+        const goal = String(payload.messages[ownerIndex]?.content || "").trim();
+        if (!goal) throw new Error("Local Agent request has no owner goal.");
+        const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex) });
+        answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
+      } else {
+        const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+        try {
+          const upstream = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ model: payload.model, messages: payload.messages, stream: true, think: process.env.JUNCTION_OLLAMA_THINK === "true", options: { num_predict: 1024 } }) });
+          if (!upstream.ok || !upstream.body) { const body = await upstream.json().catch(() => null); throw new Error(body?.error || `Local model returned HTTP ${upstream.status}.`); }
+          await readNdjson(upstream.body, async event => { answer += String(event?.message?.content || ""); thinking += String(event?.message?.thinking || ""); if (event?.done) final = event; await flush(); });
+          await flush(true);
+        } finally { clearTimeout(timeout); }
+      }
       answer = answer.trim();
       if (!answer) throw new Error("Local model returned an empty response.");
       const task = answer.match(/^JUNCTION_CODE_TASK:\s*(.+)/im)?.[1]?.trim();
-      if (task && this.createCodeDelegation) {
+      if (task && allowCodeDelegation && this.createCodeDelegation) {
         const plan = await this.createCodeDelegation(task);
         answer = `I created a Codex draft for this Junction change. Review and approve it in Junction on the PC before Codex starts.\n\n${answer.replace(/^JUNCTION_CODE_TASK:\s*.+\n?/im, "").trim()}`.trim();
         if (plan?.id) answer += `\n\nDraft: ${plan.id.slice(0, 8)}`;

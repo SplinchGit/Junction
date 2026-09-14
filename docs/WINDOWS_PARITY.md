@@ -19,6 +19,8 @@ implemented rather than treating visual navigation as feature parity.
 | Firebase account/device opt-in | **Implemented** | Native Google/Firebase identity and explicit device registration foundation |
 | Cross-device authoritative chat | **Implemented v1** | Owner-scoped opt-in shelf, immutable provenance/messages, title merge, and tombstones; pagination/retention remain |
 | Cross-device Feed and memory | **Implemented v1 / in progress** | Feed is read-only on Windows; OWNER memory converges with durable outboxes; live desktop notification ingestion remains |
+| Native web research | **Implemented** | No-key discovery, pinned public-HTTPS retrieval, bounded extraction, durable evidence ledger, passage citations |
+| Local Agent | **Implemented, read-only** | Explicit per-message mode; schema decisions, deterministic search egress checks, three-search/five-step limits, citation validation |
 | Multi-project delegation | **Implemented foundation** | Local plans, repo readiness, max three isolated Codex worktrees, decision states, audit, exact-diff review, explicit merge |
 | Notification listener and digest | **Platform-adapted** | Requires a Windows notification adapter and desktop scheduling design |
 | Gmail, calendar, GitHub integrations | **Requires backend / adapted** | Do not copy mobile credentials; needs per-device auth and device-aware routing |
@@ -39,11 +41,11 @@ implemented rather than treating visual navigation as feature parity.
 | Action audit review | Implemented for local Windows companion proposals/outcomes |
 | Settings/onboarding fundamentals | Implemented for account, provider, memory, privacy, and device sync state |
 
-Desktop chat is intentionally text-only and non-agentic in this slice. Provider
-output cannot call tools or execute PC actions. Requests send at most the latest
-20 messages, 200 owner-confirmed memory facts, and—only when explicitly attached—a
-compact UI Automation snapshot capped at 30 elements. Replies are capped at 1,200
-tokens and are not streamed, keeping API use bounded and user-triggered.
+Desktop provider chat is intentionally text-only and cannot execute PC actions.
+Local Agent is a separate per-message Ollama workflow with one read-only tool:
+Junction Search. Its schema-constrained decisions, search budget, deterministic
+egress checks, evidence ledger, and citation validation are enforced outside the
+model. Requests remain bounded and owner-triggered.
 
 ## Requires further shared backend/account work
 

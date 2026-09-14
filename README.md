@@ -1,4 +1,4 @@
-      Yoi # Junction
+# Junction
 
 [![Download APK](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplinchgit.github.io%2FJunction%2Flatest.json&query=%24.version&prefix=%E2%AC%87%20&label=DOWNLOAD%20APK&color=4f7cff&style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
 
@@ -18,205 +18,275 @@ not passing, the button is still serving the last APK that built successfully, w
 than `main`. Installing it over an older Junction keeps your API keys, chat history and memory: every
 published build is signed with the same key and carries a higher version code than the one before.
 
-An Android-native assistant that acts on your phone under trust you control and can audit. It reads
-the screen, replies to messages, manages email, and drives apps — always with a client-side trust
-gate between "the model wants to do X" and "X actually happens."
+Junction is a personal assistant that spans an Android phone and a Windows PC. It can chat through
+cloud models, a subscription-backed Codex installation, or a small model running on your own PC;
+act on the phone behind explicit trust controls; share selected state between your devices; and
+delegate coding work into isolated Git worktrees for review.
 
-## What Junction is (and isn't)
+The model is replaceable. Junction is the part that remembers, routes, checks, asks permission,
+executes, verifies, and keeps a record.
 
-- **API-first, no on-device LLM.** You bring a key for Claude, OpenAI, DeepSeek, or any
-  OpenAI-compatible endpoint. Chat and tool-calling run entirely against that provider from the
-  phone — there is no local model and no required backend for text chat.
-- **Local-first.** Feed, chat history, the audit log, and durable memory all live in on-device Room
-  storage. Firebase sync is opt-in and off by default; the app runs fully without a Google account
-  or `google-services.json`.
-- **Trust is a client-side table, never model-decided.** Every tool has a fixed risk tier
-  (`READ`/`INAPP`/`OUTBOUND`/`DESTRUCTIVE`) declared in `chat/tools/ToolRegistry.kt`. The model
-  proposes; `TrustGate` decides whether that proposal auto-runs, needs your confirmation, or is
-  blocked outright — see "Injection architecture" below.
-- **Distribution reality.** There is no Play Store listing. Installs are via sideloaded release
-  APKs (see "Direct APK releases") or, optionally, Shizuku for a smoother update flow — Shizuku
-  needs restarting after every reboot on non-rooted devices and some OEMs (Xiaomi/MIUI in
-  particular) add extra hoops or block it outright. `install_apk` currently uses the *public*
-  `PackageInstaller` session API gated behind Shizuku being connected; it still shows Android's own
-  install-confirmation dialog rather than a fully silent install (see `platform/ShizukuInstaller.kt`
-  for exactly why, and what a genuinely silent path would still require).
-- **Voice is provider-agnostic, not welded to one vendor.** Speech mode can run over OpenAI's
-  Realtime API (low latency, needs the Functions/server relay below) or entirely on-device via
-  Android's own `SpeechRecognizer`/`TextToSpeech`, routed through whichever text provider you've
-  configured — pick the backend in Settings > Voice backend.
-- **Memory is minimal and forward-only.** A capped (~200 fact) durable-fact store built from
-  conversation going forward, never a trawl of old data. See "Memory" below.
+## The short version
 
-See [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for the specific spec items that need
-a physical device, external credentials, or a business decision this codebase can't make for
-itself — everything else in the v2 build spec is implemented.
+- **Android is the mobile agent.** It owns phone actions, voice, notifications, durable local
+  memory, the trust gate, plan approval, execution, verification, and the audit trail.
+- **Windows is the home base.** It has local chat and memory, optional account sync, bounded desktop
+  context, built-in web research, model/provider selection, and a Projects command centre for Codex
+  coding agents.
+- **Local Junction Brain connects them.** Pair the phone to the PC with a QR code and Android can use
+  the PC's loopback-only Ollama model over an end-to-end encrypted Firebase relay. The model endpoint
+  is never exposed to the LAN or internet.
+- **Cloud reasoning is optional.** Android and Windows can use OpenAI, Anthropic, DeepSeek, and
+  compatible providers with per-device encrypted keys. Windows can also use the locally signed-in
+  Codex CLI and its ChatGPT subscription.
+- **Sync is optional.** Both applications work locally. Firebase is used only for features the owner
+  enables: shared conversations, memory/feed convergence, device identity, remote phone requests,
+  and Local Brain transport.
 
-## Injection architecture (summary)
+## A useful mental model
 
-Junction reads content it didn't write — emails, notifications, on-screen text — while holding the
-ability to send messages and take actions. That's the classic untrusted-input + capability
-combination, and it's treated as a first-class design problem rather than a prompt-wording issue:
+```text
+                         optional Firebase fabric
+                    (identity, sync, encrypted relay)
+                                  │
+              ┌───────────────────┴───────────────────┐
+              │                                       │
+      Android Junction                        Junction for Windows
+      ────────────────                        ────────────────────
+      chat and voice                         desktop chat and memory
+      phone context/actions                  bounded PC context
+      trust and approvals                    local web research
+      plans and verification                 Codex project delegation
+              │                                       │
+       cloud providers                    cloud providers / Codex / Ollama
+```
 
-- **Reader/Actor split.** Untrusted content is only ever passed to `LlmProvider.readUntrusted(...)`,
-  a call with no `tools` parameter in its signature — it is structurally incapable of triggering a
-  tool call. Its output is a validated `ReaderOutput` (summary/entities/salience), never raw text,
-  and any instruction-shaped content inside it surfaces as an observation (`contentRequests`), not
-  as something the actor lane can act on.
-- **Provenance tagging.** Every context block, chat message, feed item, plan, and audit row carries
-  `OWNER` / `JUNCTION` / `UNTRUSTED` provenance. It's never stripped or upgraded — a summary of
-  untrusted content is still untrusted, transitively.
-- **Trigger provenance.** Only an `OWNER`-triggered turn may initiate a state-changing tool call —
-  enforced as a hard check in `TrustGate`, not a convention. A proactive digest check or an
-  arriving email can, at most, produce a proposal for you to approve; it can never execute.
-- **Taint escalation, plan-hash binding, centralized egress checks, fail-closed defaults.** See
-  `chat/TrustGate.kt` and `chat/PlanExecutor.kt` — these are exercised end-to-end by
-  `androidTest/InjectionTestSuite.kt`, which CI runs on every build.
-
-This does not claim to "solve" prompt injection — nothing does. It prevents untrusted content from
-silently initiating actions, contains blast radius when something does get through, and logs
-attempted injections as a first-class metric (`ActionAuditMetrics.injectionDetectionCount`).
-
-## Memory
-
-`remember_fact`/`forget_fact` let the assistant store a fact the owner explicitly stated or
-repeated (never something merely read from untrusted content) — capped at 200, reviewable and
-individually deletable under Settings > Memory. Stored facts are replayed into future context as
-`JUNCTION`-provenance state, so they inform responses but — like everything else with that
-provenance tag — can never themselves initiate a tool call.
+Junction is deliberately not a single giant autonomous process. Each capability has a narrower
+boundary, and crossing a consequential boundary requires an owner action or a fixed policy decision.
 
 ## What works today
 
-- Android app: Feed, Chat, Audit, Settings.
-- Local-first feed in Room; swipe to archive, tap to mark seen.
-- Notification ingestion via `NotificationListenerService` (consent flow, tagged `UNTRUSTED` at
-  capture), with reply/dismiss actions gated by the trust gate.
-- Screen automation via an opt-in Accessibility service: `read_screen`, `tap_element`, `set_text`,
-  `scroll`, `press_back`/`press_home`, with FLAG_SECURE and WebView/Canvas low-fidelity detection.
-- Gmail triage/draft/send/archive/unsubscribe, with recipients constrained to the existing thread.
-- Provider-agnostic chat (Anthropic / OpenAI / DeepSeek / custom OpenAI-compatible), with a
-  workhorse/frontier lane split and health-aware fallback across configured providers.
-- Full typed-plan pipeline: plan-level approval with per-step disclosure, post-condition
-  verification, failure recovery, interruption/resume.
-- Append-only audit log (`action_log`) backing an Audit tab, a state-based eval harness
-  (`evaluation/`), and an explicit, content-free telemetry export.
-- Chat shelf: multiple concurrent chat sessions, each independently persisted — new chat,
-  switch, rename, delete, from a left-hand drawer in `ChatScreen`.
-- Remote command channel (`RemoteCommandSyncManager`): commands written to
-  `users/{uid}/remote_commands` while signed in as the owner run as real turns through
-  `ChatManager.sendUserMessage`. Deliberately a separate Firestore collection from the
-  read-only companion mirror below, gated the same owner-provenance way `TrustGate` gates
-  everything else.
-- Voice-drivable workflows extended to notifications, GitHub, and calendar reminders.
-- Optional Firebase sync (chat/feed/prefs) and a PC companion web client that mirrors
-  conversations read-only — it cannot execute tools; anything it sends is tagged `UNTRUSTED`.
-- GitHub Pages update card + checksum-verified APK install, rollback backup, and Android
-  installer confirmation; the same signed build now also publishes as a GitHub Release, and
-  a verified update starts automatically rather than waiting on a tap.
+| Capability | Android | Windows |
+| --- | --- | --- |
+| Multi-conversation chat and local history | Yes | Yes |
+| Durable owner-confirmed memory | Yes | Yes |
+| OpenAI, Anthropic, DeepSeek, compatible providers | Yes | Yes |
+| Small local Ollama model | Through a paired PC | Directly on the PC |
+| Codex using a ChatGPT subscription | No direct route | Read-only chat and coding delegation |
+| Voice | Realtime or Android speech/TTS | Not connected yet |
+| Notification and screen context | Android notifications and Accessibility | On-demand, read-only UI Automation metadata |
+| Tool/agent mode | Phone tools for cloud models; paired read-only Local Agent | Bounded Local Agent plus separate Codex Projects |
+| Web research | Through the paired Local Agent | Built-in Junction Search and full-page evidence extraction |
+| Phone actions | Gated, approved, verified, audited | Not applicable |
+| Desktop actions | Not remotely exposed | Read-only inspection; no broad desktop mutation |
+| Cross-device state | Opt-in conversations, memory, feed and preferences | Opt-in conversations, memory and read-only feed |
+| Self-update | Permanent, checksum-verified APK channel | No signed update channel yet |
 
-## Android setup
+“Yes” means implemented in this repository. It does not mean every OEM, provider, account, or
+physical-device path has been validated. The remaining external and hardware-dependent gaps live in
+[`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
-1. Open the project in Android Studio.
-2. Settings > add a provider API key (Anthropic, OpenAI, DeepSeek, or a custom OpenAI-compatible
-   base URL) — this is all text chat and tool-calling need. No `google-services.json`, no backend,
-   no Google account required.
-3. Optional, for OpenAI Realtime voice specifically: add the Functions/server endpoint in Settings
-   or `local.properties`:
-   ```
-   JUNCTION_REALTIME_ENDPOINT=https://<region>-<project>.cloudfunctions.net/realtimeSdpExchange
-   JUNCTION_REALTIME_CLIENT_SECRET_ENDPOINT=https://<region>-<project>.cloudfunctions.net/realtimeClientSecret
-   ```
-   Or skip all of this and use the on-device voice backend (Settings > Voice backend), which needs
-   none of it.
-4. Sync Gradle and run `app`.
+## Reasoning paths
 
-## Firebase / Google Sign-In console setup (optional sync only)
+Junction chooses a reasoning engine; it does not pretend every engine has the same abilities.
 
-Everything above works with Firebase untouched. This section is only for opting into cross-device
-sync of chat/feed/prefs.
+### Provider chat
 
-1. Firebase Console: create or select the project.
-2. Project settings -> Your apps -> Add app (Android), package `com.splinch.junction`.
-3. Download `google-services.json` to `apps/android/google-services.json`.
-4. Add SHA fingerprints (SHA-1 required, SHA-256 recommended).
-5. Authentication -> Sign-in method: enable Google.
-6. Google Cloud Console -> Credentials: OAuth Client ID (Android, same package+SHA-1) and OAuth
-   Client ID (Web application) — use the Web Client ID in `local.properties`.
-7. Configure the OAuth consent screen (add your account as a test user if in testing mode).
+Android supports Anthropic, OpenAI, DeepSeek, and custom OpenAI-compatible endpoints. Windows adds
+Groq and stores every provider key separately using Windows `safeStorage`/DPAPI. Android secrets are
+held in encrypted device storage. Keys never synchronize between devices.
 
-Deploy the checked-in Firestore contract before enabling sync:
-```
-firebase deploy --only firestore:rules
-```
-The rules require synchronized chat messages to remain `UNTRUSTED` — companion content can never
-become owner-authorized context.
+Android has a workhorse/frontier split and health-aware fallback across providers the owner has
+already configured. A failed local-provider request is never silently rerouted to a paid cloud
+provider.
 
-## Web (PC companion)
+### Codex on this PC
 
-Read-only mirror of chat/feed; cannot execute tools (see "Injection architecture").
-```
-cd apps/web
-cp .env.example .env   # fill Firebase values, set VITE_REALTIME_ENDPOINT
+Windows can use the installed Codex CLI as a chat workflow. It uses the ChatGPT account already
+signed into that CLI, needs no API key in Junction, and runs ordinary chat read-only.
+
+Coding is a different workflow. From **Projects**, one instruction may target up to three named Git
+repositories. After explicit approval, Junction gives each project its own branch, worktree, and
+Codex thread. Work stops for owner decisions, survives Junction restarts, respects confirmed Codex
+capacity windows, and cannot merge until the reviewed base commit, head commit, and binary diff hash
+still match. Junction never pushes or auto-merges.
+
+See [`docs/DELEGATION_V1.md`](docs/DELEGATION_V1.md) for the exact contract and current hardening gaps.
+
+### Local Junction Brain
+
+Windows can host a small Ollama model on `127.0.0.1`. Pairing creates independent device identities
+and a 256-bit secret stored in Android's encrypted storage and Windows DPAPI storage. Requests and
+streamed responses travel through Firebase as ciphertext bound to the brain, request, and message
+stage; Firebase does not receive the conversation plaintext.
+
+Ordinary Local Brain chat has no network, computer, scheduling, or source tools. When the owner
+explicitly enables **Tools** for a phone conversation—or **Agent** for one Windows message—the PC
+runs a separate bounded Local Agent. It may perform up to three safe searches over five decisions,
+but it cannot mutate either device, send messages, schedule work, or edit code. Every generated
+query passes a deterministic egress check before it leaves the PC.
+
+A local model cannot turn a hallucinated marker into an action. Coding-agent work still starts
+locally from Windows **Projects** and is handed to Codex behind its own approval and review flow.
+
+### Web research
+
+The Windows chat has a one-message **Research** toggle. Junction Search discovers results through a
+public, no-key search endpoint, then retrieves selected pages itself. It accepts only HTTPS public
+hosts, resolves and pins public addresses before every request, refuses destination redirects,
+limits response sizes and content types, extracts bounded text, labels it as untrusted evidence, and asks
+the selected model to cite source passages. Research does not grant the model network access or tools.
+
+**Agent** mode lets the local model request follow-up searches one at a time. Junction owns the
+durable job ledger, source deduplication, evidence budget, citation validation, and stopping rules.
+The model sees only bounded extracted passages and receives a validation error if it invents or omits
+evidence citations.
+
+## Trust is part of the runtime
+
+Junction reads hostile or instruction-shaped material while also possessing useful capabilities.
+That cannot be made safe with a stern system prompt, so the controls sit outside the model.
+
+- **Reader/actor separation.** Untrusted email and captured content go through a tool-free reader
+  path that produces constrained structured output. The actor never receives raw untrusted text as
+  authority.
+- **Persistent provenance.** Context is labelled `OWNER`, `JUNCTION`, or `UNTRUSTED`. Summarizing
+  untrusted material does not make it trusted.
+- **Owner-trigger requirement.** Only a live owner-triggered turn may initiate a state-changing
+  phone tool call. Synced messages, notifications, webpages, and model output are not owner intent.
+- **Fixed risk tiers.** Tool definitions declare `READ`, `INAPP`, `OUTBOUND`, or `DESTRUCTIVE` risk.
+  The model cannot lower its own risk or approve its own plan.
+- **Bound approvals.** Approval is tied to the disclosed plan. Execution, post-condition checks,
+  recovery, cancellation, and the final outcome are audited.
+- **Fail-closed egress.** Unknown tools, malformed arguments, unsafe recipients, changed plans, and
+  unsupported state are rejected rather than guessed through.
+
+This is containment, not a claim that prompt injection has been “solved.” The aim is to prevent
+untrusted content from silently acquiring authority and to keep the blast radius visible and small.
+
+## Android capabilities
+
+- Feed, Chat, Audit, Settings, conversation shelf, and durable Room persistence.
+- Notification ingestion, reply, dismiss, and digest workflows.
+- Accessibility-based `read_screen`, `tap_element`, `set_text`, scroll, Back, and Home with
+  low-fidelity and secure-surface checks.
+- Gmail triage, draft, send, archive, and unsubscribe with thread-recipient constraints.
+- Typed multi-step plans with owner approval, interruption/resume, verification, and recovery.
+- Realtime voice or an on-device speech-recognition/TTS loop, including foreground call handling.
+- Calendar reminders, GitHub source inspection, reviewable PR proposals, and verified self-update.
+- Optional same-owner Firebase sync and an owner-authenticated remote-command channel.
+
+## Windows capabilities
+
+- Native Electron application with local conversations, memory, provider usage estimates, Feed,
+  Audit, Settings, and keyboard-accessible navigation.
+- Per-install device identity; Google/Firebase sign-in through the system browser with PKCE.
+- Provider secrets encrypted with Electron `safeStorage`; Firebase refresh tokens protected by DPAPI.
+- On-demand foreground-app inspection through Windows UI Automation. It records bounded structured
+  metadata, not screenshots, and does not provide coordinate clicking or broad automation.
+- Manual, opt-in convergence of supported conversations and owner memory plus a read-only shared
+  mobile Feed.
+- Direct local Ollama chat, subscription-backed Codex chat, built-in Junction Research, encrypted
+  Local Brain relay, bounded Local Agent, and isolated Codex project delegation.
+
+The Windows client is becoming a first-class part of Junction, but it is not yet at Android parity:
+voice, notification ingestion, integrations, mutation tools, signed distribution, and automatic
+updates still need Windows-native implementations.
+
+## Privacy and data flow
+
+- Chat history, Feed, memory, provider usage, and audit data are local by default.
+- Sync does nothing until the owner signs in and enables it on each device.
+- Provider keys, raw screenshots, raw PC context, tool arguments, local audit rows, and pairing
+  secrets are not synchronized.
+- Shared messages are immutable and provenance-labelled. Deleted conversations and memories use
+  tombstones so another device cannot silently resurrect them.
+- PC context is collected only on request, reduced locally, kept in renderer memory, and attached to
+  one explicit chat request only when the owner chooses.
+- Local Brain plaintext exists only at the paired endpoints. Firebase carries encrypted envelopes
+  and bounded operational state.
+- Telemetry export is explicit and aggregate-only; it excludes message content and tool arguments.
+
+The shared-state protocol is documented in [`docs/SHARED_STATE_V1.md`](docs/SHARED_STATE_V1.md).
+
+## Install and run
+
+### Android
+
+For normal use, tap the APK button at the top of this README. Android will ask you to allow installs
+from the browser or file manager you used. Junction handles later updates through the same artifact.
+
+On first run, choose a provider in Settings and add its API key, or pair a Windows Local Brain. The
+app works without Firebase unless you want sync, remote requests, Realtime voice, or PC pairing.
+
+### Windows development build
+
+```powershell
+cd apps/windows
 npm install
-npm run dev
-```
-
-## Firebase Functions (Realtime SDP exchange — only needed for OpenAI Realtime voice)
-
-```
-cd services/functions
-npm install
-firebase functions:config:set openai.key="YOUR_OPENAI_API_KEY"
-firebase deploy --only functions
-```
-Copy the function URL into Android Settings -> Realtime. Skip this entirely if you're using the
-on-device voice backend or text-only chat.
-
-## Self-hosted server (optional — Realtime relay + OAuth integrations + admin claim, not a chat backend)
-
-Chat itself no longer goes through this server; providers are called directly from the app. This
-server exists only for: minting short-lived Realtime client secrets, the OAuth integration flows
-below, and stamping the single-admin Firebase custom claim.
-```
-cd services/server
-npm install
-cp .env.example .env   # OPENAI_API_KEY, Firebase Admin creds, PUBLIC_BASE_URL, OAuth client IDs
+npm test
 npm start
 ```
-Point Settings -> Realtime at `http://<host>:8787/realtime/client-secret` (and optionally
-`/realtime/sdp-exchange` as a fallback).
 
-## Integrations (OAuth)
+Optional launch configuration:
 
-Google/Slack/GitHub/Notion link through the server above, storing tokens under the signed-in
-Firebase user:
-- Server env per provider: `GOOGLE_CLIENT_ID`/`SECRET`, `SLACK_CLIENT_ID`/`SECRET`,
-  `GITHUB_CLIENT_ID`/`SECRET`, `NOTION_CLIENT_ID`/`SECRET`.
-- Redirect URI: `${PUBLIC_BASE_URL}/integrations/<provider>/callback`.
-- App deep link on success: `junction://oauth-callback?provider=<provider>&status=connected`.
-- Endpoints: `POST /integrations/<provider>/start|sync|disconnect`.
+```powershell
+$env:JUNCTION_FIREBASE_API_KEY = '<firebase web api key>'
+$env:JUNCTION_FIREBASE_PROJECT_ID = '<firebase project id>'
+$env:JUNCTION_GOOGLE_DESKTOP_CLIENT_ID = '<desktop OAuth client id>'
+```
 
-## Admin (single-owner)
+Firebase values enable identity, shared state, and Local Brain pairing. Web research needs no key or
+separate search service. For local inference, run Ollama on its standard loopback endpoint and select the
+local model in **Settings → AI & models**. For Codex workflows, install Codex, run `codex login`, and
+select **Codex on this PC**.
 
-Set `ADMIN_EMAIL` (Functions config or server `.env`) to stamp `admin=true` on that account only.
-Refresh the ID token (sign out/in, or any Settings action calling `getIdToken(true)`) to pick it up.
+Package Windows with `npm run pack` for an unpacked build or `npm run dist` for an NSIS installer.
+The installer is currently unsigned, so SmartScreen will warn.
 
-## Voice
+### Android development build
 
-Settings > Voice backend chooses:
+1. Open the repository in Android Studio.
+2. Select the `app` configuration; the Gradle module lives at `apps/android`.
+3. Add any local provider/Firebase values to `local.properties` as described in
+   [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+4. Sync Gradle and run on an emulator or device.
 
-- **Realtime** — OpenAI's WebRTC voice API, low latency, needs the Functions/server relay above and sign-in.
-- **On-device** — Android's `SpeechRecognizer`/`TextToSpeech`, routed through your configured text provider. Higher latency, works with any provider, and needs neither Firebase nor the server.
+Firebase is optional at build time. If `apps/android/google-services.json` is absent, the Google
+plugins are not applied and local chat still builds.
 
-A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. Junction can explain a proposed GitHub change by voice and can read its own source on request, but voice alone never approves a plan, merges a PR, or installs an APK: those remain deliberate on-screen actions.
-## Privacy posture
+### Optional server components
 
-- Notification ingestion, feed, chat history, memory, and the audit log are local-only by default.
-- Sync requires explicit Google sign-in and an explicit Settings toggle (default off).
-- Telemetry export is an explicit, owner-initiated action and contains aggregate metrics only —
-  never message content or tool arguments (`evaluation/TelemetryExporter.kt`).
-- No data leaves the device unless you enable sync, Realtime voice, the self-hosted server, or an
-  egress tool call you've approved.
+- `services/functions` provides the OpenAI Realtime SDP/client-secret exchange.
+- `services/server` provides the self-hosted Realtime relay, OAuth integrations, and single-admin
+  claim helper. It is not the normal text-chat backend.
+- `services/pc-companion` is the loopback-only Windows platform adapter used for bounded local
+  context and Ollama compatibility.
+- `apps/web` is the earlier React/Vite read-only web companion.
+
+Deploy the checked-in Firestore contract before enabling shared state or pairing:
+
+```powershell
+firebase deploy --only firestore:rules
+```
+
+## Repository layout
+
+```text
+apps/android/          Android app and trust-controlled mobile runtime
+apps/windows/          Native Windows client and local command centre
+apps/web/              Read-only web companion
+avatar/                Reusable Android avatar renderer
+services/functions/    Firebase functions for Realtime support
+services/server/       Optional integrations and relay server
+services/pc-companion/ Loopback Windows platform adapter
+services/build-calculator/
+tools/companion/       Local diagnostic/control CLI
+docs/                  Architecture, protocols, limitations, and validation notes
+```
+
+The Android package map is in [`docs/CODEBASE_MAP.md`](docs/CODEBASE_MAP.md); the broader runtime
+design is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Update pipeline / direct APK releases
 
@@ -283,33 +353,61 @@ does not carry the published version code.
 
 ## Junction changing its own code
 
-Junction can inspect its own fixed GitHub repository, `SplinchGit/Junction`, using a fine-grained token stored in the encrypted Android key store. It is deliberately a **referential** source view: Junction lists the tree and reads only the folders/files relevant to the change at hand. It does not clone the repository or attach it to ordinary chat context.
+Android can inspect bounded excerpts from the fixed `SplinchGit/Junction` repository and propose a
+multi-file pull request on a new `junction/...` branch. It cannot target `main`, edit workflows, or
+read/write signing and local secret material. The exact payload requires on-screen approval;
+“always allow” is unavailable.
 
-Read source is held in a bounded, in-memory reference cache for one following turn, then discarded. At most a 6,000-character source index, four selected file excerpts, and 36,000 characters of source can enter that turn. The reference material consumes the same turn budget as chat history, keeping ordinary voice and chat turns cheap while letting the model work from the actual current implementation rather than guessing.
+CI must pass before Junction offers a separate merge action. The branch must still be mergeable and
+the owner must approve again. A merge triggers the normal APK pipeline above.
 
-`propose_code_change` creates one reviewable multi-file pull request on a new `junction/...` branch. It can change up to 12 source files atomically, but cannot target `main`, alter CI workflows, or read/write signing and local secret material. The proposal is `DESTRUCTIVE`, so Junction always shows the owner its exact file payload and waits for an on-screen approval tap before creating the PR. “Always allow” is unavailable for repository changes.
+Windows delegation is broader but remains local: Codex works in isolated worktrees, Junction binds
+review to the exact diff, and only the owner can merge. Neither path grants the model authority to
+rewrite Junction silently.
 
-GitHub Actions builds and runs unit tests for the PR. Junction can check that PR's state and, only when GitHub reports the Junction branch mergeable with successful checks, offer a separate on-screen **Merge PR** action. It never pushes directly to `main` and never auto-merges. A merged PR triggers the normal signed GitHub Pages APK pipeline; the in-app update card then downloads, checks, backs up, and hands the update to Android's installer.
-## Device validation
+## Validation
 
-```
-.\gradlew :app:testDebugUnitTest --no-daemon
+```powershell
+# Android unit tests and build
+.\gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
+
+# Android instrumentation tests (device or emulator required)
 .\gradlew :app:connectedDebugAndroidTest --no-daemon
+
+# Windows client
+cd apps/windows
+npm test
+
+# Loopback companion
+cd ../../services/pc-companion
+npm test
 ```
-`connectedDebugAndroidTest` needs a running emulator or USB-debuggable device (CI provisions one
-automatically). Before shipping, also verify on a real device: notification reply/dismiss only
-touches the originating notification; an accessibility-driven `open_app` only reports success once
-the target package is actually foreground; a Gmail draft keeps the thread's own recipient; a
-PC-companion message never proposes or executes an action; Shizuku status only flips to available
-once its own service is actually running; a corrupted release checksum blocks install.
+
+Before trusting phone actions in daily use, validate notification replies, Accessibility targeting,
+Gmail recipients, voice background behaviour, Shizuku state, pairing/revocation, and corrupted-update
+rejection on a physical device. Before treating Windows delegation as merge automation, independently
+rerun project tests and inspect the preserved worktree and diff.
+
+## Current boundaries
+
+- No wake-word detector or Bixby remap.
+- No bundled Android keyboard fallback for apps that reject Accessibility text entry.
+- APK installation still ends in Android's system confirmation UI; it is not fully silent.
+- The Local Agent has read-only web research, not arbitrary computer or state-changing tools.
+- Junction Search relies on a public no-auth discovery endpoint; the guarded retrieval, extraction,
+  evidence, citation, and agent layers are Junction-owned, but Junction does not operate a web index.
+- Windows desktop context is read-only and collected only on request.
+- Windows distribution is not signed and has no automatic updater.
+- Shared-state retention and Android cursor pagination need hardening for large-scale use.
+- Device/OEM-dependent paths still require physical-device validation.
+
+Those boundaries are design constraints until their trust, lifecycle, and failure behaviour are
+implemented—not promises delegated to a model.
 
 ## Local repo update helper
 
-```
+```powershell
 .\scripts\update.ps1
 ```
+
 Runs `git pull` and refreshes web dependencies if present.
-
----
-
-If build errors appear, share them and we will patch fast.

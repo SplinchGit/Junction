@@ -54,6 +54,12 @@ class CodexAppServer {
   notify(method, params = {}) { this.process?.stdin?.writable && this.process.stdin.write(`${JSON.stringify({ method, params })}\n`); }
   onEvent(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
+  /** Reads the ChatGPT-account windows used by this local Codex login. */
+  async readRateLimits() {
+    await this.start();
+    return this.request("account/rateLimits/read");
+  }
+
   async run({ threadId, cwd, prompt, model = "gpt-5.6-terra", onProgress = () => {}, onTurnStarted = () => {} }) {
     await this.start();
     if (threadId) await this.request("thread/resume", { threadId });

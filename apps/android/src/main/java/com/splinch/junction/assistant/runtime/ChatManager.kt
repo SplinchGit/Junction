@@ -209,7 +209,7 @@ class ChatManager(
     val connectionState: StateFlow<RealtimeConnectionState> = voiceCoordinator.connectionState
     val speechModeEnabled: StateFlow<Boolean> = voiceCoordinator.speechModeEnabled
 
-    private val _agentToolsEnabled = MutableStateFlow(true)
+    private val _agentToolsEnabled = MutableStateFlow(false)
     val agentToolsEnabled: StateFlow<Boolean> = _agentToolsEnabled.asStateFlow()
 
     val micEnabled: StateFlow<Boolean> = voiceCoordinator.micEnabled
@@ -413,7 +413,17 @@ class ChatManager(
 
         val turnJob = scope.launch(Dispatchers.IO) {
             val contextBlocks = buildContextBlocks(activeProvider)
-            val tools = if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
+            val tools = when {
+                !_agentToolsEnabled.value -> emptyList()
+                activeProvider.id == "local" -> listOf(
+                    ToolDefinition(
+                        name = "junction_local_agent",
+                        description = "Signal the paired PC to run Junction's bounded, read-only local agent.",
+                        parametersJson = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"
+                    )
+                )
+                else -> ToolRegistry.allDefinitions()
+            }
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
             var accumulatedThinking: String? = null

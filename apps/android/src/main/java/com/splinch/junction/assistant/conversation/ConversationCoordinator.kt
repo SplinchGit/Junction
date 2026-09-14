@@ -171,6 +171,6 @@ class ConversationCoordinator(
         startedAt = now(),
         messages = emptyList(),
         speechModeEnabled = false,
-        agentToolsEnabled = true
+        agentToolsEnabled = false
     )
 }

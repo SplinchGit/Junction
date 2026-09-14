@@ -40,7 +40,12 @@ class JunctionPcProvider : LlmProvider {
             }
             val requestId = UUID.randomUUID().toString()
             val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
-            val plain = JSONObject().apply { put("model", workhorseModel); put("messages", messages) }.toString()
+            val agentMode = tools.any { it.name == LOCAL_AGENT_SIGNAL }
+            val plain = JSONObject().apply {
+                put("model", workhorseModel)
+                put("messages", messages)
+                put("mode", if (agentMode) "agent" else "chat")
+            }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)
             document.set(mapOf("id" to requestId, "clientUid" to uid, "status" to "pending", "ciphertext" to ciphertext, "nonce" to nonce, "createdAt" to Timestamp.now(), "source" to SOURCE)).await()
@@ -93,7 +98,7 @@ class JunctionPcProvider : LlmProvider {
                 }
             }
             val timeout = launch {
-                delay(REQUEST_TIMEOUT_MS)
+                delay(if (agentMode) AGENT_REQUEST_TIMEOUT_MS else REQUEST_TIMEOUT_MS)
                 if (!terminal) {
                     terminal = true
                     trySend(LlmEvent.Activity(""))
@@ -112,9 +117,11 @@ class JunctionPcProvider : LlmProvider {
         const val MAX_CONTEXT_BLOCKS = 18
         const val MAX_BLOCK_CHARS = 4_000
         const val REQUEST_TIMEOUT_MS = 150_000L
+        const val AGENT_REQUEST_TIMEOUT_MS = 360_000L
         // The desktop relay updates its signed-in heartbeat every 15 seconds.
         // This generous window tolerates a brief network handover without
         // making the first phone message wait for the full request timeout.
         const val PC_ONLINE_WINDOW_MS = 45_000L
+        const val LOCAL_AGENT_SIGNAL = "junction_local_agent"
     }
 }

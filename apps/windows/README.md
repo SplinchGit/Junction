@@ -18,6 +18,12 @@ it is never exposed to the LAN.
   raw UI metadata sync, or desktop mutation capability.
 - Local desktop Chat, Feed, Audit, Context & devices, Settings, memory, provider
   routing/usage, and a keyboard-accessible conversation drawer.
+- Built-in Junction Search with no API key or companion service: guarded public-HTTPS
+  retrieval, DNS/IP pinning, zero destination redirects, bounded extraction, durable evidence
+  jobs, and passage citations.
+- A per-message Local Agent mode for Ollama. Its schema-constrained loop may search up
+  to three times across five decisions; deterministic egress and citation validation sit
+  outside the model, and no mutation tools are exposed.
 - **Codex on this PC** is a selectable chat workflow. It invokes the locally
   installed, ChatGPT-signed-in Codex CLI in read-only, ephemeral mode, so it
   uses the subscription attached to that CLI login instead of storing an API
@@ -39,9 +45,9 @@ trees are dirty and Civlets is not a Git repository, so they correctly appear as
 
 ## Cloud and credential policy
 
-Cloud/API-backed reasoning is the intended reasoning path for this Windows app.
-Ollama discovery remains in the local service only as a harmless optional status
-check; it is not selected by default and no model is downloaded.
+Cloud/API-backed reasoning and local Ollama are both supported reasoning paths.
+Junction never downloads a model automatically. Local chat and Local Agent use the
+owner's loopback-only Ollama installation when explicitly selected.
 
 To use the Codex chat workflow, install the Codex CLI and sign in on the same
 Windows account (`codex login`). Then choose **Codex on this PC** and a model in

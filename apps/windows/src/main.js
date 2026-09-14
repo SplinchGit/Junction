@@ -15,8 +15,11 @@ const { providers, estimate } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
 const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
 const { LocalBrainRelay } = require("./local-brain-relay");
+const { WebResearchClient, researchContext, sourceAppendix } = require("./web-research");
+const { ResearchCoordinator } = require("./research-coordinator");
+const { LocalAgentRuntime } = require("./local-agent-runtime");
 
-let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, isQuitting=false;
+let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false;
 const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
 function hydrateFirebaseEnvironment() {
@@ -32,7 +35,43 @@ function hydrateFirebaseEnvironment() {
   } catch {}
 }
 
-async function createWindow() {
+function recordStartupIssue(component, error) {
+  // Startup diagnostics must never be allowed to prevent the desktop window
+  // from appearing. Keep the log local and deliberately avoid recording tokens
+  // or request data.
+  try {
+    const directory = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(directory, { recursive: true });
+    fs.appendFileSync(path.join(directory, "startup.log"), `${new Date().toISOString()} ${component}: ${String(error?.stack || error?.message || error).slice(0, 2000)}\n`);
+  } catch {}
+}
+
+async function startCompanion() {
+  const options = { token: crypto.randomBytes(32).toString("base64url"), auditPath };
+  try {
+    return await companionModule().startCompanion({ ...options, port: 43110 });
+  } catch (error) {
+    // A stale development companion or a previous Junction process can retain
+    // the fixed port briefly on Windows. The desktop UI and explicit inspection
+    // remain safe on a fresh loopback-only port, so do not make the whole app
+    // unavailable while that process winds down.
+    if (error?.code !== "EADDRINUSE") throw error;
+    recordStartupIssue("pc-companion fixed-port unavailable; using an ephemeral loopback port", error);
+    return companionModule().startCompanion({ ...options, port: 0 });
+  }
+}
+
+async function showStartupFailure(error) {
+  recordStartupIssue("window startup failed", error);
+  const window = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow
+    : new BrowserWindow({ width: 760, height: 420, minWidth: 640, minHeight: 360, backgroundColor: "#090b10" });
+  mainWindow = window;
+  const detail = String(error?.message || error || "Unknown startup error").replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]);
+  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><title>Junction recovery</title><body style="margin:0;background:#090b10;color:#edf1f7;font:16px system-ui;padding:48px"><h1>Junction needs attention</h1><p>The app opened in recovery mode instead of silently failing.</p><pre style="white-space:pre-wrap;color:#ffb4ab">${detail}</pre><p>Close Junction and open it again. If this repeats, share the startup log from Junction's app-data <code>logs</code> folder with support.</p></body>`)}`);
+}
+
+async function createWindowImpl() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show(); mainWindow.focus(); return mainWindow;
   }
@@ -41,6 +80,9 @@ async function createWindow() {
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  researchClient = new WebResearchClient();
+  researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
+  localAgent = new LocalAgentRuntime({ researchCoordinator });
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
   localBrainRelay = new LocalBrainRelay({
     projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
@@ -49,16 +91,17 @@ async function createWindow() {
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
+    runLocalAgent: request => localAgent.run(request),
     // A local model can request a coding task, but never applies code itself.
     // This creates only the existing approval-gated Codex worktree draft.
     createCodeDelegation: async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] })
   });
   localBrainRelay.start();
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
-  // Fixed loopback port: a private overlay can forward *only* to this local
-  // gateway. The companion never binds a LAN/public interface and Ollama stays
-  // on its own loopback socket.
-  companion = await companionModule().startCompanion({ port: 43110, token: crypto.randomBytes(32).toString("base64url"), auditPath });
+  // Prefer the fixed loopback port for the private overlay. If a stale process
+  // still owns it, start a fresh loopback-only endpoint rather than failing the
+  // entire desktop launch. Ollama stays on its own loopback socket.
+  companion = await startCompanion();
   const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow = window;
   // Only the Windows-login instance is intentionally headless. A normal
@@ -68,9 +111,28 @@ async function createWindow() {
     if (launchInBackground && !isQuitting) { event.preventDefault(); window.hide(); }
   });
   window.on("closed", () => { mainWindow = null; });
-  await window.loadFile(path.join(__dirname, "../renderer/index.html"));
+  try {
+    await window.loadFile(path.join(__dirname, "../renderer/index.html"));
+  } catch (error) {
+    recordStartupIssue("renderer load failed", error);
+    await showStartupFailure(error);
+    return mainWindow;
+  }
   reconcilePendingDeregistration().catch(()=>{});
   scheduleSharedSync();
+  return window;
+}
+
+async function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show(); mainWindow.focus(); return mainWindow;
+  }
+  if (windowCreation) return windowCreation;
+  windowCreation = createWindowImpl().catch(async error => {
+    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+    return showStartupFailure(error);
+  }).finally(() => { windowCreation = null; });
+  return windowCreation;
 }
 
 function bindOwner(session){
@@ -158,10 +220,17 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   let conversation=localData.conversation(request.conversationId); if(!conversation) conversation=localData.createConversation();
   localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
   const config=localData.provider();
-  const reply=config.id==="codex"
-    ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, workingDirectory: app.getPath("userData") })
-    : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null});
-  const message=localData.addMessage(conversation.id,"assistant",reply.content,"JUNCTION");
+  if (request.agent && config.id !== "local") throw new Error("Local Agent mode requires the Local LLM workflow. Codex agents live in Projects.");
+  const research = request.research ? await researchCoordinator.run(content) : null;
+  const researchInstructions = research ? researchContext(research) : null;
+  const reply=request.agent
+    ? await localAgent.run({ goal: content, model: config.model || "qwen3:1.7b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null })
+    : config.id==="codex"
+      ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
+      : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});
+  const contentWithSources = research ? `${reply.content.trim()}\n\n${sourceAppendix(research)}` : reply.content;
+  if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
+  const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
   const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);
   localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens)});
   scheduleSharedSync();
@@ -173,6 +242,8 @@ ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory
 ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:config.id==="local"||Boolean(config.id&&identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
 ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(config.id!=="codex"&&config.id!=="local"&&String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:config.id==="local"||Boolean(identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
 ipcMain.handle("junction:codex-status", () => getCodexStatus());
+ipcMain.handle("junction:research-status", () => researchClient.status());
+ipcMain.handle("junction:research-jobs", () => researchCoordinator.list());
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
 ipcMain.handle("junction:open-mafioso", async () => {
