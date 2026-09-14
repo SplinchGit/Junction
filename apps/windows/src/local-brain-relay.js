@@ -41,8 +41,8 @@ async function readNdjson(stream, onEvent) {
 
 /** PC-only endpoint for encrypted, paired local inference. */
 class LocalBrainRelay {
-  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, now = () => Date.now() }) {
-    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
+  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, onCommandStarted = null, now = () => Date.now() }) {
+    Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
@@ -107,6 +107,7 @@ class LocalBrainRelay {
   async run(state, item) {
     const id = item.data.id || item.document.name.split("/").pop();
     try {
+      this.onCommandStarted?.();
       await this.update(item.document, state.session, { status: "running", leaseUntilMs: this.now() + LEASE_MS, error: "" }, item.document.updateTime);
       const plaintext = crypt(state.key, `JBP1|${state.brainId}|${id}|request`, Buffer.from(item.data.ciphertext, "base64url"), Buffer.from(item.data.nonce, "base64url"), false);
       const payload = JSON.parse(plaintext);

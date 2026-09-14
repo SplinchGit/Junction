@@ -46,6 +46,9 @@ async function createWindow() {
     projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
     getState: freshLocalBrainState,
     workspacePath: junctionRepository,
+    onCommandStarted: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+    },
     // A local model can request a coding task, but never applies code itself.
     // This creates only the existing approval-gated Codex worktree draft.
     createCodeDelegation: async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] })
