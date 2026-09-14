@@ -61,11 +61,11 @@ async function createWindow() {
   companion = await companionModule().startCompanion({ port: 43110, token: crypto.randomBytes(32).toString("base64url"), auditPath });
   const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow = window;
-  // The relay is the PC-side endpoint for a paired phone. Closing the visible
-  // window must not silently take that endpoint offline; explicitly quitting
-  // Junction still exits the process.
+  // Only the Windows-login instance is intentionally headless. A normal
+  // desktop launch must retain conventional close/open behaviour; otherwise a
+  // hidden process can make Junction appear unable to open.
   window.on("close", event => {
-    if (!isQuitting) { event.preventDefault(); window.hide(); }
+    if (launchInBackground && !isQuitting) { event.preventDefault(); window.hide(); }
   });
   window.on("closed", () => { mainWindow = null; });
   await window.loadFile(path.join(__dirname, "../renderer/index.html"));
