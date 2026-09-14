@@ -81,35 +81,12 @@ const OAUTH_PROVIDERS = {
     scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/calendar.readonly"],
     usesBasicAuth: false
   },
-  slack: {
-    authorizeUrl: "https://slack.com/oauth/v2/authorize",
-    tokenUrl: "https://slack.com/api/oauth.v2.access",
-    scopes: [
-      "channels:read",
-      "channels:history",
-      "groups:read",
-      "groups:history",
-      "im:read",
-      "im:history",
-      "mpim:read",
-      "mpim:history",
-      "users:read",
-      "chat:write"
-    ],
-    usesBasicAuth: false
-  },
   github: {
     authorizeUrl: "https://github.com/login/oauth/authorize",
     tokenUrl: "https://github.com/login/oauth/access_token",
     scopes: ["read:org", "repo", "notifications"],
     usesBasicAuth: false
   },
-  notion: {
-    authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
-    tokenUrl: "https://api.notion.com/v1/oauth/token",
-    scopes: [],
-    usesBasicAuth: true
-  }
 };
 
 function getProviderConfig(provider) {
@@ -133,16 +110,12 @@ function buildAuthorizeUrl(provider, clientId, state) {
   params.set("redirect_uri", redirectUri);
   params.set("response_type", "code");
   params.set("state", state);
-  if (provider === "notion") {
-    params.set("owner", "user");
-  }
   if (provider === "google") {
     params.set("access_type", "offline");
     params.set("prompt", "consent");
   }
   if (cfg.scopes && cfg.scopes.length > 0) {
-    const delimiter = provider === "slack" ? "," : " ";
-    params.set("scope", cfg.scopes.join(delimiter));
+    params.set("scope", cfg.scopes.join(" "));
   }
   return `${cfg.authorizeUrl}?${params.toString()}`;
 }
@@ -299,27 +272,6 @@ async function exchangeCode(provider, code) {
     throw new Error(`Missing ${provider.toUpperCase()} client credentials`);
   }
 
-  if (provider === "notion") {
-    const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
-    const response = await fetch(cfg.tokenUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${authHeader}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: redirectUri
-      })
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error("Notion token exchange failed");
-    }
-    return data;
-  }
-
   const body = new URLSearchParams();
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
@@ -345,10 +297,6 @@ async function exchangeCode(provider, code) {
   const data = await response.json();
   if (!response.ok || data.error) {
     throw new Error("Token exchange failed");
-  }
-
-  if (provider === "slack" && data.ok === false) {
-    throw new Error("Slack token exchange failed");
   }
 
   return data;
@@ -750,12 +698,6 @@ app.get("/integrations/:provider/callback", async (req, res) => {
       tokenType: tokenData.token_type || tokenData.tokenType || null,
       expiresAt
     };
-    if (provider === "slack") {
-      payload.botToken = tokenData.access_token || null;
-      payload.userToken = tokenData.authed_user?.access_token || null;
-      payload.teamId = tokenData.team?.id || null;
-      payload.userId = tokenData.authed_user?.id || null;
-    }
     if (provider === "github") {
       payload.scope = tokenData.scope || payload.scope;
     }

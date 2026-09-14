@@ -259,8 +259,8 @@ service cloud.firestore {
           && request.resource.data.ciphertext is string && request.resource.data.ciphertext.size() <= 60000
           && request.resource.data.nonce is string && request.resource.data.nonce.size() <= 64;
         allow update: if isBrainPc()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','thinkingCiphertext','thinkingNonce','tokensPerSecond','error'])
-          && request.resource.data.status in ['processing','done','error'];
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','thinkingCiphertext','thinkingNonce','tokensPerSecond','partialCiphertext','partialNonce','streamSequence','leaseUntilMs','error'])
+          && request.resource.data.status in ['running','streaming','done','error'];
         allow delete: if false;
       }
     }

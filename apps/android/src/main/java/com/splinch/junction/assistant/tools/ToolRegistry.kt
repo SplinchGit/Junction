@@ -160,15 +160,6 @@ object ToolRegistry {
 
         register(
             RegisteredTool(
-                name = "install_apk",
-                description = "Silently install a previously downloaded, checksum-verified APK via Shizuku. Requires the owner to have enabled Shizuku access in Settings.",
-                parametersJson = """{"type":"object","properties":{"path":{"type":"string","description":"Absolute path to a previously downloaded, checksum-verified APK file"}},"required":["path"]}""",
-                riskTier = RiskTier.DESTRUCTIVE,
-                summarize = { args -> "Install APK: ${args.optString("path")}" }
-            )
-        )
-        register(
-            RegisteredTool(
                 name = "list_junction_source",
                 description = "List tracked text-file paths in a GitHub repository at main. Use this before reading source for a proposed change; optionally narrow it to a repository-relative folder.",
                 parametersJson = """{"type":"object","properties":{"prefix":{"type":"string","description":"Optional repository-relative folder such as apps/android/src/main/java/com/splinch/junction"},"repository":{"type":"string","description":"GitHub repository in owner/name form"}}}""",

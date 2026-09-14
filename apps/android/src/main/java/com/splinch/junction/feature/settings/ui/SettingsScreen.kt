@@ -48,8 +48,6 @@ import com.splinch.junction.assistant.runtime.ChatManager
 import com.splinch.junction.assistant.provider.ModelCatalog
 import com.splinch.junction.app.config.AppConfig
 import com.splinch.junction.feature.feed.FeedRepository
-import com.splinch.junction.platform.shizuku.ShizukuCapability
-import com.splinch.junction.platform.shizuku.ShizukuStatus
 import com.splinch.junction.feature.scheduler.Scheduler
 import com.splinch.junction.feature.update.ui.UpdateSettingsSection
 import com.splinch.junction.data.secret.KeyStorage
@@ -108,7 +106,6 @@ fun SettingsScreen(
     val disabledPackages by userPrefs.disabledPackagesFlow.collectAsState(initial = emptySet())
     val connectedIntegrations by userPrefs.connectedIntegrationsFlow.collectAsState(initial = emptySet())
     val firebaseSyncEnabled by userPrefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
-    val shizukuEnabled by userPrefs.shizukuEnabledFlow.collectAsState(initial = false)
     val user by authManager.userFlow.collectAsState()
 
     val keyStorage = remember { KeyStorage(context) }
@@ -124,11 +121,6 @@ fun SettingsScreen(
     val localBrainQrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         if (result.contents.isNullOrBlank()) localPairingStatus = "QR scan cancelled."
         else { localPairingCode = result.contents; localPairingStatus = "QR scanned. Tap Pair this phone to confirm." }
-    }
-    var shizukuStatus by remember { mutableStateOf(ShizukuCapability.status(shizukuEnabled)) }
-
-    LaunchedEffect(shizukuEnabled) {
-        shizukuStatus = ShizukuCapability.status(shizukuEnabled)
     }
 
     var chatModelInput by remember { mutableStateOf(chatModel) }
@@ -175,14 +167,6 @@ fun SettingsScreen(
                 connected = connectedIntegrations.contains("google")
             ),
             IntegrationItem(
-                id = "slack",
-                name = "Slack",
-                description = "Mentions, DMs, and priority channels.",
-                status = if (connectedIntegrations.contains("slack")) "Connected" else "Ready to connect",
-                enabled = !connectedIntegrations.contains("slack"),
-                connected = connectedIntegrations.contains("slack")
-            ),
-            IntegrationItem(
                 id = "github",
                 name = "GitHub",
                 description = "PRs, issues, and review requests.",
@@ -190,14 +174,6 @@ fun SettingsScreen(
                 enabled = !connectedIntegrations.contains("github"),
                 connected = connectedIntegrations.contains("github")
             ),
-            IntegrationItem(
-                id = "notion",
-                name = "Notion",
-                description = "Tasks and knowledge updates.",
-                status = if (connectedIntegrations.contains("notion")) "Connected" else "Ready to connect",
-                enabled = !connectedIntegrations.contains("notion"),
-                connected = connectedIntegrations.contains("notion")
-            )
         )
     }
 
@@ -615,7 +591,7 @@ fun SettingsScreen(
                 value = allowedWebDomainsInput,
                 onValueChange = { allowedWebDomainsInput = it },
                 label = "Allowed domains",
-                placeholder = "calendar.google.com\napp.slack.com",
+                placeholder = "calendar.google.com",
                 singleLine = false,
                 minLines = 3
             )
@@ -1017,53 +993,6 @@ fun SettingsScreen(
                             Text("Delete")
                         }
                     }
-                }
-            }
-        }
-
-        item {
-            Text(text = "Privileged access", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "Connect to the owner-run Shizuku service. This does not enable any additional Junction actions until a capability is explicitly added and approved.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(text = "Enable Shizuku access", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = shizukuEnabled,
-                    onCheckedChange = { enabled ->
-                        scope.launch { userPrefs.setShizukuEnabled(enabled) }
-                    }
-                )
-            }
-            Text(
-                text = when (shizukuStatus) {
-                    ShizukuStatus.DISABLED -> "Shizuku access is disabled."
-                    ShizukuStatus.NOT_RUNNING -> "Shizuku is not running on this device."
-                    ShizukuStatus.PERMISSION_REQUIRED -> "Shizuku is running and needs your permission."
-                    ShizukuStatus.AVAILABLE -> "Shizuku permission is available."
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-            if (shizukuStatus == ShizukuStatus.PERMISSION_REQUIRED) {
-                Button(onClick = {
-                    if (!ShizukuCapability.requestPermission(shizukuEnabled)) {
-                        Toast.makeText(context, "Shizuku permission request could not be started.", Toast.LENGTH_SHORT).show()
-                    }
-                    shizukuStatus = ShizukuCapability.status(shizukuEnabled)
-                }) {
-                    Text("Grant Shizuku permission")
-                }
-            }
-            if (shizukuEnabled && shizukuStatus != ShizukuStatus.PERMISSION_REQUIRED) {
-                TextButton(onClick = {
-                    shizukuStatus = ShizukuCapability.status(shizukuEnabled)
-                }) {
-                    Text("Refresh Shizuku status")
                 }
             }
         }

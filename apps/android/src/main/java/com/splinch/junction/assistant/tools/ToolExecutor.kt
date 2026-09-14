@@ -119,7 +119,6 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
                 }
             )
         }
-        "install_apk" -> installApk(call)
         "list_junction_source" -> listJunctionSource(call)
         "read_junction_source" -> readJunctionSource(call)
         "propose_code_change" -> proposeCodeChange(call)
@@ -188,23 +187,6 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         .toString()
 
     fun consumeGitHubSourceContext(): String? = githubSourceContext.consumeForPrompt()
-
-    private suspend fun installApk(call: PendingToolCall): ToolApplyResult {
-        val path = call.arguments.optString("path")
-        if (path.isBlank()) return ToolApplyResult("", errorOutput("Missing path"))
-        val ownerEnabled = prefs.shizukuEnabledFlow.first()
-        return when (
-            val result = com.splinch.junction.platform.shizuku.ShizukuInstaller(appContext)
-                .install(File(path), ownerEnabled)
-        ) {
-            is com.splinch.junction.platform.shizuku.ShizukuInstallResult.Started -> ToolApplyResult(
-                confirmation = "Install session started (session ${result.sessionId}). Approve the system install prompt if shown.",
-                toolOutput = successOutput("install_apk", result.sessionId.toString())
-            )
-            is com.splinch.junction.platform.shizuku.ShizukuInstallResult.Failed ->
-                ToolApplyResult("", errorOutput("${result.reason}: ${result.diagnostic}"))
-        }
-    }
 
     private fun contributor(repository: String? = null): GitHubContributor {
         return GitHubContributor(

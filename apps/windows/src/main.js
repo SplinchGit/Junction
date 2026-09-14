@@ -13,7 +13,7 @@ const { sendChat } = require("./provider-client");
 const { getCodexStatus, sendCodexChat } = require("./codex-client");
 const { providers, estimate } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
-const { DelegationCoordinator } = require("./delegation-coordinator");
+const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
 const { LocalBrainRelay } = require("./local-brain-relay");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null;
@@ -36,8 +36,16 @@ async function createWindow() {
   identityStore = new DeviceIdentityStore(path.join(app.getPath("userData"), "identity"), safeStorage);
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
-  delegation = new DelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
-  localBrainRelay = new LocalBrainRelay({ projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID, getState: freshLocalBrainState });
+  delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
+  localBrainRelay = new LocalBrainRelay({
+    projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
+    getState: freshLocalBrainState,
+    workspacePath: junctionRepository,
+    // A local model can request a coding task, but never applies code itself.
+    // This creates only the existing approval-gated Codex worktree draft.
+    createCodeDelegation: async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] })
+  });
   localBrainRelay.start();
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   // Fixed loopback port: a private overlay can forward *only* to this local
@@ -72,9 +80,10 @@ async function enableLocalBrain(){
   await localBrainRelay.request(localBrainRelay.root(brainId),session,{method:"PATCH",body:JSON.stringify({fields:{pcUid:{stringValue:session.uid},status:{stringValue:"active"}}})});
   await localBrainRelay.create(brainId,`pairings/${pairId}`,session,{status:"pending",pcUid:session.uid,expiresAtMs:Date.now()+10*60_000});
   const code=`JBP1.${brainId}.${pairId}.${secret}`;
-  // Pairing material is deliberately long; maximise camera readability rather
-  // than styling this like a decorative icon.
-  return { code, qrDataUrl:await QRCode.toDataURL(code,{errorCorrectionLevel:"L",margin:4,width:720,color:{dark:"#000000",light:"#ffffff"}}), expiresAt:Date.now()+10*60_000, brainId };
+  // A conventional desktop-sized QR is easier to scan without overwhelming the
+  // pairing screen. The payload is still a 256-bit secret, so error correction
+  // stays intentionally low and the manual code remains available as fallback.
+  return { code, qrDataUrl:await QRCode.toDataURL(code,{errorCorrectionLevel:"L",margin:4,width:360,color:{dark:"#000000",light:"#ffffff"}}), expiresAt:Date.now()+10*60_000, brainId };
 }
 async function reconcilePendingDeregistration(){
   if(!identity?.deregisterPending)return;const session=await freshSession();bindOwner(session);
@@ -89,7 +98,7 @@ async function syncSharedState(){
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
-ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState();return {enabled:Boolean(state),brainId:state?.brainId||null,model:"qwen3:1.7b"};});
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState();return {enabled:Boolean(state),brainId:state?.brainId||null,model:"qwen3:1.7b",relayError:localBrainRelay?.lastError||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
 ipcMain.handle("junction:revoke-local-brain",()=>{identityStore.setSecureValue("local-brain-v1","");return {enabled:false};});
 ipcMain.handle("junction:sign-in", async () => {

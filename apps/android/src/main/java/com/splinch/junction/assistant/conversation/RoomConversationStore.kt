@@ -105,7 +105,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             imagePath = imagePath,
             imageSummary = imageSummary,
             modelLabel = modelLabel,
-            thinking = thinking
+            thinking = thinking,
+            tokensPerSecond = tokensPerSecond
         )
     }
 
@@ -121,7 +122,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             imagePath = imagePath,
             imageSummary = imageSummary,
             modelLabel = modelLabel,
-            thinking = thinking
+            thinking = thinking,
+            tokensPerSecond = tokensPerSecond
         )
     }
 }

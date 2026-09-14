@@ -87,6 +87,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.splinch.junction.assistant.runtime.ChatManager
@@ -128,6 +130,7 @@ fun ChatScreen(
 ) {
     val messages by chatManager.messages.collectAsState()
     val streaming by chatManager.streamingAssistant.collectAsState()
+    val turnActivity by chatManager.turnActivity.collectAsState()
     val activePlan by chatManager.activePlan.collectAsState()
     val connectionState by chatManager.connectionState.collectAsState()
     val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
@@ -140,6 +143,8 @@ fun ChatScreen(
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     var pendingSpeechEnable by remember { mutableStateOf(false) }
     val sendEnabled = input.isNotBlank() || pendingImagePath != null
 
@@ -322,6 +327,7 @@ fun ChatScreen(
         }
 
         val listState = rememberLazyListState()
+        var scrollToBottomRequest by remember { mutableStateOf(0) }
         // The streaming bubble is only an item when something is actually
         // streaming. It used to be an unconditional item{} wrapping an if,
         // which left a permanent zero-height row on the end -- so the scroll
@@ -360,6 +366,14 @@ fun ChatScreen(
             }
         }
 
+        // Sending is an explicit request to follow the current turn, even if
+        // the owner had scrolled up to read history beforehand.
+        LaunchedEffect(scrollToBottomRequest, itemCount) {
+            if (scrollToBottomRequest > 0 && itemCount > 0) {
+                listState.scrollToItem(itemCount - 1, BOTTOM_SCROLL_OFFSET)
+            }
+        }
+
         // Keep the chat canvas independent from the parked avatar module. The
         // replacement can return as a separate presentation layer without
         // coupling conversation state or voice behavior to rendering.
@@ -390,6 +404,14 @@ fun ChatScreen(
                         )
                     }
                 }
+            }
+            turnActivity?.let { activity ->
+                Text(
+                    text = activity,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
+                )
             }
         }
 
@@ -437,6 +459,11 @@ fun ChatScreen(
                     scope.launch { chatManager.sendUserMessage(trimmed, imagePath) }
                     input = ""
                     pendingImagePath = null
+                    // Emptying the multi-line field returns it to its compact
+                    // height; hiding the IME gives the new turn the screen.
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    scrollToBottomRequest++
                 }
             },
             sendEnabled = sendEnabled,
@@ -708,7 +735,7 @@ private fun ProviderSwitcher(
 
     LaunchedEffect(expanded) {
         if (expanded) {
-            configuredProviders = ModelCatalog.providers.filter { !it.requiresApiKey || keyStorage.getApiKey(it.id).isNotBlank() }
+            configuredProviders = ModelCatalog.primaryProviders
         }
     }
 
@@ -746,26 +773,32 @@ private fun ProviderSwitcher(
             }
             configuredProviders.forEach { provider ->
                 val model = provider.models.find { it.id == provider.defaultModelId }
+                val available = !provider.requiresApiKey || keyStorage.getApiKey(provider.id).isNotBlank()
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(provider.displayName)
+                            Text("${if (available) "●" else "●"} ${provider.displayName}")
                             if (model != null) {
                                 Text(
-                                    text = "${model.displayName} · ${model.costTier}",
+                                    text = if (available) "${model.displayName} · ${model.costTier}" else "Unavailable — configure in Settings",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     },
-                    leadingIcon = if (provider.id == providerConfig.providerId) {
-                        { Icon(Icons.Default.Check, contentDescription = null) }
-                    } else null,
+                    leadingIcon = {
+                        Icon(
+                            if (available) Icons.Default.Check else Icons.Default.Close,
+                            contentDescription = null,
+                            tint = if (available) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                        )
+                    },
                     onClick = {
                         expanded = false
                         onSwitch(provider.id, provider.defaultModelId)
-                    }
+                    },
+                    enabled = available
                 )
             }
         }
@@ -901,6 +934,7 @@ private fun MessageBubble(message: ChatMessage) {
         Sender.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
         Sender.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
     }
+    var thinkingExpanded by remember(message.id) { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -939,6 +973,33 @@ private fun MessageBubble(message: ChatMessage) {
             }
             if (message.content.isNotBlank()) {
                 Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (message.sender == Sender.ASSISTANT &&
+                (!message.thinking.isNullOrBlank() || message.tokensPerSecond != null)
+            ) {
+                Spacer(Modifier.height(8.dp))
+                message.tokensPerSecond?.let { speed ->
+                    Text(
+                        text = "${String.format(java.util.Locale.US, "%.1f", speed)} tokens/s",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+                message.thinking?.takeIf { it.isNotBlank() }?.let { thought ->
+                    TextButton(
+                        onClick = { thinkingExpanded = !thinkingExpanded },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(if (thinkingExpanded) "Hide thinking" else "Show thinking")
+                    }
+                    if (thinkingExpanded) {
+                        Text(
+                            text = thought,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                }
             }
         }
     }

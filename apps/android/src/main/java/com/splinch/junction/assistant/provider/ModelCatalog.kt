@@ -64,7 +64,7 @@ object ModelCatalog {
         ),
         ProviderDefinition(
             id = "anthropic",
-            displayName = "Anthropic",
+            displayName = "Claude",
             recommendationTag = "Recommended",
             recommendationDetail = "Best balance of quality and cost for everyday use.",
             apiKeyUrl = "https://console.anthropic.com/settings/keys",
@@ -80,7 +80,7 @@ object ModelCatalog {
         ),
         ProviderDefinition(
             id = "openai",
-            displayName = "OpenAI",
+            displayName = "GPT",
             recommendationTag = "Most capable",
             recommendationDetail = "Widest tool support and strong reasoning for complex tasks.",
             apiKeyUrl = "https://platform.openai.com/api-keys",
@@ -215,6 +215,10 @@ object ModelCatalog {
             requiresBaseUrl = true
         )
     )
+
+    /** The everyday chat surface deliberately stays focused on the three lanes Junction supports. */
+    val primaryProviders: List<ProviderDefinition>
+        get() = providers.filter { it.id in setOf("local", "openai", "anthropic") }
 
     fun providerById(id: String): ProviderDefinition? = providers.find { it.id == id }
 

@@ -42,7 +42,9 @@ data class ChatMessage(
     /** Friendly "Claude Sonnet 5" / "GPT-5.6 Sol" label for an ASSISTANT message, so a fallback mid-conversation is visible at a glance instead of only showing up as a system-message aside. */
     val modelLabel: String? = null,
     /** Local-model reasoning trace, shown only on explicit expansion. */
-    val thinking: String? = null
+    val thinking: String? = null,
+    /** Decode rate supplied by a local runtime, never an estimate. */
+    val tokensPerSecond: Double? = null
 )
 
 data class ChatSession(

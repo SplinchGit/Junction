@@ -19,7 +19,7 @@ Data contains persistent storage and synchronisation implementations: Room datab
 
 - assistant orchestration or feature policy;
 - Compose screens;
-- direct accessibility, Bluetooth, or Shizuku control.
+- direct accessibility or Bluetooth control.
 
 ## Flow
 

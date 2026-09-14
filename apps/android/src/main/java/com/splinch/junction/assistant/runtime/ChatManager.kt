@@ -200,6 +200,9 @@ class ChatManager(
     private val _streamingAssistant = MutableStateFlow<StreamingAssistantMessage?>(null)
     val streamingAssistant: StateFlow<StreamingAssistantMessage?> = _streamingAssistant.asStateFlow()
 
+    private val _turnActivity = MutableStateFlow<String?>(null)
+    val turnActivity: StateFlow<String?> = _turnActivity.asStateFlow()
+
     /** §2.1 plan-level confirmation: null unless a plan is awaiting owner approval. */
     val activePlan: StateFlow<Plan?> = planCoordinator.activePlan
 
@@ -413,6 +416,8 @@ class ChatManager(
             val tools = if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
+            var accumulatedThinking: String? = null
+            var tokensPerSecond: Double? = null
             var lastAssistantText: String? = null
             val requestedCalls = mutableListOf<PendingToolCall>()
             var usage: com.splinch.junction.assistant.provider.ProviderUsage? = null
@@ -434,7 +439,9 @@ class ChatManager(
                     val frontierRequested = useFrontier && currentProvider.frontierModel != null
                     currentProvider.act(contextBlocks, tools, frontierRequested).collect { event ->
                         when (event) {
+                            is LlmEvent.Activity -> _turnActivity.value = event.label.takeIf { it.isNotBlank() }
                             is LlmEvent.TextDelta -> {
+                                _turnActivity.value = "Generating response"
                                 val current = _streamingAssistant.value
                                 if (current == null || current.itemId != itemId) {
                                     _streamingAssistant.value = StreamingAssistantMessage(itemId, event.delta)
@@ -444,6 +451,7 @@ class ChatManager(
                                 accumulatedText += event.delta
                             }
                             is LlmEvent.TextDone -> {
+                                _turnActivity.value = null
                                 val final = stripLeakedEnvelope(event.text.ifBlank { accumulatedText })
                                 if (final.isNotBlank()) {
                                     val turnModel = if (frontierRequested) {
@@ -459,7 +467,9 @@ class ChatManager(
                                             content = final,
                                             provenance = Provenance.JUNCTION,
                                             sourceRef = "assistant_text:$itemId",
-                                            modelLabel = turnModelLabel
+                                            modelLabel = turnModelLabel,
+                                            thinking = event.thinking ?: accumulatedThinking,
+                                            tokensPerSecond = event.tokensPerSecond ?: tokensPerSecond
                                         )
                                     )
                                     lastAssistantText = final
@@ -480,6 +490,8 @@ class ChatManager(
                                 }
                                 _streamingAssistant.value = null
                                 accumulatedText = ""
+                                accumulatedThinking = null
+                                tokensPerSecond = null
                                 itemId = UUID.randomUUID().toString()
                             }
                             is LlmEvent.ToolCallRequested -> {
@@ -493,13 +505,16 @@ class ChatManager(
                                     requestedCalls.add(PendingToolCall(event.callId, event.name, args, summary))
                                 }
                             }
+                            is LlmEvent.Thinking -> accumulatedThinking = event.text.takeIf { it.isNotBlank() }
                             is LlmEvent.Usage -> usage = event.usage
                             is LlmEvent.Error -> {
                                 laneError = event.message
+                                _turnActivity.value = null
                                 _streamingAssistant.value = null
                             }
                             is LlmEvent.Done -> {
                                 _streamingAssistant.value = null
+                                _turnActivity.value = null
                             }
                         }
                     }
@@ -527,6 +542,8 @@ class ChatManager(
                 currentProvider = fallback
                 itemId = UUID.randomUUID().toString()
                 accumulatedText = ""
+                accumulatedThinking = null
+                tokensPerSecond = null
                 requestedCalls.clear()
                 _streamingAssistant.value = null
             }

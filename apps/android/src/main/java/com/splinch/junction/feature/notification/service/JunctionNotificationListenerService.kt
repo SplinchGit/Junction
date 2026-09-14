@@ -247,7 +247,6 @@ class JunctionNotificationListenerService : NotificationListenerService() {
         )
 
         private val workApps = setOf(
-            "com.slack",
             "com.microsoft.teams",
             "com.google.android.gm",
             "com.google.android.calendar"

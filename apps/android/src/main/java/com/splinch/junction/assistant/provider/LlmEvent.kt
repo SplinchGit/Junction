@@ -9,8 +9,19 @@ import com.splinch.junction.assistant.tools.*
 import com.splinch.junction.assistant.trust.*
 
 sealed class LlmEvent {
+    /** A concise owner-facing state transition, never raw provider diagnostics. */
+    data class Activity(val label: String) : LlmEvent()
     data class TextDelta(val delta: String) : LlmEvent()
-    data class TextDone(val text: String) : LlmEvent()
+    /**
+     * A completed assistant message.  Local providers can attach the reasoning
+     * trace and decode speed they received from their runtime; these are kept
+     * separate from answer text so the UI can keep them collapsed by default.
+     */
+    data class TextDone(
+        val text: String,
+        val thinking: String? = null,
+        val tokensPerSecond: Double? = null
+    ) : LlmEvent()
     data class Thinking(val text: String) : LlmEvent()
     data class ToolCallRequested(
         val callId: String,

@@ -42,7 +42,6 @@ class UserPrefsRepository(private val context: Context) {
     private val disabledPackagesKey = stringSetPreferencesKey("disabled_packages")
     private val connectedIntegrationsKey = stringSetPreferencesKey("connected_integrations")
     private val firebaseSyncEnabledKey = booleanPreferencesKey("firebase_sync_enabled")
-    private val shizukuEnabledKey = booleanPreferencesKey("shizuku_enabled")
     private val providerIdKey = stringPreferencesKey("provider_id")
     private val providerModelIdKey = stringPreferencesKey("provider_model_id")
     private val providerWorkhorseModelKey = stringPreferencesKey("provider_workhorse_model")
@@ -57,11 +56,6 @@ class UserPrefsRepository(private val context: Context) {
 
     val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[firebaseSyncEnabledKey] ?: false
-    }
-
-    /** Explicit owner opt-in before Junction can request or use Shizuku permission. */
-    val shizukuEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[shizukuEnabledKey] ?: false
     }
 
     /** Whether the first-run provider setup wizard has been completed (or skipped). */
@@ -314,10 +308,6 @@ class UserPrefsRepository(private val context: Context) {
 
     suspend fun setFirebaseSyncEnabled(enabled: Boolean) {
         context.dataStore.edit { it[firebaseSyncEnabledKey] = enabled }
-    }
-
-    suspend fun setShizukuEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[shizukuEnabledKey] = enabled }
     }
 
     suspend fun setOnboardingCompleted(completed: Boolean) {

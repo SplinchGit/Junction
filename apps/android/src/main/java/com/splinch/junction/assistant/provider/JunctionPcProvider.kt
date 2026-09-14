@@ -6,8 +6,10 @@ import com.splinch.junction.assistant.tools.ToolDefinition
 import com.splinch.junction.data.sync.firebase.FirebaseProvider
 import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,24 +37,73 @@ class JunctionPcProvider : LlmProvider {
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)
             document.set(mapOf("id" to requestId, "clientUid" to uid, "status" to "pending", "ciphertext" to ciphertext, "nonce" to nonce, "createdAt" to Timestamp.now(), "source" to SOURCE)).await()
+            trySend(LlmEvent.Activity("Waiting for your Junction PC"))
+            var terminal = false
+            var streamedText = ""
             val registration = document.addSnapshotListener { snapshot, failure ->
-                if (failure != null) { trySend(LlmEvent.Error("Local Junction connection interrupted: ${failure.message}")); trySend(LlmEvent.Done); close(); return@addSnapshotListener }
+                if (terminal) return@addSnapshotListener
+                if (failure != null) { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error("Local Junction connection interrupted: ${failure.message}")); trySend(LlmEvent.Done); close(); return@addSnapshotListener }
                 if (snapshot == null) return@addSnapshotListener
                 when (snapshot.getString("status")) {
+                    "running" -> trySend(LlmEvent.Activity("Local model is working"))
+                    "streaming" -> runCatching {
+                        trySend(LlmEvent.Activity("Generating response"))
+                        val partial = LocalBrainPairingStore.decrypt(
+                            pairing.key,
+                            "JBP1|${pairing.brainId}|$requestId|partial",
+                            snapshot.getString("partialCiphertext").orEmpty(),
+                            snapshot.getString("partialNonce").orEmpty()
+                        )
+                        val delta = if (partial.startsWith(streamedText)) partial.removePrefix(streamedText) else partial
+                        streamedText = partial
+                        if (delta.isNotEmpty()) trySend(LlmEvent.TextDelta(delta))
+                    }.onFailure {
+                        terminal = true
+                        trySend(LlmEvent.Activity(""))
+                        trySend(LlmEvent.Error("Local Junction returned an invalid streamed response.")); trySend(LlmEvent.Done); close()
+                    }
                     "done" -> runCatching {
                         val response = LocalBrainPairingStore.decrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|response", snapshot.getString("responseCiphertext").orEmpty(), snapshot.getString("responseNonce").orEmpty())
+                        val thinking = snapshot.getString("thinkingCiphertext")
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let {
+                                LocalBrainPairingStore.decrypt(
+                                    pairing.key,
+                                    "JBP1|${pairing.brainId}|$requestId|thinking",
+                                    it,
+                                    snapshot.getString("thinkingNonce").orEmpty()
+                                )
+                            }
+                        val tokensPerSecond = snapshot.get("tokensPerSecond")
+                            ?.toString()?.toDoubleOrNull()
                         // The relay returns one encrypted final response (rather than a
                         // token stream), so it must use TextDone for ChatManager to persist
                         // it as the assistant turn.
-                        trySend(LlmEvent.TextDone(response)); trySend(LlmEvent.Done); close()
-                    }.onFailure { trySend(LlmEvent.Error("Local Junction returned an invalid encrypted response.")); trySend(LlmEvent.Done); close() }
-                    "error" -> { trySend(LlmEvent.Error(snapshot.getString("error") ?: "Your Junction PC could not run the local model.")); trySend(LlmEvent.Done); close() }
+                        terminal = true
+                        trySend(LlmEvent.TextDone(response, thinking, tokensPerSecond)); trySend(LlmEvent.Done); close()
+                    }.onFailure { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error("Local Junction returned an invalid encrypted response.")); trySend(LlmEvent.Done); close() }
+                    "error" -> { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(snapshot.getString("error") ?: "Your Junction PC could not run the local model.")); trySend(LlmEvent.Done); close() }
                 }
             }
-            awaitClose { registration.remove() }
+            val timeout = launch {
+                delay(REQUEST_TIMEOUT_MS)
+                if (!terminal) {
+                    terminal = true
+                    trySend(LlmEvent.Activity(""))
+                    trySend(LlmEvent.Error("Your Junction PC did not finish this request in time. Check that Junction and Ollama are running, then try again."))
+                    trySend(LlmEvent.Done)
+                    close()
+                }
+            }
+            awaitClose { timeout.cancel(); registration.remove() }
         } catch (error: Exception) { trySend(LlmEvent.Error(error.message ?: "Could not contact your Junction PC.")); trySend(LlmEvent.Done); close() }
     }
 
     override suspend fun readUntrusted(content: String, sourceHint: String) = null
-    private companion object { const val SOURCE = "junction_local_llm_v2"; const val MAX_CONTEXT_BLOCKS = 18; const val MAX_BLOCK_CHARS = 4_000 }
+    private companion object {
+        const val SOURCE = "junction_local_llm_v2"
+        const val MAX_CONTEXT_BLOCKS = 18
+        const val MAX_BLOCK_CHARS = 4_000
+        const val REQUEST_TIMEOUT_MS = 150_000L
+    }
 }

@@ -31,5 +31,6 @@ data class ChatMessageEntity(
     val imageSummary: String? = null,
     /** Friendly provider/model label ("Claude Sonnet 5") for an ASSISTANT message. */
     val modelLabel: String? = null,
-    val thinking: String? = null
+    val thinking: String? = null,
+    val tokensPerSecond: Double? = null
 )

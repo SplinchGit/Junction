@@ -7,14 +7,12 @@ Platform contains direct integrations with Android and privileged platform APIs 
 ## Main Entry Point
 
 - `accessibility/JunctionAccessibilityService.kt`
-- `shizuku/ShizukuCapability.kt`
 
 ## Responsibilities
 
 - expose accessibility-based screen inspection and interaction;
 - wrap Bluetooth audio routing;
 - provide overlay service integration;
-- detect and use supported Shizuku capabilities.
 
 ## Does Not Own
 
