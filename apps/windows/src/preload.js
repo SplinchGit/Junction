@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld("junction", {
   audit: () => ipcRenderer.invoke("junction:audit"), conversations: () => ipcRenderer.invoke("junction:conversations"),
   conversation: id => ipcRenderer.invoke("junction:conversation", id), newConversation: () => ipcRenderer.invoke("junction:new-conversation"),
   renameConversation: value => ipcRenderer.invoke("junction:rename-conversation", value), deleteConversation: id => ipcRenderer.invoke("junction:delete-conversation", id),
-  sendMessage: value => ipcRenderer.invoke("junction:send-message", value), memories: () => ipcRenderer.invoke("junction:memories"),
+  sendMessage: value => ipcRenderer.invoke("junction:send-message", value), cancelAgent: runId => ipcRenderer.invoke("junction:cancel-agent", runId), memories: () => ipcRenderer.invoke("junction:memories"),
   addMemory: value => ipcRenderer.invoke("junction:add-memory", value), deleteMemory: id => ipcRenderer.invoke("junction:delete-memory", id),
   provider: () => ipcRenderer.invoke("junction:provider"), setProvider: value => ipcRenderer.invoke("junction:set-provider", value),
   codexStatus: () => ipcRenderer.invoke("junction:codex-status"),

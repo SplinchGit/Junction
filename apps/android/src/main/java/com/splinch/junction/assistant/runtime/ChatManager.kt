@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -187,6 +188,7 @@ class ChatManager(
     // Tool calls proposed by the realtime (voice) path accumulate here across
     // a single model response and are turned into one plan at onResponseDone.
     private val pendingRealtimeCalls = mutableListOf<PendingToolCall>()
+    private var activeTextTurnJob: Job? = null
     private val untrustedOutputTools = setOf("read_screen", "read_notifications", "get_calendar_agenda", "gmail_triage_inbox")
 
     // §1.1 two-lane escalation: set when the *previous* turn signalled the
@@ -625,6 +627,7 @@ class ChatManager(
                 )
             )
         }
+        activeTextTurnJob = turnJob
 
         // However this turn ended -- a reply, tool calls and no reply, an empty reply, a
         // plan waiting on approval, an exception nobody predicted -- the line goes back to
@@ -632,6 +635,7 @@ class ChatManager(
         // those other endings left the mic dead with the chip still reading "Mic on".
         // Ignored when a reply is already being spoken; that turn ends when the audio does.
         turnJob.invokeOnCompletion {
+            if (activeTextTurnJob === turnJob) activeTextTurnJob = null
             // Explicitly dispatched rather than immediate: this completes on the IO lane,
             // and the reply, if there is one, was handed to the voice session from there
             // moments earlier. Queueing keeps them in that order.
@@ -1105,6 +1109,8 @@ class ChatManager(
     }
 
     suspend fun stopResponse() {
+        activeTextTurnJob?.cancel()
+        activeTextTurnJob = null
         _streamingAssistant.value = null
         voiceCoordinator.stopResponse()
     }

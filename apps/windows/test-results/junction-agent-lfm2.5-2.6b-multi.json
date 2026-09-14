@@ -1,0 +1,137 @@
+{
+  "generatedAt": "2026-09-14T20:38:40.184Z",
+  "model": "lfm2.5:2.6b",
+  "scenario": "multi",
+  "goal": "Use separate web searches to find current weather information for London and Edinburgh, then compare them. You must perform one web_search for London and a later web_search for Edinburgh before answering.",
+  "success": false,
+  "wallMs": 289841,
+  "error": "Local model returned neither a native tool call nor a final answer.",
+  "audit": [
+    {
+      "id": "agent-1789418320186-55a481d407958",
+      "timestamp": "2026-09-14T20:38:40.186Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model lfm2.5:2.6b"
+    },
+    {
+      "id": "agent-1789418336650-f7406d883f7ae",
+      "timestamp": "2026-09-14T20:38:56.650Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "London current weather temperature conditions"
+    },
+    {
+      "id": "agent-1789418339346-5d3dc3ffb2fdd",
+      "timestamp": "2026-09-14T20:38:59.346Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "5 source(s) returned"
+    },
+    {
+      "id": "agent-1789418339347-32e7973134d8d",
+      "timestamp": "2026-09-14T20:38:59.347Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model lfm2.5:2.6b"
+    },
+    {
+      "id": "agent-1789418367793-2b034889b2574",
+      "timestamp": "2026-09-14T20:39:27.793Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "London current weather temperature conditions September 2026"
+    },
+    {
+      "id": "agent-1789418370079-d04c6d93517da",
+      "timestamp": "2026-09-14T20:39:30.079Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "10 source(s) returned"
+    },
+    {
+      "id": "agent-1789418370080-f7bba219e9f52",
+      "timestamp": "2026-09-14T20:39:30.080Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 3; model lfm2.5:2.6b"
+    },
+    {
+      "id": "agent-1789418435781-96d83f625fc65",
+      "timestamp": "2026-09-14T20:40:35.781Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "Edinburgh current weather temperature conditions September 2026"
+    },
+    {
+      "id": "agent-1789418440170-455d48487dcb4",
+      "timestamp": "2026-09-14T20:40:40.170Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "10 source(s) returned"
+    },
+    {
+      "id": "agent-1789418440170-501dcf0731a3f",
+      "timestamp": "2026-09-14T20:40:40.170Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 4; model lfm2.5:2.6b"
+    },
+    {
+      "id": "agent-1789418513480-55b9fe81f2e6f",
+      "timestamp": "2026-09-14T20:41:53.480Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "failure",
+      "reason": "Duplicate tool request blocked. Use existing results or change the request."
+    },
+    {
+      "id": "agent-1789418513480-39e87e78989a7",
+      "timestamp": "2026-09-14T20:41:53.480Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 5; model lfm2.5:2.6b"
+    },
+    {
+      "id": "agent-1789418523090-3cb5b0a1c80cf",
+      "timestamp": "2026-09-14T20:42:03.090Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "failure",
+      "reason": "Web-search budget exhausted. Use existing evidence and state uncertainty."
+    },
+    {
+      "id": "agent-1789418523090-83e3ef0d7c46e",
+      "timestamp": "2026-09-14T20:42:03.090Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 6; model lfm2.5:2.6b"
+    }
+  ]
+}

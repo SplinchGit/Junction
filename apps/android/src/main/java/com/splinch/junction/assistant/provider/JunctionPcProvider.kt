@@ -16,9 +16,8 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** First-class provider backed by a paired PC Junction brain, never a raw PC URL. */
-class JunctionPcProvider : LlmProvider {
+class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : LlmProvider {
     override val id = "local"
-    override val workhorseModel = "qwen3:1.7b"
     override val frontierModel: String? = null
 
     override fun act(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean): Flow<LlmEvent> = callbackFlow {
@@ -107,7 +106,11 @@ class JunctionPcProvider : LlmProvider {
                     close()
                 }
             }
-            awaitClose { timeout.cancel(); registration.remove() }
+            awaitClose {
+                timeout.cancel()
+                registration.remove()
+                if (!terminal) document.update("status", "cancel_requested")
+            }
         } catch (error: Exception) { trySend(LlmEvent.Error(error.message ?: "Could not contact your Junction PC.")); trySend(LlmEvent.Done); close() }
     }
 

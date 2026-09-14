@@ -8,7 +8,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "electron .",
-    "test": "node test/run.js",
+    "test": "node test/run.js && node test/local-agent-runtime.test.js",
     "pack": "electron-builder --dir --win",
     "pack:workspace": "node scripts/pack-workspace.js",
     "dist": "electron-builder --win nsis"

@@ -773,34 +773,34 @@ private fun ProviderSwitcher(
                 )
             }
             configuredProviders.forEach { provider ->
-                val model = provider.models.find { it.id == provider.defaultModelId }
                 val available = !provider.requiresApiKey || keyStorage.getApiKey(provider.id).isNotBlank()
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("${if (available) "●" else "●"} ${provider.displayName}")
-                            if (model != null) {
+                provider.models.forEach { model ->
+                    val selected = provider.id == providerConfig.providerId && model.id == providerConfig.modelId
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("${if (selected) "●" else "○"} ${provider.displayName}")
                                 Text(
                                     text = if (available) "${model.displayName} · ${model.costTier}" else "Unavailable — configure in Settings",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (available) Icons.Default.Check else Icons.Default.Close,
-                            contentDescription = null,
-                            tint = if (available) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
-                        )
-                    },
-                    onClick = {
-                        expanded = false
-                        onSwitch(provider.id, provider.defaultModelId)
-                    },
-                    enabled = available
-                )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (available) Icons.Default.Check else Icons.Default.Close,
+                                contentDescription = null,
+                                tint = if (available) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            onSwitch(provider.id, model.id)
+                        },
+                        enabled = available
+                    )
+                }
             }
         }
     }

@@ -104,6 +104,10 @@ class LocalBrainRelay {
     const message = String(error?.message || error || "Local model request failed.").slice(0, 300);
     try { await this.update(item.document, state.session, { status: "error", error: message, leaseUntilMs: 0 }, null); } catch (writeError) { this.lastError = `${message}; unable to report it: ${writeError.message}`; }
   }
+  async cancelled(state, item) {
+    const document = await this.request(`https://firestore.googleapis.com/v1/${item.document.name}`, state.session);
+    return decodeDocument(document).status === "cancel_requested";
+  }
   async run(state, item) {
     const id = item.data.id || item.document.name.split("/").pop();
     try {
@@ -130,8 +134,17 @@ class LocalBrainRelay {
         const ownerIndex = payload.messages.map(message => message.role).lastIndexOf("user");
         const goal = String(payload.messages[ownerIndex]?.content || "").trim();
         if (!goal) throw new Error("Local Agent request has no owner goal.");
-        const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex) });
-        answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
+        const controller = new AbortController();
+        let checkingCancellation = false;
+        const cancellationPoll = setInterval(async () => {
+          if (checkingCancellation || controller.signal.aborted) return;
+          checkingCancellation = true;
+          try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
+        }, 1_000);
+        try {
+          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item) });
+          answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
+        } finally { clearInterval(cancellationPoll); }
       } else {
         const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
         try {
@@ -153,7 +166,11 @@ class LocalBrainRelay {
       const thought = thinking.trim(), encryptedThinking = thought ? crypt(state.key, `JBP1|${state.brainId}|${id}|thinking`, Buffer.from(thought.slice(0, MAX_RESPONSE_CHARS)), null, true) : null;
       const tokensPerSecond = Number(final?.eval_count) && Number(final?.eval_duration) ? (Number(final.eval_count) / (Number(final.eval_duration) / 1e9)).toFixed(1) : "";
       await this.update(item.document, state.session, { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", tokensPerSecond, leaseUntilMs: 0 }, null);
-    } catch (error) { await this.markError(state, item, error.name === "AbortError" ? new Error("Local model timed out. Check Ollama and try again.") : error); }
+    } catch (error) {
+      if (error.name === "AbortError" && await this.cancelled(state, item).catch(() => false)) {
+        await this.update(item.document, state.session, { status: "cancelled", error: "", leaseUntilMs: 0 }, null).catch(() => {});
+      } else await this.markError(state, item, error.name === "AbortError" ? new Error("Local model timed out. Check Ollama and try again.") : error);
+    }
   }
 }
 module.exports = { LocalBrainRelay, LOCAL_SOURCE, decodeDocument, crypt, readNdjson };

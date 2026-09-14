@@ -1,0 +1,69 @@
+{
+  "generatedAt": "2026-09-14T20:46:16.289Z",
+  "model": "qwen3.5:2b",
+  "scenario": "static",
+  "goal": "How tall is the Burj Khalifa?",
+  "success": true,
+  "wallMs": 29856,
+  "answer": "The Burj Khalifa is 828 meters (2,717 feet) tall. This was confirmed by the official announcement made on January 4, 2010, when the building was completed and officially opened to the public.",
+  "iterations": 3,
+  "toolCalls": 2,
+  "searches": 2,
+  "citationAudit": null,
+  "audit": [
+    {
+      "id": "agent-1789418776291-343d34fe0c7c7",
+      "timestamp": "2026-09-14T20:46:16.292Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model qwen3.5:2b"
+    },
+    {
+      "id": "agent-1789418791317-31e6be7e49d9b",
+      "timestamp": "2026-09-14T20:46:31.317Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "failure",
+      "reason": "Search query introduced terms not grounded in owner input or public evidence: height."
+    },
+    {
+      "id": "agent-1789418791318-9f4ed5352abaa",
+      "timestamp": "2026-09-14T20:46:31.318Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model qwen3.5:2b"
+    },
+    {
+      "id": "agent-1789418797118-3133193f364a",
+      "timestamp": "2026-09-14T20:46:37.118Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "failure",
+      "reason": "Search query introduced terms not grounded in owner input or public evidence: height, measurement."
+    },
+    {
+      "id": "agent-1789418797119-9bd04e6b5baaa",
+      "timestamp": "2026-09-14T20:46:37.119Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 3; model qwen3.5:2b"
+    },
+    {
+      "id": "agent-1789418806145-04ebfb5c11f2b",
+      "timestamp": "2026-09-14T20:46:46.145Z",
+      "event": "agent_final",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "completed after 3 iteration(s) and 2 tool call(s)"
+    }
+  ]
+}

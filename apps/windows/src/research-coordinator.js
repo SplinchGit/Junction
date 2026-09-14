@@ -34,7 +34,12 @@ function mergeResearch(query, results) {
   const sources = [...byUrl.values()].slice(0, MAX_SOURCES).map((source, sourceIndex) => {
     const id = `S${sourceIndex + 1}`;
     const passages = [];
-    for (const passage of source.passages || []) {
+    const candidates = source.passages?.length
+      ? source.passages
+      : source.snippet
+        ? [{ text: `Search-result snippet: ${source.snippet}`, score: 0 }]
+        : [];
+    for (const passage of candidates) {
       if (used + passage.text.length > MAX_LEDGER_CHARS) break;
       used += passage.text.length;
       passages.push({ id: `${id}.p${passages.length + 1}`, text: passage.text, score: passage.score || 0 });

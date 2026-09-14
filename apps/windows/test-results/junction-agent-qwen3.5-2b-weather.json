@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-09-14T20:45:28.545Z",
+  "model": "qwen3.5:2b",
+  "scenario": "weather",
+  "goal": "What's the weather like in London right now? Use current public evidence.",
+  "success": true,
+  "wallMs": 37429,
+  "answer": "Based on current public evidence:\n\n- **Wind**: The highest wind speed expected today is 16 mph [S1.p1].\n- **UV Index**: Moderate, with a daily high of 4 [S1.p2].\n- **Precipitation**: It will be cloudy and wet for some areas as patches of rain may move in from the west [S3.p2].\n\nFor more detailed hourly forecasts, check AccuWeather's London forecast page.\n\nSources:\n[S1] London (Greater London) weather - Met Office — https://weather.metoffice.gov.uk/forecast/gcpvj0v07\n[S2] London, London, United Kingdom Hourly Weather | AccuWeather — https://www.accuweather.com/en/gb/london/ec4a-2/hourly-weather-forecast/328328\n[S3] London - BBC Weather — https://www.bbc.com/weather/2643743\n[S4] Weather for London, England, United Kingdom - timeanddate.com — https://www.timeanddate.com/weather/uk/london",
+  "iterations": 2,
+  "toolCalls": 1,
+  "searches": 1,
+  "citationAudit": {
+    "citations": [
+      "S1.p1",
+      "S1.p2",
+      "S3.p2"
+    ],
+    "invalid": [],
+    "hasCitations": true
+  },
+  "audit": [
+    {
+      "id": "agent-1789418728547-3214c8f2f511",
+      "timestamp": "2026-09-14T20:45:28.547Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model qwen3.5:2b"
+    },
+    {
+      "id": "agent-1789418743598-2702d69bcc9b4",
+      "timestamp": "2026-09-14T20:45:43.598Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "London weather current time"
+    },
+    {
+      "id": "agent-1789418745488-e73271e448ca1",
+      "timestamp": "2026-09-14T20:45:45.488Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "4 source(s) returned"
+    },
+    {
+      "id": "agent-1789418745489-e1f9b64392e23",
+      "timestamp": "2026-09-14T20:45:45.489Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model qwen3.5:2b"
+    },
+    {
+      "id": "agent-1789418765973-5e17d8b1b8389",
+      "timestamp": "2026-09-14T20:46:05.973Z",
+      "event": "agent_final",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "completed after 2 iteration(s) and 1 tool call(s)"
+    }
+  ]
+}

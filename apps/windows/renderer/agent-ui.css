@@ -1,0 +1,6 @@
+.compose .research-toggle{width:auto;min-width:58px;height:34px;align-self:center;padding:0 10px;font:600 11px inherit;white-space:nowrap}
+.compose .research-toggle.active{background:#33408f;color:#dce1ff}
+.chat-model{width:142px;height:34px;align-self:center;border:1px solid #303a4b;border-radius:9px;background:#171d27;color:#dce2ec;padding:0 8px;font:600 10px inherit}
+.settings article button{max-width:220px;min-height:34px;height:auto}
+.settings article>div:last-child{display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end}
+@media(max-width:1100px){.chat-model{width:116px}.compose .research-toggle{min-width:48px;padding:0 7px}}

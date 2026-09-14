@@ -18,8 +18,10 @@ const { LocalBrainRelay } = require("./local-brain-relay");
 const { WebResearchClient, researchContext, sourceAppendix } = require("./web-research");
 const { ResearchCoordinator } = require("./research-coordinator");
 const { LocalAgentRuntime } = require("./local-agent-runtime");
+const { LocalAgentToolRegistry } = require("./local-agent-tools");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false;
+const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
 function hydrateFirebaseEnvironment() {
@@ -80,10 +82,13 @@ async function createWindowImpl() {
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   researchClient = new WebResearchClient();
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
-  localAgent = new LocalAgentRuntime({ researchCoordinator });
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
+  const createCodeDelegation = async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] });
+  const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
+  localAgent = new LocalAgentRuntime({ toolRegistry });
   localBrainRelay = new LocalBrainRelay({
     projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
     getState: freshLocalBrainState,
@@ -94,10 +99,9 @@ async function createWindowImpl() {
     runLocalAgent: request => localAgent.run(request),
     // A local model can request a coding task, but never applies code itself.
     // This creates only the existing approval-gated Codex worktree draft.
-    createCodeDelegation: async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] })
+    createCodeDelegation
   });
   localBrainRelay.start();
-  auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   // Prefer the fixed loopback port for the private overlay. If a stale process
   // still owns it, start a fresh loopback-only endpoint rather than failing the
   // entire desktop launch. Ollama stays on its own loopback socket.
@@ -175,7 +179,7 @@ async function syncSharedState(){
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
-ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState();return {enabled:Boolean(state),brainId:state?.brainId||null,model:"qwen3:1.7b",relayError:localBrainRelay?.lastError||null};});
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3.5:2b",relayError:localBrainRelay?.lastError||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
 ipcMain.handle("junction:revoke-local-brain",()=>{identityStore.setSecureValue("local-brain-v1","");return {enabled:false};});
 ipcMain.handle("junction:sign-in", async () => {
@@ -223,11 +227,15 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   if (request.agent && config.id !== "local") throw new Error("Local Agent mode requires the Local LLM workflow. Codex agents live in Projects.");
   const research = request.research ? await researchCoordinator.run(content) : null;
   const researchInstructions = research ? researchContext(research) : null;
-  const reply=request.agent
-    ? await localAgent.run({ goal: content, model: config.model || "qwen3:1.7b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null })
+  const runId=String(request.runId||crypto.randomUUID()).slice(0,100),controller=new AbortController();
+  if(request.agent)activeAgentRuns.set(runId,controller);
+  let reply;
+  try { reply=request.agent
+    ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal })
     : config.id==="codex"
       ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
       : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});
+  } finally { if(request.agent)activeAgentRuns.delete(runId); }
   const contentWithSources = research ? `${reply.content.trim()}\n\n${sourceAppendix(research)}` : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
   const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
@@ -236,6 +244,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   scheduleSharedSync();
   return {conversationId:conversation.id,message,usage:reply.usage,model:reply.model};
 });
+ipcMain.handle("junction:cancel-agent", (_event, runId) => { const controller=activeAgentRuns.get(String(runId||"")); if(!controller)return {cancelled:false};controller.abort();return {cancelled:true}; });
 ipcMain.handle("junction:memories", () => localData.memories());
 ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
 ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});

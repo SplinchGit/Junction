@@ -96,7 +96,6 @@ class ProviderRegistry(
      */
     private fun buildProvider(config: ProviderConfig, apiKey: String): LlmProvider {
         val providerDef = ModelCatalog.providerById(config.providerId)
-        if (config.providerId == "local") return JunctionPcProvider()
         val configuredModelId = config.modelId.ifBlank { config.workhorseModel }
             .ifBlank { providerDef?.defaultModelId.orEmpty() }
         // Provider pickers only expose catalog models. When an app update retires an old
@@ -111,6 +110,8 @@ class ProviderRegistry(
             configuredModelId
         }
         val frontierId = config.frontierModel.ifBlank { null }
+
+        if (config.providerId == "local") return JunctionPcProvider(modelId.ifBlank { "qwen3.5:2b" })
 
         if (config.providerId == "anthropic") {
             return AnthropicProvider(
