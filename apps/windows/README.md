@@ -123,3 +123,27 @@ The application currently has no code-signing configuration. Windows SmartScreen
 will warn on unsigned installers; production distribution requires an Authenticode
 certificate and CI signing. Elevated apps and custom-rendered/game surfaces may not
 expose usable UI Automation metadata. No broad automation is implemented.
+
+## Local model reliability and live search verification
+
+Desktop and paired-phone inference share a serialized runtime. Switching models
+unloads other resident Ollama models to avoid memory allocation failures. Prompt
+history, evidence, and output are bounded for the 4K context on CPU-only hosts.
+
+For current-fact or explicit search requests, Junction executes web search before
+inference, supplies the returned evidence as a tool result, and validates passage
+citations. This is host-enforced search, not a claim that the model independently
+decided to browse. Required search failures stop the request instead of falling
+back to model memory. Citation validation checks IDs, not every claim's meaning.
+
+Run `npm test` for deterministic regressions. Run
+`node_modules/.bin/electron scripts/junction-ui-smoke.js` for all four installed
+models (append a model name to test just one). The latter uses an isolated profile
+and the real renderer/preload/IPC path. Its 2026 World Cup test records live search
+HTTP responses, exact evidence delivered to inference, and supporting citations;
+the independent expected answer is never included in the prompt. It also blocks
+search deliberately and requires zero model calls and no answer. Inspect
+`test-results/junction-websearch-2026.json` and the `web2026-*.png` screenshots.
+
+The local-model fixes run on the paired Windows PC. Updating the Android APK alone
+does not update that runtime; rebuild the Windows package as well.

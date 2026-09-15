@@ -240,10 +240,10 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   if(nativeToolsAvailable)activeAgentRuns.set(runId,controller);
   let reply,research=null;
   try {
-    if(request.research){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(content);appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
+    if(request.research && !nativeToolsAvailable){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(content);appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
     const researchInstructions = research ? researchContext(research) : null;
     reply=nativeToolsAvailable
-      ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId })
+      ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});

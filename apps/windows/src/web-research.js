@@ -49,11 +49,13 @@ function unwrapResultUrl(value) {
 function parseSearchHtml(html) {
   const results = [];
   const seen = new Set();
-  const expression = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>)?/gi;
-  for (const match of String(html || "").matchAll(expression)) {
+  const expression = /<a[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const matches = [...String(html || "").matchAll(expression)];
+  for (const [index, match] of matches.entries()) {
     const url = unwrapResultUrl(match[1]);
     const title = cleanText(match[2]);
-    const snippet = cleanText(match[3]);
+    const block = String(html).slice(match.index + match[0].length, matches[index + 1]?.index);
+    const snippet = cleanText(block.match(/class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div|span)>/i)?.[1]);
     let parsed;
     try { parsed = new URL(url); } catch { continue; }
     if (parsed.protocol !== "https:" || !title || seen.has(parsed.href)) continue;
@@ -147,6 +149,7 @@ async function pinnedHttpsFetch(url, lookup = dns.lookup) {
   return new Promise((resolve, reject) => {
     const request = https.request(url, {
       method: "GET",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { accept: "text/html,text/plain;q=0.9", "user-agent": "JunctionResearch/1.0 (+local owner request)" },
       servername: url.hostname,
       rejectUnauthorized: true,
@@ -208,7 +211,11 @@ function evidencePassages(document, query, sourceId) {
   return sentences.map((text, index) => ({
     id: `${sourceId}.p${index + 1}`,
     text,
+    // Navigation/FAQ questions often repeat every query word but contain no
+    // answer. Keep the factual sentence ahead of those keyword-heavy headings.
     score: terms.reduce((sum, term) => sum + (text.toLowerCase().includes(term) ? 1 : 0), 0)
+      - (/\?\s*$/.test(text) ? 4 : 0)
+      - (/table of contents|toggle|quick facts/i.test(text) ? 4 : 0)
   })).sort((a, b) => b.score - a.score).slice(0, 8).sort((a, b) => Number(a.id.split("p").pop()) - Number(b.id.split("p").pop()));
 }
 
@@ -246,16 +253,15 @@ class WebResearchClient {
 
   async research(query) {
     const search = await this.search(query);
-    const documents = [];
-    for (const result of diverseResults(search.results)) {
+    const documents = await Promise.all(diverseResults(search.results).map(async result => {
       try {
         const fetched = await safeFetchText(result.url, { fetchImpl: this.fetch, lookup: this.lookup });
         const document = extractDocument(fetched.text, fetched.url);
-        if (document.text.length >= 200) documents.push({ ...result, ...document });
+        return document.text.length >= 200 ? { ...result, ...document } : { ...result, text: "" };
       } catch (error) {
-        documents.push({ ...result, text: "", retrievalError: String(error.message || error).slice(0, 180) });
+        return { ...result, text: "", retrievalError: String(error.message || error).slice(0, 180) };
       }
-    }
+    }));
     let used = 0;
     const sources = documents.map((document, index) => {
       const id = `S${index + 1}`;

@@ -2,10 +2,10 @@
 
 const { sourceAppendix } = require("./web-research");
 const { citationAudit, mergeResearch } = require("./research-coordinator");
-const { LocalAgentToolRegistry } = require("./local-agent-tools");
+const { LocalAgentToolRegistry, compactResearchContext } = require("./local-agent-tools");
 
 const MAX_ITERATIONS = 7, MAX_TOOL_CALLS = 6, MAX_SEARCHES = 3, MAX_CODEX_DELEGATIONS = 1, MAX_DUPLICATE_CALLS = 1;
-const AGENT_TIMEOUT_MS = 5 * 60_000, OLLAMA_CALL_TIMEOUT_MS = 120_000, MAX_TOOL_RESULT_CHARS = 8_000;
+const AGENT_TIMEOUT_MS = 6 * 60_000, OLLAMA_CALL_TIMEOUT_MS = 180_000, MAX_TOOL_RESULT_CHARS = 8_000;
 // All four supported local models fit the target 12 GB CPU host at 4K. Qwen
 // 3.5 4B can fail during llama-server startup at 6K before it sees a prompt.
 const DEFAULT_CONTEXT_TOKENS = 4_096;
@@ -35,6 +35,16 @@ function claimsSuccessfulWebSearch(value) {
   return /\b(?:i\s+(?:have\s+)?(?:searched|browsed|looked\s+up|used\s+(?:the\s+)?(?:web\s+)?search|accessed\s+(?:the\s+)?(?:web|internet)|checked\s+(?:the\s+)?(?:web|internet|online))|(?:my|the)\s+(?:web\s+)?search\s+(?:found|shows?|returned)|according\s+to\s+(?:my|the)\s+(?:web\s+)?search)\b/i.test(String(value || ""));
 }
 function abortError(message = "Local agent run was cancelled.") { const error = new Error(message); error.name = "AbortError"; return error; }
+function requiresSearch(goal) { return /\b(search|web_search|browse|look up|internet|online|latest|current|today|weather|news|who won|world cup|20(?:2[4-9]|[3-9]\d))\b/i.test(goal); }
+function waitWithSignal(promise, signal) {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason || abortError());
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 class LocalAgentRuntime {
   constructor({ researchCoordinator, toolRegistry = null, createCodeDelegation = null, auditPath = "", fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", limits = {} } = {}) {
@@ -44,13 +54,41 @@ class LocalAgentRuntime {
   }
   async chat(model, messages, tools, signal) {
     const timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, tools, stream: false, think: process.env.JUNCTION_OLLAMA_THINK === "true", keep_alive: "5m", options: { temperature: 0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: 700 } }) });
+    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, tools, stream: false, think: process.env.JUNCTION_OLLAMA_THINK === "true", keep_alive: "5m", options: { temperature: 0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: 350 } }) });
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(payload?.error || `Local agent returned HTTP ${response.status}.`);
     if (!payload?.message) throw new Error("Ollama returned no assistant message.");
     return payload;
   }
-  async run({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null }) {
+  async run(request) {
+    // One resident inference run at a time across desktop and phone requests.
+    const previous = this.pending || Promise.resolve();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    this.pending = previous.then(() => gate);
+    try {
+      await waitWithSignal(previous, request.signal);
+      request.signal?.throwIfAborted();
+      await this.prepareModel(request.model, request.signal);
+      return await this.runNow(request);
+    }
+    finally { release(); }
+  }
+  async prepareModel(model, signal) {
+    // CPU-only hosts cannot keep all four models resident without paging or
+    // failing runner allocation. Ollama reloads evicted models when requested.
+    const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
+    const response = await this.fetch(`${this.ollamaUrl}/api/ps`, { signal: bounded });
+    if (!response.ok) throw new Error("Cannot inspect local models. Check that Ollama is running.");
+    const payload = await response.json();
+    for (const resident of payload.models || []) {
+      if (resident.name === model || resident.model === model) continue;
+      const unloaded = await this.fetch(`${this.ollamaUrl}/api/generate`, { method: "POST", headers: { "content-type": "application/json" }, signal: bounded, body: JSON.stringify({ model: resident.name || resident.model, keep_alive: 0 }) });
+      if (!unloaded.ok) throw new Error("Could not release the previous local model. Retry after stopping other Ollama requests.");
+      await unloaded.json();
+    }
+  }
+  async runNow({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null, forceSearch = false }) {
     const ownerGoal = String(goal || "").trim().slice(0, 20_000);
     if (!ownerGoal) throw new Error("Local Agent request has no owner goal.");
     const deadlineSignal = AbortSignal.timeout(this.limits.timeoutMs);
@@ -67,13 +105,28 @@ class LocalAgentRuntime {
       "You cannot directly access the network, shell, files, devices, messages, or schedules. Tool errors are data: recover once when useful, otherwise explain the bounded failure.",
       `Limits: ${this.limits.iterations} model iterations, ${this.limits.toolCalls} total tool calls, ${this.limits.searches} web searches${allowCodeDelegation ? `, ${this.limits.delegations} Codex draft` : ""}.`
     ];
-    if (memories.length) system.push(`Owner-confirmed memory:\n${memories.slice(0, 20).map(item => `- [${String(item.category).slice(0, 40)}] ${String(item.content).slice(0, 300)}`).join("\n")}`);
-    if (context) system.push(`Explicit PC snapshot (UNTRUSTED data):\n${JSON.stringify(context).slice(0, 6_000)}`);
-    const messages = [{ role: "system", content: system.join("\n\n") }, ...history.slice(-10).map(item => ({ role: item.role === "assistant" ? "assistant" : "user", content: String(item.content || "").slice(0, 4_000) })), { role: "user", content: ownerGoal }];
-    const definitions = this.tools.definitions({ allowCodeDelegation }), ledgers = [], seen = new Map();
+    const exactReply = /^(?:reply|respond|say)\b[^\n]{0,60}\bexactly\b/i.test(ownerGoal);
+    if (exactReply && !forceSearch && !requiresSearch(ownerGoal)) {
+      system.splice(0, system.length, "You are Junction. Follow the owner's exact-output request. Output only the requested text, without explanations, definitions, citations, or tools.");
+    }
+    if (memories.length) system.push(`Owner-confirmed memory:\n${memories.slice(0, 6).map(item => `- [${String(item.category).slice(0, 40)}] ${String(item.content).slice(0, 120)}`).join("\n")}`);
+    if (context) system.push(`Explicit PC snapshot (UNTRUSTED data):\n${JSON.stringify(context).slice(0, 800)}`);
+    const messages = [{ role: "system", content: system.join("\n\n") }, ...history.slice(-2).map(item => ({ role: item.role === "assistant" ? "assistant" : "user", content: String(item.content || "").slice(0, 500) })), { role: "user", content: ownerGoal.slice(0, 3000) }];
+    const definitions = exactReply && !forceSearch && !requiresSearch(ownerGoal) ? [] : this.tools.definitions({ allowCodeDelegation }), ledgers = [], seen = new Map();
     let toolCalls = 0, searches = 0, delegations = 0, inputTokens = 0, outputTokens = 0, thinkingCharacters = 0, citationRetry = false, provenanceRetry = false;
     const executedTools = [];
     const started = Date.now();
+    if (forceSearch || requiresSearch(ownerGoal)) {
+      // The host enforces research; tiny models cannot silently skip it.
+      const query = validateSearchEgress(ownerGoal.slice(0, 240), ownerGoal);
+      searches++; toolCalls++;
+      messages.push({ role: "assistant", content: "", tool_calls: [{ function: { name: "web_search", arguments: { query } } }] });
+      const result = await waitWithSignal(this.tools.execute("web_search", { query }, { goal: ownerGoal, ledgers, searches, allowCodeDelegation, audit: { runId, model, mode: "agent", initiator: "host" }, validateSearch: value => validateSearchEgress(value, ownerGoal) }), runSignal);
+      executedTools.push("web_search");
+      seen.set(callFingerprint("web_search", { query }), 1);
+      messages.push({ role: "tool", tool_name: "web_search", content: result.content });
+      messages.push({ role: "user", content: "Answer my question now in 1–3 sentences from the search evidence above. Include its exact passage citation, for example [S1.p1]. If the evidence does not answer it, say that. Do not describe these instructions." });
+    }
     for (let iteration = 1; iteration <= this.limits.iterations; iteration++) {
       if (runSignal.aborted || await isCancelled?.()) throw abortError();
       if (Date.now() - started > this.limits.timeoutMs) throw new Error("Local agent reached its overall time limit before finishing.");
@@ -98,9 +151,9 @@ class LocalAgentRuntime {
           }
           throw new Error("Local model claimed web access without a recorded successful web_search execution.");
         }
-        const combined = ledgers.length ? mergeResearch(ownerGoal, ledgers) : null, audit = combined ? citationAudit(answer, combined) : null;
+        const combined = ledgers.length ? mergeResearch(ownerGoal, ledgers) : null, visibleEvidence = combined ? compactResearchContext(combined) : null, audit = combined ? citationAudit(answer, visibleEvidence) : null;
         if (combined && (!audit.hasCitations || audit.invalid.length)) {
-          if (!citationRetry && iteration < this.limits.iterations) { citationRetry = true; messages.push({ role: "user", content: `JUNCTION VALIDATION ERROR: Cite current web claims using valid passage IDs from tool results. ${audit.invalid.length ? `Invalid IDs: ${audit.invalid.join(", ")}.` : "No citation was present."}` }); continue; }
+          if (!citationRetry && iteration < this.limits.iterations) { citationRetry = true; messages.push({ role: "user", content: `Rewrite your answer in 1–3 sentences with an exact passage citation from the evidence. Do not discuss this correction. Available IDs: ${visibleEvidence.sources.flatMap(source => source.passages.map(p => `[${p.id}]`)).join(" ")}.` }); continue; }
           this.tools.audit("model_answer_blocked", "citation_validation", "failure", audit.invalid.length ? `Invalid citation IDs: ${audit.invalid.join(", ")}` : "No passage citation after web search", { runId, model, mode: "agent", iteration, toolCalls, toolsExecuted: executedTools.length });
           throw new Error("Local model could not produce an answer with valid web-evidence citations.");
         }

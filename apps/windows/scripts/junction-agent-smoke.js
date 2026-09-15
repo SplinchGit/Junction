@@ -11,6 +11,7 @@ const { WebResearchClient } = require("../src/web-research");
 const model = process.argv[2] || "qwen3:1.7b";
 const scenario = process.argv[3] || "weather";
 const goals = {
+  worldcup: "Who won the 2026 football World Cup?",
   weather: "What's the weather like in London right now? Use current public evidence.",
   static: "How tall is the Burj Khalifa?",
   post2023: "Who won the 2025 Wimbledon gentlemen's singles title? This happened after 2023, so use web_search and cite the returned passage evidence.",
@@ -30,7 +31,8 @@ const goals = {
   try {
     const result = await runtime.run({ goal: goals[scenario], model });
     const usedWebSearch = result.toolsExecuted > 0 && result.toolNames.includes("web_search") && result.research?.sources?.length > 0;
-    const expectedFactPresent = scenario === "post2023"
+    const answerOnly = result.content.split("\n\nSources:")[0];
+    const expectedFactPresent = scenario === "worldcup" ? /Spain/i.test(answerOnly) : scenario === "post2023"
       ? /jannik\s+sinner[^.\n]{0,100}(?:won|winner|champion)|(?:won|winner|champion)[^.\n]{0,100}jannik\s+sinner/i.test(result.content) && !/(?:2025\s+wimbledon|wimbledon[^.\n]{0,30}2025)[^.\n]{0,100}novak\s+djokovic|novak\s+djokovic[^.\n]{0,100}(?:won|winner|champion)[^.\n]{0,50}2025/i.test(result.content)
       : scenario === "post2023_python"
         ? /(?:oct(?:ober|\.)?\s+7,?\s+2024|7\s+october\s+2024)/i.test(result.content)
