@@ -1,0 +1,102 @@
+{
+  "generatedAt": "2026-09-15T16:36:48.129Z",
+  "model": "qwen3.5:2b",
+  "scenario": "post2023_python",
+  "goal": "According to Python.org, on what date was Python 3.13.0 released? This happened after 2023, so use web_search and cite the returned passage evidence.",
+  "success": true,
+  "wallMs": 60111,
+  "answer": "Python 3.13.0 was released on **October 7, 2024**. This is confirmed by the official Python.org download page: \"Release date: Oct. 7, 2024\" [S1.p2].\n\nSources:\n[S1] Python Release Python 3.13.0 | Python.org — https://www.python.org/downloads/release/python-3130/\n[S2] Status of Python versions — https://devguide.python.org/versions/\n[S3] Python 3.13 - What's New, Support Lifecycle & EOL — https://versionlog.com/python/3.13/\n[S4] PEP 719 – Python 3.13 Release Schedule | peps.python.org — https://peps.python.org/pep-0719/\n[S5] Python 3.13.0 (final) released | Python Insider — https://blog.python.org/2024/10/python-3130-final-released/",
+  "iterations": 2,
+  "toolCalls": 1,
+  "toolsExecuted": 1,
+  "toolNames": [
+    "web_search"
+  ],
+  "citationAudit": {
+    "citations": [
+      "S1.p2"
+    ],
+    "invalid": [],
+    "hasCitations": true
+  },
+  "expectedFactPresent": true,
+  "audit": [
+    {
+      "id": "agent-1789490208132-d3977afbf9d89",
+      "timestamp": "2026-09-15T16:36:48.132Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model qwen3.5:2b",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789490236054-034984da26bc",
+      "timestamp": "2026-09-15T16:37:16.054Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "Python 3.13.0 release date Python.org",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789490238305-578f070ea3228",
+      "timestamp": "2026-09-15T16:37:18.305Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "5 source(s) returned",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789490238307-132eee8fd08e5",
+      "timestamp": "2026-09-15T16:37:18.307Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model qwen3.5:2b",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 2
+    },
+    {
+      "id": "agent-1789490268239-dbce353edffdd",
+      "timestamp": "2026-09-15T16:37:48.239Z",
+      "event": "model_run_completed",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "1 native tool request(s); 1 executed",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "toolsAvailable": true,
+      "iteration": 2,
+      "iterations": 2,
+      "toolCalls": 1,
+      "toolsExecuted": 1,
+      "toolNames": [
+        "web_search"
+      ],
+      "inputTokens": 2387,
+      "outputTokens": 92,
+      "thinkingCharacters": 0,
+      "thinkingState": "off",
+      "durationMs": 60107
+    }
+  ]
+}

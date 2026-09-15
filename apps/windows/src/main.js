@@ -233,16 +233,16 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   let conversation=localData.conversation(request.conversationId); if(!conversation) conversation=localData.createConversation();
   localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
   const config=localData.provider();
-  if (request.agent && config.id !== "local") throw new Error("Local Agent mode requires the Local LLM workflow. Codex agents live in Projects.");
   const runId=String(request.runId||crypto.randomUUID()).slice(0,100),controller=new AbortController();
-  const mode=request.agent?"agent":request.research?"research":"chat",started=Date.now();
-  appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,model:config.model||"Default model",mode,reason:request.agent?"Native tools available to the model":request.research?"Junction Search evidence requested before inference":"No tools available to the model"});
-  if(request.agent)activeAgentRuns.set(runId,controller);
+  const nativeToolsAvailable=config.id==="local";
+  const mode=nativeToolsAvailable?"agent":request.research?"research":"chat",started=Date.now();
+  appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,model:config.model||"Default model",mode,toolsAvailable:nativeToolsAvailable,reason:nativeToolsAvailable?"Native tools supplied automatically":request.research?"Junction Search evidence requested before inference":"This provider does not use the local native-tool runtime"});
+  if(nativeToolsAvailable)activeAgentRuns.set(runId,controller);
   let reply,research=null;
   try {
     if(request.research){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(content);appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
     const researchInstructions = research ? researchContext(research) : null;
-    reply=request.agent
+    reply=nativeToolsAvailable
       ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
@@ -250,7 +250,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   } catch(error) {
     appendAudit({event:"model_run_completed",capability:"model",decision:"stopped",outcome:"failure",runId,model:config.model||"Default model",mode,toolCalls:0,toolsExecuted:0,toolNames:[],durationMs:Date.now()-started,reason:String(error.message||error).slice(0,500)});
     throw error;
-  } finally { if(request.agent)activeAgentRuns.delete(runId); }
+  } finally { if(nativeToolsAvailable)activeAgentRuns.delete(runId); }
   const contentWithSources = research ? `${reply.content.trim()}\n\n${sourceAppendix(research)}` : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
   const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
@@ -259,7 +259,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   const thinkingState=reply.thinkingState||(reasoningTokens?"reported":config.id==="local"?"off":"not_reported");
   const telemetry={mode,runId,toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],iterations:Number(reply.iterations||1),thinkingCharacters:Number(reply.thinkingCharacters||0),thinkingState,reasoningTokens,durationMs:Number(reply.durationMs||Date.now()-started)};
   localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens),...telemetry});
-  if(!request.agent)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,model:reply.model||config.model||"Default model",mode,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:0,thinkingState,durationMs:telemetry.durationMs,iterations:1,toolCalls:0,toolsExecuted:0,toolNames:[],reason:request.research?"Answered from owner-requested Junction Search evidence; model selected no tools":"Answered with no tool access"});
+  if(!nativeToolsAvailable)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,model:reply.model||config.model||"Default model",mode,toolsAvailable:false,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:0,thinkingState,durationMs:telemetry.durationMs,iterations:1,toolCalls:0,toolsExecuted:0,toolNames:[],reason:request.research?"Answered from owner-requested Junction Search evidence; model selected no native tools":"Answered without the local native-tool runtime"});
   scheduleSharedSync();
   return {conversationId:conversation.id,message,usage:reply.usage,model:reply.model};
 });

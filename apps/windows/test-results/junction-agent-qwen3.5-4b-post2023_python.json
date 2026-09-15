@@ -1,0 +1,103 @@
+{
+  "generatedAt": "2026-09-15T16:28:57.805Z",
+  "model": "qwen3.5:4b",
+  "scenario": "post2023_python",
+  "goal": "According to Python.org, on what date was Python 3.13.0 released? This happened after 2023, so use web_search and cite the returned passage evidence.",
+  "success": true,
+  "wallMs": 109077,
+  "answer": "According to Python.org, **Python 3.13.0 was released on October 7, 2024**.\n\nThis is confirmed by the official release page [S1.p2] and the Python Insider blog post [S3.p1], which both state that \"Python 3.13.0 (final) released\" with the date October 7, 2024.\n\nSources:\n[S1] Python Release Python 3.13.0 | Python.org — https://www.python.org/downloads/release/python-3130/\n[S2] Status of Python versions — https://devguide.python.org/versions/\n[S3] Python 3.13.0 (final) released | Python Insider — https://blog.python.org/2024/10/python-3130-final-released/\n[S4] Python 3.13 - What's New, Support Lifecycle & EOL — https://versionlog.com/python/3.13/\n[S5] PEP 719 – Python 3.13 Release Schedule | peps.python.org — https://peps.python.org/pep-0719/",
+  "iterations": 2,
+  "toolCalls": 1,
+  "toolsExecuted": 1,
+  "toolNames": [
+    "web_search"
+  ],
+  "citationAudit": {
+    "citations": [
+      "S1.p2",
+      "S3.p1"
+    ],
+    "invalid": [],
+    "hasCitations": true
+  },
+  "expectedFactPresent": true,
+  "audit": [
+    {
+      "id": "agent-1789489737809-26d6830335aa3",
+      "timestamp": "2026-09-15T16:28:57.809Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model qwen3.5:4b",
+      "runId": null,
+      "model": "qwen3.5:4b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489781150-d4d8995314979",
+      "timestamp": "2026-09-15T16:29:41.150Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "Python 3.13.0 release date python.org",
+      "runId": null,
+      "model": "qwen3.5:4b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489783380-f91b76162a2ae",
+      "timestamp": "2026-09-15T16:29:43.380Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "5 source(s) returned",
+      "runId": null,
+      "model": "qwen3.5:4b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489783381-8e92ef46a22db",
+      "timestamp": "2026-09-15T16:29:43.381Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model qwen3.5:4b",
+      "runId": null,
+      "model": "qwen3.5:4b",
+      "mode": "agent",
+      "iteration": 2
+    },
+    {
+      "id": "agent-1789489846882-f3b491087a677",
+      "timestamp": "2026-09-15T16:30:46.882Z",
+      "event": "model_run_completed",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "1 native tool request(s); 1 executed",
+      "runId": null,
+      "model": "qwen3.5:4b",
+      "mode": "agent",
+      "toolsAvailable": true,
+      "iteration": 2,
+      "iterations": 2,
+      "toolCalls": 1,
+      "toolsExecuted": 1,
+      "toolNames": [
+        "web_search"
+      ],
+      "inputTokens": 2196,
+      "outputTokens": 123,
+      "thinkingCharacters": 0,
+      "thinkingState": "off",
+      "durationMs": 109074
+    }
+  ]
+}

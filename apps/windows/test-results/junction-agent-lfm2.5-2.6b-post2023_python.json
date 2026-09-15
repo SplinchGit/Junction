@@ -1,0 +1,142 @@
+{
+  "generatedAt": "2026-09-15T16:30:50.530Z",
+  "model": "lfm2.5:2.6b",
+  "scenario": "post2023_python",
+  "goal": "According to Python.org, on what date was Python 3.13.0 released? This happened after 2023, so use web_search and cite the returned passage evidence.",
+  "success": true,
+  "wallMs": 178894,
+  "answer": "According to Python.org, Python 3.13.0 was released on **October 7, 2024**.\n\n**Source:** Python.org release page for Python 3.13.0 (https://www.python.org/downloads/release/python-3130/) – the page states \"7, 2024 This is the stable release of Python 3.13.0.\" [S1.p2]\n\nThis is confirmed by additional Python.org documentation which notes \"Python 3.13 was released on October 7, 2024.\" [S5.p1]\n\nSources:\n[S1] Python Release Python 3.13.0 | Python.org — https://www.python.org/downloads/release/python-3130/\n[S2] Status of Python versions — https://devguide.python.org/versions/\n[S3] Python 3.13.0 (final) released | Python Insider — https://blog.python.org/2024/10/python-3130-final-released/\n[S4] Python 3.13 - What's New, Support Lifecycle & EOL — https://versionlog.com/python/3.13/\n[S5] What’s New In Python 3.13 — Python 3.13.15 documentation — https://docs.python.org/3.13/whatsnew/3.13.html\n[S6] [RELEASE] Python 3.13.0 (final) released — https://mail.python.org/pipermail/python-list/2024-October/912840.html\n[S7] Python Release Python 3.13.0 | Python.org — https://pythonlang.net/downloads/release/python-3130/",
+  "iterations": 3,
+  "toolCalls": 2,
+  "toolsExecuted": 2,
+  "toolNames": [
+    "web_search"
+  ],
+  "citationAudit": {
+    "citations": [
+      "S1.p2",
+      "S5.p1"
+    ],
+    "invalid": [],
+    "hasCitations": true
+  },
+  "expectedFactPresent": true,
+  "audit": [
+    {
+      "id": "agent-1789489850533-96723e1d4947a",
+      "timestamp": "2026-09-15T16:30:50.533Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 1; model lfm2.5:2.6b",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489875392-12ad952c22427",
+      "timestamp": "2026-09-15T16:31:15.392Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "Python 3.13.0 release date Python.org",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489877634-49dc0f9a07cd8",
+      "timestamp": "2026-09-15T16:31:17.634Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "5 source(s) returned",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 1
+    },
+    {
+      "id": "agent-1789489877635-41fa363517025",
+      "timestamp": "2026-09-15T16:31:17.635Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 2; model lfm2.5:2.6b",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 2
+    },
+    {
+      "id": "agent-1789489922837-c78b379f5a146",
+      "timestamp": "2026-09-15T16:32:02.837Z",
+      "event": "agent_tool_requested",
+      "capability": "web_search",
+      "decision": "requested",
+      "outcome": "success",
+      "reason": "Python 3.13.0 release date October 7 2024 python.org downloads release",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 2
+    },
+    {
+      "id": "agent-1789489925912-42888789f38a5",
+      "timestamp": "2026-09-15T16:32:05.912Z",
+      "event": "agent_tool_result",
+      "capability": "web_search",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "7 source(s) returned",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 2
+    },
+    {
+      "id": "agent-1789489925913-ccd1cc93a47c2",
+      "timestamp": "2026-09-15T16:32:05.913Z",
+      "event": "agent_iteration",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "iteration 3; model lfm2.5:2.6b",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "iteration": 3
+    },
+    {
+      "id": "agent-1789490029424-66748fd05b07a",
+      "timestamp": "2026-09-15T16:33:49.424Z",
+      "event": "model_run_completed",
+      "capability": "local_model",
+      "decision": "executed",
+      "outcome": "success",
+      "reason": "2 native tool request(s); 2 executed",
+      "runId": null,
+      "model": "lfm2.5:2.6b",
+      "mode": "agent",
+      "toolsAvailable": true,
+      "iteration": 3,
+      "iterations": 3,
+      "toolCalls": 2,
+      "toolsExecuted": 2,
+      "toolNames": [
+        "web_search"
+      ],
+      "inputTokens": 3411,
+      "outputTokens": 650,
+      "thinkingCharacters": 1872,
+      "thinkingState": "reported",
+      "durationMs": 178890
+    }
+  ]
+}

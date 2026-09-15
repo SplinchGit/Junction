@@ -11,6 +11,7 @@
     "test": "node test/run.js && node test/local-agent-runtime.test.js",
     "pack": "electron-builder --dir --win",
     "pack:workspace": "node scripts/pack-workspace.js",
+    "desktop": "node scripts/create-desktop-shortcut.js",
     "dist": "electron-builder --win nsis"
   },
   "devDependencies": {

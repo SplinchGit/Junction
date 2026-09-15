@@ -116,12 +116,13 @@ class LocalBrainRelay {
       const plaintext = crypt(state.key, `JBP1|${state.brainId}|${id}|request`, Buffer.from(item.data.ciphertext, "base64url"), Buffer.from(item.data.nonce, "base64url"), false);
       const payload = JSON.parse(plaintext);
       if (!Array.isArray(payload.messages) || typeof payload.model !== "string") throw new Error("Invalid encrypted local-model request.");
-      if (payload.mode === "agent") await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null);
+      // Tool availability is a server-side invariant. Ignore legacy phone
+      // clients that still send mode="chat" and grant the longer agent lease.
+      await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null);
       // A language model is not an authority to start coding work. Ordinary
       // phone chat intentionally cannot turn a hallucinated marker into a
       // Codex draft; that requires a future separately-approved request shape.
       const allowCodeDelegation = payload.mode === "code_delegation" && payload.ownerApproved === true;
-      payload.messages = [{ role: "system", content: this.systemPrompt({ allowCodeDelegation }) }, ...payload.messages];
       let answer = "", thinking = "", final = null, sequence = 0, lastFlush = 0;
       const flush = async (force = false) => {
         if (!answer || (!force && this.now() - lastFlush < STREAM_FLUSH_MS)) return;
@@ -129,8 +130,8 @@ class LocalBrainRelay {
         await this.update(item.document, state.session, { status: "streaming", partialCiphertext: partial.ciphertext, partialNonce: partial.nonce, streamSequence: ++sequence, leaseUntilMs: this.now() + LEASE_MS }, null);
         lastFlush = this.now();
       };
-      if (payload.mode === "agent") {
-        if (!this.runLocalAgent) throw new Error("Local Agent is unavailable on this PC.");
+      {
+        if (!this.runLocalAgent) throw new Error("The local tool runtime is unavailable on this PC.");
         const ownerIndex = payload.messages.map(message => message.role).lastIndexOf("user");
         const goal = String(payload.messages[ownerIndex]?.content || "").trim();
         if (!goal) throw new Error("Local Agent request has no owner goal.");
@@ -145,14 +146,6 @@ class LocalBrainRelay {
           const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id });
           answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
         } finally { clearInterval(cancellationPoll); }
-      } else {
-        const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
-        try {
-          const upstream = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal, body: JSON.stringify({ model: payload.model, messages: payload.messages, stream: true, think: process.env.JUNCTION_OLLAMA_THINK === "true", options: { num_predict: 1024 } }) });
-          if (!upstream.ok || !upstream.body) { const body = await upstream.json().catch(() => null); throw new Error(body?.error || `Local model returned HTTP ${upstream.status}.`); }
-          await readNdjson(upstream.body, async event => { answer += String(event?.message?.content || ""); thinking += String(event?.message?.thinking || ""); if (event?.done) final = event; await flush(); });
-          await flush(true);
-        } finally { clearTimeout(timeout); }
       }
       answer = answer.trim();
       if (!answer) throw new Error("Local model returned an empty response.");

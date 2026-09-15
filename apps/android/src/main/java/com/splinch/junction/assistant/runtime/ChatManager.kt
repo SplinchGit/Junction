@@ -152,9 +152,7 @@ class ChatManager(
         prefs = prefs,
         authManager = authManager,
         history = { _messages.value },
-        toolDefinitions = {
-            if (_agentToolsEnabled.value) ToolRegistry.allDefinitions() else emptyList()
-        },
+        toolDefinitions = { ToolRegistry.allDefinitions() },
         listener = this
     )
     private val toolExecutor = ToolExecutor(
@@ -211,7 +209,8 @@ class ChatManager(
     val connectionState: StateFlow<RealtimeConnectionState> = voiceCoordinator.connectionState
     val speechModeEnabled: StateFlow<Boolean> = voiceCoordinator.speechModeEnabled
 
-    private val _agentToolsEnabled = MutableStateFlow(false)
+    /** Compatibility state for older UI/session consumers. Tools are always available. */
+    private val _agentToolsEnabled = MutableStateFlow(true)
     val agentToolsEnabled: StateFlow<Boolean> = _agentToolsEnabled.asStateFlow()
 
     val micEnabled: StateFlow<Boolean> = voiceCoordinator.micEnabled
@@ -228,7 +227,7 @@ class ChatManager(
 
     suspend fun initialize() {
         conversationCoordinator.initialize()
-        _agentToolsEnabled.value = session.agentToolsEnabled
+        ensureToolsAlwaysEnabled()
         val savedVoiceBackend = if (prefs.voiceBackendFlow.first() == "local") {
             VoiceBackend.LOCAL
         } else {
@@ -416,7 +415,6 @@ class ChatManager(
         val turnJob = scope.launch(Dispatchers.IO) {
             val contextBlocks = buildContextBlocks(activeProvider)
             val tools = when {
-                !_agentToolsEnabled.value -> emptyList()
                 activeProvider.id == "local" -> listOf(
                     ToolDefinition(
                         name = "junction_local_agent",
@@ -514,15 +512,13 @@ class ChatManager(
                                 itemId = UUID.randomUUID().toString()
                             }
                             is LlmEvent.ToolCallRequested -> {
-                                if (_agentToolsEnabled.value) {
-                                    val parsed = runCatching { JSONObject(event.arguments) }
-                                    val args = parsed.getOrElse {
-                                        sawToolArgParseFailure = true
-                                        JSONObject()
-                                    }
-                                    val summary = ToolRegistry.summarize(event.name, args)
-                                    requestedCalls.add(PendingToolCall(event.callId, event.name, args, summary))
+                                val parsed = runCatching { JSONObject(event.arguments) }
+                                val args = parsed.getOrElse {
+                                    sawToolArgParseFailure = true
+                                    JSONObject()
                                 }
+                                val summary = ToolRegistry.summarize(event.name, args)
+                                requestedCalls.add(PendingToolCall(event.callId, event.name, args, summary))
                             }
                             is LlmEvent.Thinking -> accumulatedThinking = event.text.takeIf { it.isNotBlank() }
                             is LlmEvent.Usage -> usage = event.usage
@@ -999,7 +995,7 @@ class ChatManager(
     suspend fun clearSession() {
         voiceCoordinator.disconnect()
         conversationCoordinator.clear()
-        _agentToolsEnabled.value = session.agentToolsEnabled
+        ensureToolsAlwaysEnabled()
         voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
         planCoordinator.clearActive()
         pendingRealtimeCalls.clear()
@@ -1017,7 +1013,7 @@ class ChatManager(
     suspend fun startNewChat() {
         voiceCoordinator.disconnect()
         conversationCoordinator.startNew()
-        _agentToolsEnabled.value = session.agentToolsEnabled
+        ensureToolsAlwaysEnabled()
         voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
         planCoordinator.clearActive()
         pendingRealtimeCalls.clear()
@@ -1031,7 +1027,7 @@ class ChatManager(
         if (targetSessionId == session.sessionId) return
         voiceCoordinator.disconnect()
         conversationCoordinator.switchTo(targetSessionId)
-        _agentToolsEnabled.value = session.agentToolsEnabled
+        ensureToolsAlwaysEnabled()
         voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
         planCoordinator.clearActive()
         pendingRealtimeCalls.clear()
@@ -1050,7 +1046,7 @@ class ChatManager(
         conversationCoordinator.deleteSession(targetSessionId)
         if (wasActive) {
             voiceCoordinator.disconnect()
-            _agentToolsEnabled.value = session.agentToolsEnabled
+            ensureToolsAlwaysEnabled()
             voiceCoordinator.initialize(session.speechModeEnabled, voiceCoordinator.backendState.value)
             planCoordinator.clearActive()
             pendingRealtimeCalls.clear()
@@ -1120,9 +1116,14 @@ class ChatManager(
     }
 
     suspend fun setAgentToolsEnabled(enabled: Boolean) {
-        if (enabled == _agentToolsEnabled.value) return
-        _agentToolsEnabled.value = enabled
-        conversationCoordinator.setAgentToolsEnabled(enabled)
+        // Kept for binary/source compatibility with older callers. Tool availability
+        // is now a Junction invariant and cannot be disabled per chat.
+        ensureToolsAlwaysEnabled()
+    }
+
+    private suspend fun ensureToolsAlwaysEnabled() {
+        _agentToolsEnabled.value = true
+        if (!session.agentToolsEnabled) conversationCoordinator.setAgentToolsEnabled(true)
     }
 
     fun setMicEnabled(enabled: Boolean) {
@@ -1179,7 +1180,6 @@ class ChatManager(
     }
 
     override fun onRealtimeToolCall(call: ToolCall) {
-        if (!_agentToolsEnabled.value) return
         val args = runCatching { JSONObject(call.arguments) }.getOrElse { JSONObject() }
         val summary = ToolRegistry.summarize(call.name, args)
         pendingRealtimeCalls.add(PendingToolCall(call.callId, call.name, args, summary))

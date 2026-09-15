@@ -205,7 +205,7 @@ private fun ModelUsageEntry(entry: ModelUsageEntity) {
                 } else if (entry.toolsAvailable) {
                     "Tools were available, but the model answered without requesting one."
                 } else {
-                    "Agent tools were off, so the model could not call one."
+                    "This historical run did not expose tools to the model."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer

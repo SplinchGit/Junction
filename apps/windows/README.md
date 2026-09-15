@@ -21,8 +21,8 @@ it is never exposed to the LAN.
 - Built-in Junction Search with no API key or companion service: guarded public-HTTPS
   retrieval, DNS/IP pinning, zero destination redirects, bounded extraction, durable evidence
   jobs, and passage citations.
-- A per-message Local Agent mode for Ollama. Its schema-constrained loop may search up
-  to three times across five decisions; deterministic egress and citation validation sit
+- An always-available local tool runtime for Ollama. Its schema-constrained loop may search up
+  to three times across seven bounded model passes; deterministic egress and citation validation sit
   outside the model, and no mutation tools are exposed.
 - **Codex on this PC** is a selectable chat workflow. It invokes the locally
   installed, ChatGPT-signed-in Codex CLI in read-only, ephemeral mode, so it
@@ -46,7 +46,7 @@ trees are dirty and Civlets is not a Git repository, so they correctly appear as
 ## Cloud and credential policy
 
 Cloud/API-backed reasoning and local Ollama are both supported reasoning paths.
-Junction never downloads a model automatically. Local chat and Local Agent use the
+Junction never downloads a model automatically. Local chat's tool-capable runtime uses the
 owner's loopback-only Ollama installation when explicitly selected.
 
 To use the Codex chat workflow, install the Codex CLI and sign in on the same
@@ -101,6 +101,17 @@ does not create an installer or replace the production `pack`/`dist` commands.
 Set `JUNCTION_PACK_OUTPUT` to a simple directory name when a prior smoke-test
 runtime is still locked (for example `parity-win-unpacked`); the packer never
 targets a path outside `apps/windows/dist`.
+
+To create a working Desktop shortcut for that unpacked build, run:
+
+```powershell
+npm run pack:workspace
+npm run desktop
+```
+
+The shortcut targets the complete `dist\\workspace-win-unpacked` runtime and sets
+its working directory. Do not copy only `Junction.exe` to the Desktop: Electron
+also needs the adjacent `resources\\app.asar` and `resources\\pc-companion` files.
 
 Validate on an interactive Windows desktop: install, confirm a stable device ID
 across restart, sign in through the system browser, opt in, and check the matching

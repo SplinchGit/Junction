@@ -52,9 +52,9 @@ data class ChatSession(
     val startedAt: Instant,
     val messages: List<ChatMessage> = emptyList(),
     val speechModeEnabled: Boolean = false,
-    // A chat starts as chat. Tools are an explicit owner choice, not an
-    // implicit agent mode that a model can stumble into.
-    val agentToolsEnabled: Boolean = false,
+    // Retained in persisted/synced sessions for backwards compatibility. New
+    // runtimes enforce true: tool availability is no longer a per-chat mode.
+    val agentToolsEnabled: Boolean = true,
     val title: String? = null,
     /** Last owner-visible metadata change, used only to converge the shared shelf. */
     val sharedUpdatedAt: Long = startedAt.toEpochMilli()

@@ -200,7 +200,11 @@ function keywords(query) {
 
 function evidencePassages(document, query, sourceId) {
   const terms = keywords(query);
-  const sentences = document.text.split(/(?<=[.!?])\s+|\n+/).map(value => value.trim()).filter(value => value.length >= 40 && value.length <= 900);
+  // Do not split after abbreviations before a number (for example "Oct. 7,
+  // 2024"). Losing the month turned authoritative release dates into ambiguous
+  // evidence. Period boundaries are accepted only when the next token looks
+  // like the start of a normal capitalized sentence.
+  const sentences = document.text.split(/(?<=[!?])\s+|(?<=\.)\s+(?=[A-Z][a-z])|\n+/).map(value => value.trim()).filter(value => value.length >= 20 && value.length <= 900);
   return sentences.map((text, index) => ({
     id: `${sourceId}.p${index + 1}`,
     text,

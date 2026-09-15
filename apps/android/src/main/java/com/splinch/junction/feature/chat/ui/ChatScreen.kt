@@ -135,7 +135,6 @@ fun ChatScreen(
     val activePlan by chatManager.activePlan.collectAsState()
     val connectionState by chatManager.connectionState.collectAsState()
     val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
-    val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
     val micEnabled by chatManager.micEnabled.collectAsState()
     val voiceListening by chatManager.localVoiceListening.collectAsState()
     val voiceSpeaking by chatManager.localVoiceSpeaking.collectAsState()
@@ -255,12 +254,6 @@ fun ChatScreen(
                         modifier = Modifier.size(18.dp)
                     )
                 }
-            )
-            FilterChip(
-                selected = agentToolsEnabled,
-                onClick = { scope.launch { chatManager.setAgentToolsEnabled(!agentToolsEnabled) } },
-                label = { Text("Tools") },
-                leadingIcon = { Icon(Icons.Default.Build, contentDescription = null, modifier = Modifier.size(18.dp)) }
             )
             if (speechModeEnabled) {
                 FilterChip(

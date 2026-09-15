@@ -1,68 +1,99 @@
 {
-  "generatedAt": "2026-09-14T20:45:28.545Z",
+  "generatedAt": "2026-09-15T15:48:50.464Z",
   "model": "qwen3.5:2b",
   "scenario": "weather",
   "goal": "What's the weather like in London right now? Use current public evidence.",
   "success": true,
-  "wallMs": 37429,
-  "answer": "Based on current public evidence:\n\n- **Wind**: The highest wind speed expected today is 16 mph [S1.p1].\n- **UV Index**: Moderate, with a daily high of 4 [S1.p2].\n- **Precipitation**: It will be cloudy and wet for some areas as patches of rain may move in from the west [S3.p2].\n\nFor more detailed hourly forecasts, check AccuWeather's London forecast page.\n\nSources:\n[S1] London (Greater London) weather - Met Office — https://weather.metoffice.gov.uk/forecast/gcpvj0v07\n[S2] London, London, United Kingdom Hourly Weather | AccuWeather — https://www.accuweather.com/en/gb/london/ec4a-2/hourly-weather-forecast/328328\n[S3] London - BBC Weather — https://www.bbc.com/weather/2643743\n[S4] Weather for London, England, United Kingdom - timeanddate.com — https://www.timeanddate.com/weather/uk/london",
+  "wallMs": 52904,
+  "answer": "Based on the current public evidence:\n\n**London weather:**\n- **Wind**: Wind gusts up to 23 mph [S1.p1]\n- **UV Index**: Moderate, with a daily high of 4 [S1.p2]\n- **Pollen levels**: Moderate [S1.p2]\n- **Sea temperature**: Not specified in the available data [S1.p2]\n\nFor more detailed hourly forecasts including temperature, rain, and humidity, you can check WeatherRadar.uk's hourly forecast for London [S2.p2].\n\nSources:\n[S1] London (Greater London) weather - Met Office — https://weather.metoffice.gov.uk/forecast/gcpvj0v07?searchLocation=london\n[S2] London weather today hour by hour — hourly forecast | WeatherRadar.uk — https://weatherradar.uk/hourly/london/\n[S3] Weather for London, England, United Kingdom - timeanddate.com — https://www.timeanddate.com/weather/uk/london\n[S4] London, London, United Kingdom Current Weather | AccuWeather — https://www.accuweather.com/en/gb/london/ec4a-2/current-weather/328328",
   "iterations": 2,
   "toolCalls": 1,
-  "searches": 1,
   "citationAudit": {
     "citations": [
       "S1.p1",
       "S1.p2",
-      "S3.p2"
+      "S2.p2"
     ],
     "invalid": [],
     "hasCitations": true
   },
   "audit": [
     {
-      "id": "agent-1789418728547-3214c8f2f511",
-      "timestamp": "2026-09-14T20:45:28.547Z",
+      "id": "agent-1789487330468-b0c70b0c78373",
+      "timestamp": "2026-09-15T15:48:50.468Z",
       "event": "agent_iteration",
       "capability": "local_model",
       "decision": "executed",
       "outcome": "success",
-      "reason": "iteration 1; model qwen3.5:2b"
+      "reason": "iteration 1; model qwen3.5:2b",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
     },
     {
-      "id": "agent-1789418743598-2702d69bcc9b4",
-      "timestamp": "2026-09-14T20:45:43.598Z",
+      "id": "agent-1789487352812-90ae0d815607e",
+      "timestamp": "2026-09-15T15:49:12.812Z",
       "event": "agent_tool_requested",
       "capability": "web_search",
       "decision": "requested",
       "outcome": "success",
-      "reason": "London weather current time"
+      "reason": "London weather current time",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
     },
     {
-      "id": "agent-1789418745488-e73271e448ca1",
-      "timestamp": "2026-09-14T20:45:45.488Z",
+      "id": "agent-1789487354720-30942821fa7d7",
+      "timestamp": "2026-09-15T15:49:14.720Z",
       "event": "agent_tool_result",
       "capability": "web_search",
       "decision": "executed",
       "outcome": "success",
-      "reason": "4 source(s) returned"
+      "reason": "4 source(s) returned",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 1
     },
     {
-      "id": "agent-1789418745489-e1f9b64392e23",
-      "timestamp": "2026-09-14T20:45:45.489Z",
+      "id": "agent-1789487354721-68a5e1913f284",
+      "timestamp": "2026-09-15T15:49:14.722Z",
       "event": "agent_iteration",
       "capability": "local_model",
       "decision": "executed",
       "outcome": "success",
-      "reason": "iteration 2; model qwen3.5:2b"
+      "reason": "iteration 2; model qwen3.5:2b",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "iteration": 2
     },
     {
-      "id": "agent-1789418765973-5e17d8b1b8389",
-      "timestamp": "2026-09-14T20:46:05.973Z",
-      "event": "agent_final",
+      "id": "agent-1789487383368-958fdf9b7c745",
+      "timestamp": "2026-09-15T15:49:43.368Z",
+      "event": "model_run_completed",
       "capability": "local_model",
       "decision": "executed",
       "outcome": "success",
-      "reason": "completed after 2 iteration(s) and 1 tool call(s)"
+      "reason": "1 native tool request(s); 1 executed",
+      "runId": null,
+      "model": "qwen3.5:2b",
+      "mode": "agent",
+      "toolsAvailable": true,
+      "iteration": 2,
+      "iterations": 2,
+      "toolCalls": 1,
+      "toolsExecuted": 1,
+      "toolNames": [
+        "web_search"
+      ],
+      "inputTokens": 1485,
+      "outputTokens": 147,
+      "thinkingCharacters": 0,
+      "thinkingState": "off",
+      "durationMs": 52900
     }
   ]
 }

@@ -29,13 +29,31 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   assert.equal(completed[4].toolCalls, 2);
   assert.deepEqual(completed[4].toolNames, ["web_search"]);
 
-  const plain = harness([{ role: "assistant", content: "Searching..." }]);
-  assert.equal((await plain.runtime.run({ goal: "Say something", model: "tiny" })).content, "Searching...");
+  const plain = harness([{ role: "assistant", content: "A stable answer from model knowledge." }]);
+  assert.equal((await plain.runtime.run({ goal: "Say something", model: "tiny" })).content, "A stable answer from model knowledge.");
   assert.equal(plain.executions.length, 0, "natural-language tool claims must never execute a tool");
+
+  const falseClaim = harness([
+    { role: "assistant", content: "I accessed the internet via search and found the answer." },
+    call("London weather"),
+    { role: "assistant", content: "The recorded result says London is cloudy [S1.p1]." },
+  ]);
+  const corrected = await falseClaim.runtime.run({ goal: "Find London weather", model: "tiny" });
+  assert.equal(corrected.toolsExecuted, 1);
+  assert.equal(falseClaim.executions.length, 1);
+  assert.match(falseClaim.requests[1].messages.at(-1).content, /No web_search tool completed/);
+  assert.ok(falseClaim.audits.some(entry => entry[0] === "model_claim_blocked"));
+
+  const repeatedFalseClaim = harness([
+    { role: "assistant", content: "I searched the internet." },
+    { role: "assistant", content: "My web search found it." },
+  ]);
+  await assert.rejects(() => repeatedFalseClaim.runtime.run({ goal: "Find it", model: "tiny" }), /claimed web access/);
 
   const malformed = harness([{ role: "assistant", content: "", tool_calls: [{ function: { name: "web_search", arguments: "{bad" } }] }, { role: "assistant", content: "The tool request was malformed." }]);
   await malformed.runtime.run({ goal: "Explain a malformed request", model: "tiny" });
   assert.equal(malformed.executions.length, 0);
+  assert.equal(malformed.audits.find(entry => entry[0] === "model_run_completed")[4].toolCalls, 1);
   assert.match(malformed.requests[1].messages.at(-1).content, /Malformed arguments/);
 
   const duplicate = harness([call("London weather"), call("London weather"), { role: "assistant", content: "Used the first result [S1.p1]" }]);

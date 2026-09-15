@@ -39,11 +39,10 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
             }
             val requestId = UUID.randomUUID().toString()
             val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
-            val agentMode = tools.any { it.name == LOCAL_AGENT_SIGNAL }
             val plain = JSONObject().apply {
                 put("model", workhorseModel)
                 put("messages", messages)
-                put("mode", if (agentMode) "agent" else "chat")
+                put("mode", "agent")
             }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)
@@ -97,7 +96,7 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
                 }
             }
             val timeout = launch {
-                delay(if (agentMode) AGENT_REQUEST_TIMEOUT_MS else REQUEST_TIMEOUT_MS)
+                delay(AGENT_REQUEST_TIMEOUT_MS)
                 if (!terminal) {
                     terminal = true
                     trySend(LlmEvent.Activity(""))
@@ -119,7 +118,6 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
         const val SOURCE = "junction_local_llm_v2"
         const val MAX_CONTEXT_BLOCKS = 18
         const val MAX_BLOCK_CHARS = 4_000
-        const val REQUEST_TIMEOUT_MS = 150_000L
         const val AGENT_REQUEST_TIMEOUT_MS = 360_000L
         // The desktop relay updates its signed-in heartbeat every 15 seconds.
         // This generous window tolerates a brief network handover without

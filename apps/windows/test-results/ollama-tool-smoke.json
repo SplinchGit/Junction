@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-14T20:50:05.584Z",
+  "generatedAt": "2026-09-15T15:35:12.712Z",
   "host": "Intel i7-6700K / 12 GB RAM / CPU Ollama",
   "contextTokens": 4096,
   "fakeToolResult": {
@@ -11,9 +11,9 @@
     {
       "model": "qwen3:1.7b",
       "success": true,
-      "firstWallMs": 8009,
-      "promptTokensPerSecond": 117.73,
-      "generationTokensPerSecond": 12.74,
+      "firstWallMs": 11455,
+      "promptTokensPerSecond": 89.69,
+      "generationTokensPerSecond": 9.54,
       "structuredToolCall": true,
       "requestedTool": "get_weather",
       "arguments": {
@@ -24,18 +24,18 @@
         "sizeVramBytes": 0,
         "estimatedRamBytes": 1882424605
       },
-      "finalWallMs": 1614,
-      "totalWallMs": 9623,
-      "finalGenerationTokensPerSecond": 12.9,
+      "finalWallMs": 2111,
+      "totalWallMs": 13566,
+      "finalGenerationTokensPerSecond": 9.72,
       "finalAnswer": "The current weather in London is 17°C with clouds.",
       "finalHasUnexpectedToolCall": false
     },
     {
       "model": "qwen3.5:2b",
       "success": true,
-      "firstWallMs": 14608,
-      "promptTokensPerSecond": 68.82,
-      "generationTokensPerSecond": 7.12,
+      "firstWallMs": 22081,
+      "promptTokensPerSecond": 48.74,
+      "generationTokensPerSecond": 5.28,
       "structuredToolCall": true,
       "requestedTool": "get_weather",
       "arguments": {
@@ -46,36 +46,40 @@
         "sizeVramBytes": 0,
         "estimatedRamBytes": 2361424607
       },
-      "finalWallMs": 3892,
-      "totalWallMs": 18500,
-      "finalGenerationTokensPerSecond": 7.21,
+      "finalWallMs": 5372,
+      "totalWallMs": 27453,
+      "finalGenerationTokensPerSecond": 5.24,
       "finalAnswer": "The weather in London right now is **cloudy** with a temperature of 17°C.",
       "finalHasUnexpectedToolCall": false
     },
     {
       "model": "qwen3.5:4b",
-      "success": false,
-      "firstWallMs": 24493,
-      "promptTokensPerSecond": 43.06,
-      "generationTokensPerSecond": 5.01,
+      "success": true,
+      "firstWallMs": 30772,
+      "promptTokensPerSecond": 30.16,
+      "generationTokensPerSecond": 3.6,
       "structuredToolCall": true,
       "requestedTool": "get_weather",
       "arguments": {
         "city": "London"
       },
       "loadedMemory": {
-        "sizeBytes": 2900130528,
+        "sizeBytes": 3134277548,
         "sizeVramBytes": 0,
-        "estimatedRamBytes": 2900130528
+        "estimatedRamBytes": 3134277548
       },
-      "failure": "500: {\"error\":\"an error was encountered while running the model: error: task id = 28, error: got exception: std::bad_alloc\"}"
+      "finalWallMs": 6640,
+      "totalWallMs": 37412,
+      "finalGenerationTokensPerSecond": 3.73,
+      "finalAnswer": "The weather in London is currently cloudy with a temperature of 17°C.",
+      "finalHasUnexpectedToolCall": false
     },
     {
       "model": "lfm2.5:2.6b",
       "success": true,
-      "firstWallMs": 14661,
-      "promptTokensPerSecond": 69.53,
-      "generationTokensPerSecond": 8.93,
+      "firstWallMs": 18686,
+      "promptTokensPerSecond": 49.51,
+      "generationTokensPerSecond": 6.52,
       "structuredToolCall": true,
       "requestedTool": "get_weather",
       "arguments": {
@@ -86,9 +90,9 @@
         "sizeVramBytes": 0,
         "estimatedRamBytes": 1817066863
       },
-      "finalWallMs": 8010,
-      "totalWallMs": 22671,
-      "finalGenerationTokensPerSecond": 8.85,
+      "finalWallMs": 10880,
+      "totalWallMs": 29566,
+      "finalGenerationTokensPerSecond": 6.52,
       "finalAnswer": "The current weather in London is **17°C** and it's **cloudy**.",
       "finalHasUnexpectedToolCall": false
     }
