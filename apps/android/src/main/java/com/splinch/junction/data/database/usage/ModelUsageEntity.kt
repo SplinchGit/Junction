@@ -14,5 +14,13 @@ data class ModelUsageEntity(
     val model: String,
     val tokensIn: Int?,
     val tokensOut: Int?,
-    val latencyMs: Long
+    val latencyMs: Long,
+    val telemetryCaptured: Boolean = false,
+    val toolsAvailable: Boolean = false,
+    val toolCallsRequested: Int = 0,
+    val toolNames: String = "",
+    val toolsExecuted: Boolean = false,
+    val approvalRequired: Boolean = false,
+    val thinkingCharacters: Int = 0,
+    val thinkingReported: Boolean = false
 )

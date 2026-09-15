@@ -96,9 +96,14 @@ fun AuditScreen(
         }
         item {
             Text(
-                text = "Model usage",
+                text = "Model activity",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(top = 8.dp)
+            )
+            Text(
+                text = "Shows whether each model response requested a real tool. Thinking text stays private; only its availability and size are shown.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         if (modelUsage.isEmpty()) {
@@ -110,6 +115,7 @@ fun AuditScreen(
                 )
             }
         } else {
+            item { ModelUsageSummary(modelUsage) }
             items(modelUsage, key = { it.id }) { entry -> ModelUsageEntry(entry) }
         }
         item {
@@ -134,6 +140,33 @@ fun AuditScreen(
 }
 
 @Composable
+private fun ModelUsageSummary(entries: List<ModelUsageEntity>) {
+    val tokens = entries.sumOf { (it.tokensIn ?: 0) + (it.tokensOut ?: 0) }
+    val toolRuns = entries.count { it.toolCallsRequested > 0 }
+    Card(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            UsageTotal(entries.size.toString(), "Runs")
+            UsageTotal(tokens.toString(), "Tokens")
+            UsageTotal(toolRuns.toString(), "With tools")
+        }
+    }
+}
+
+@Composable
+private fun UsageTotal(value: String, label: String) {
+    Column {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
 private fun ModelUsageEntry(entry: ModelUsageEntity) {
     Card(
         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
@@ -145,18 +178,45 @@ private fun ModelUsageEntry(entry: ModelUsageEntity) {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = "${entry.provider} | ${entry.model}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = when {
+                        !entry.telemetryCaptured -> "OLDER RUN"
+                        entry.toolCallsRequested == 0 -> "NO TOOLS"
+                        entry.toolsExecuted -> "TOOLS USED"
+                        entry.approvalRequired -> "APPROVAL NEEDED"
+                        else -> "TOOLS REQUESTED"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (entry.toolCallsRequested > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
             Text(
-                text = "${entry.provider} | ${entry.model}",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "Input ${entry.tokensIn?.toString() ?: "not reported"} | Output ${entry.tokensOut?.toString() ?: "not reported"} | ${entry.latencyMs} ms",
+                text = if (!entry.telemetryCaptured) {
+                    "Tool telemetry was not recorded for this older run."
+                } else if (entry.toolCallsRequested > 0) {
+                    "${entry.toolCallsRequested} request${if (entry.toolCallsRequested == 1) "" else "s"}: ${entry.toolNames.ifBlank { "unknown tool" }}"
+                } else if (entry.toolsAvailable) {
+                    "Tools were available, but the model answered without requesting one."
+                } else {
+                    "Agent tools were off, so the model could not call one."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )
             Text(
-                text = "${entry.lane} lane | ${formatTimestamp(entry.timestamp)}",
+                text = "Thinking: ${if (!entry.telemetryCaptured) "not recorded" else if (entry.thinkingReported) "reported (${entry.thinkingCharacters} chars)" else "not reported"} | Input ${entry.tokensIn ?: "—"} | Output ${entry.tokensOut ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Text(
+                text = "${entry.latencyMs} ms | ${formatTimestamp(entry.timestamp)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer
             )

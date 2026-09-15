@@ -48,6 +48,15 @@ function recordStartupIssue(component, error) {
   } catch {}
 }
 
+function appendAudit(entry) {
+  try {
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    const row = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), ...entry };
+    fs.appendFileSync(auditPath, `${JSON.stringify(row)}\n`, { encoding: "utf8", mode: 0o600 });
+    return row;
+  } catch { return null; }
+}
+
 async function startCompanion() {
   const options = { token: crypto.randomBytes(32).toString("base64url"), auditPath };
   try {
@@ -210,7 +219,7 @@ ipcMain.handle("junction:audit", () => {
   try {
     return fs.readFileSync(auditPath, "utf8").trim().split(/\r?\n/).filter(Boolean).slice(-50).reverse().map(line => {
       const row = JSON.parse(line);
-      return { id: row.id, timestamp: row.timestamp, event: row.event, capability: row.capability, decision: row.decision, outcome: row.outcome, reason: row.reason };
+      return { id: row.id, timestamp: row.timestamp, event: row.event, capability: row.capability, decision: row.decision, outcome: row.outcome, reason: row.reason, runId: row.runId, model: row.model, mode: row.mode, iteration: row.iteration, iterations: row.iterations, toolCalls: row.toolCalls, toolsExecuted: row.toolsExecuted, toolNames: row.toolNames, inputTokens: row.inputTokens, outputTokens: row.outputTokens, thinkingCharacters: row.thinkingCharacters, thinkingState: row.thinkingState, reasoningTokens: row.reasoningTokens, durationMs: row.durationMs };
     });
   } catch { return []; }
 });
@@ -225,22 +234,32 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
   const config=localData.provider();
   if (request.agent && config.id !== "local") throw new Error("Local Agent mode requires the Local LLM workflow. Codex agents live in Projects.");
-  const research = request.research ? await researchCoordinator.run(content) : null;
-  const researchInstructions = research ? researchContext(research) : null;
   const runId=String(request.runId||crypto.randomUUID()).slice(0,100),controller=new AbortController();
+  const mode=request.agent?"agent":request.research?"research":"chat",started=Date.now();
+  appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,model:config.model||"Default model",mode,reason:request.agent?"Native tools available to the model":request.research?"Junction Search evidence requested before inference":"No tools available to the model"});
   if(request.agent)activeAgentRuns.set(runId,controller);
-  let reply;
-  try { reply=request.agent
-    ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal })
-    : config.id==="codex"
-      ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
-      : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});
+  let reply,research=null;
+  try {
+    if(request.research){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(content);appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
+    const researchInstructions = research ? researchContext(research) : null;
+    reply=request.agent
+      ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId })
+      : config.id==="codex"
+        ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
+        : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});
+  } catch(error) {
+    appendAudit({event:"model_run_completed",capability:"model",decision:"stopped",outcome:"failure",runId,model:config.model||"Default model",mode,toolCalls:0,toolsExecuted:0,toolNames:[],durationMs:Date.now()-started,reason:String(error.message||error).slice(0,500)});
+    throw error;
   } finally { if(request.agent)activeAgentRuns.delete(runId); }
   const contentWithSources = research ? `${reply.content.trim()}\n\n${sourceAppendix(research)}` : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
   const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
   const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);
-  localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens)});
+  const reasoningTokens=Number(reply.usage?.completion_tokens_details?.reasoning_tokens??reply.usage?.output_tokens_details?.reasoning_tokens??0);
+  const thinkingState=reply.thinkingState||(reasoningTokens?"reported":config.id==="local"?"off":"not_reported");
+  const telemetry={mode,runId,toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],iterations:Number(reply.iterations||1),thinkingCharacters:Number(reply.thinkingCharacters||0),thinkingState,reasoningTokens,durationMs:Number(reply.durationMs||Date.now()-started)};
+  localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens),...telemetry});
+  if(!request.agent)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,model:reply.model||config.model||"Default model",mode,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:0,thinkingState,durationMs:telemetry.durationMs,iterations:1,toolCalls:0,toolsExecuted:0,toolNames:[],reason:request.research?"Answered from owner-requested Junction Search evidence; model selected no tools":"Answered with no tool access"});
   scheduleSharedSync();
   return {conversationId:conversation.id,message,usage:reply.usage,model:reply.model};
 });

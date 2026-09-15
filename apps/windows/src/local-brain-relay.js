@@ -142,7 +142,7 @@ class LocalBrainRelay {
           try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
         }, 1_000);
         try {
-          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item) });
+          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id });
           answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
         } finally { clearInterval(cancellationPoll); }
       } else {

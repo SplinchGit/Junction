@@ -1,0 +1,36 @@
+.audit-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+}
+
+.audit-row.audit-run {
+  border-color: #39445a;
+  background: #151b25;
+}
+
+.audit-tail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.audit-badge {
+  padding: 4px 7px;
+  border: 1px solid #343e4e;
+  border-radius: 10px;
+  background: #242b36;
+  color: #aeb8c8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.audit-badge.used {
+  border-color: #39538d;
+  background: #1c2947;
+  color: #b8c9ff;
+}
+
+.audit-heading {
+  margin-top: 4px;
+}

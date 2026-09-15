@@ -24,28 +24,28 @@ function compactResearchContext(research) {
 class LocalAgentToolRegistry {
   constructor({ researchCoordinator, createCodeDelegation = null, auditPath = "", now = () => Date.now() } = {}) { Object.assign(this, { research: researchCoordinator, createCodeDelegation, auditPath, now }); }
   definitions({ allowCodeDelegation = false } = {}) { return [WEB_SEARCH_TOOL, ...(allowCodeDelegation && this.createCodeDelegation ? [CODEX_TOOL] : [])]; }
-  audit(event, capability, outcome, reason = "") {
+  audit(event, capability, outcome, reason = "", telemetry = {}) {
     if (!this.auditPath) return;
-    try { fs.mkdirSync(path.dirname(this.auditPath), { recursive: true }); fs.appendFileSync(this.auditPath, `${JSON.stringify({ id: `agent-${this.now()}-${Math.random().toString(16).slice(2)}`, timestamp: new Date(this.now()).toISOString(), event, capability, decision: event === "agent_tool_requested" ? "requested" : "executed", outcome, reason: safeAuditText(reason) })}\n`); } catch {}
+    try { fs.mkdirSync(path.dirname(this.auditPath), { recursive: true }); fs.appendFileSync(this.auditPath, `${JSON.stringify({ id: `agent-${this.now()}-${Math.random().toString(16).slice(2)}`, timestamp: new Date(this.now()).toISOString(), event, capability, decision: event === "agent_tool_requested" ? "requested" : "executed", outcome, reason: safeAuditText(reason), ...telemetry })}\n`); } catch {}
   }
   async execute(name, args, run) {
     if (name === "web_search") {
       const query = run.validateSearch(args?.query);
-      this.audit("agent_tool_requested", name, "success", query);
+      this.audit("agent_tool_requested", name, "success", query, run.audit);
       const evidence = await this.research.run(query);
       run.ledgers.push(evidence);
       const combined = mergeResearch(run.goal, run.ledgers);
-      this.audit("agent_tool_result", name, "success", `${combined.sources.length} source(s) returned`);
+      this.audit("agent_tool_result", name, "success", `${combined.sources.length} source(s) returned`, run.audit);
       return { content: JSON.stringify({ ok: true, tool: name, search: run.searches, evidence: compactResearchContext(combined) }) };
     }
     if (name === "delegate_to_codex") {
       if (!run.allowCodeDelegation) throw new Error("Codex delegation was not explicitly requested by the owner.");
       const task = String(args?.task || "").replace(/\s+/g, " ").trim().slice(0, 2000);
       if (task.length < 10) throw new Error("Codex delegation requires a focused coding task.");
-      this.audit("agent_tool_requested", name, "success", task);
+      this.audit("agent_tool_requested", name, "success", task, run.audit);
       const plan = await this.createCodeDelegation(task);
       const result = { ok: true, tool: name, status: "draft_created", approvalRequired: true, draftId: plan?.id ? String(plan.id).slice(0, 12) : null, message: "A reviewable Codex draft was created. Owner approval is required before Codex starts; the main checkout was not modified." };
-      this.audit("agent_tool_result", name, "success", result.message);
+      this.audit("agent_tool_result", name, "success", result.message, run.audit);
       return { content: JSON.stringify(result) };
     }
     throw new Error(`Unknown or unavailable Junction tool: ${String(name).slice(0, 80)}.`);

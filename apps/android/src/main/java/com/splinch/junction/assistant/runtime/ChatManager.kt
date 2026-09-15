@@ -429,6 +429,8 @@ class ChatManager(
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
             var accumulatedThinking: String? = null
+            var thinkingCharacters = 0
+            var thinkingReported = false
             var tokensPerSecond: Double? = null
             var lastAssistantText: String? = null
             val requestedCalls = mutableListOf<PendingToolCall>()
@@ -465,6 +467,11 @@ class ChatManager(
                             is LlmEvent.TextDone -> {
                                 _turnActivity.value = null
                                 val final = stripLeakedEnvelope(event.text.ifBlank { accumulatedText })
+                                val finalThinking = event.thinking ?: accumulatedThinking
+                                if (!finalThinking.isNullOrBlank()) {
+                                    thinkingReported = true
+                                    thinkingCharacters += finalThinking.length
+                                }
                                 if (final.isNotBlank()) {
                                     val turnModel = if (frontierRequested) {
                                         currentProvider.frontierModel ?: currentProvider.workhorseModel
@@ -480,7 +487,7 @@ class ChatManager(
                                             provenance = Provenance.JUNCTION,
                                             sourceRef = "assistant_text:$itemId",
                                             modelLabel = turnModelLabel,
-                                            thinking = event.thinking ?: accumulatedThinking,
+                                            thinking = finalThinking,
                                             tokensPerSecond = event.tokensPerSecond ?: tokensPerSecond
                                         )
                                     )
@@ -573,19 +580,6 @@ class ChatManager(
 
             var costEstimatePerStep: Double? = null
             usage?.let { reported ->
-                modelUsageDao.insert(
-                    ModelUsageEntity(
-                        id = UUID.randomUUID().toString(),
-                        timestamp = System.currentTimeMillis(),
-                        sessionId = session.sessionId,
-                        lane = "actor",
-                        provider = reported.provider,
-                        model = reported.model,
-                        tokensIn = reported.tokensIn,
-                        tokensOut = reported.tokensOut,
-                        latencyMs = System.currentTimeMillis() - responseStartedAt
-                    )
-                )
                 val turnCost = ModelCatalog.estimateCostUsd(reported.model, reported.tokensIn, reported.tokensOut)
                 if (turnCost != null && requestedCalls.isNotEmpty()) {
                     costEstimatePerStep = turnCost / requestedCalls.size
@@ -617,6 +611,33 @@ class ChatManager(
             // awaiting owner approval -- so this check, made right after it returns, is
             // an accurate read of which one happened for *this* turn's calls.
             val approvalRequired = requestedCalls.isNotEmpty() && activePlan.value != null
+            val reported = usage
+            val selectedModel = if (useFrontier) {
+                currentProvider.frontierModel ?: currentProvider.workhorseModel
+            } else {
+                currentProvider.workhorseModel
+            }
+            modelUsageDao.insert(
+                ModelUsageEntity(
+                    id = UUID.randomUUID().toString(),
+                    timestamp = System.currentTimeMillis(),
+                    sessionId = session.sessionId,
+                    lane = "actor",
+                    provider = reported?.provider ?: currentProvider.id,
+                    model = reported?.model ?: selectedModel,
+                    tokensIn = reported?.tokensIn,
+                    tokensOut = reported?.tokensOut,
+                    latencyMs = System.currentTimeMillis() - responseStartedAt,
+                    telemetryCaptured = true,
+                    toolsAvailable = tools.isNotEmpty(),
+                    toolCallsRequested = requestedCalls.size,
+                    toolNames = requestedCalls.map { it.name }.distinct().joinToString(","),
+                    toolsExecuted = requestedCalls.isNotEmpty() && !approvalRequired,
+                    approvalRequired = approvalRequired,
+                    thinkingCharacters = thinkingCharacters,
+                    thinkingReported = thinkingReported
+                )
+            )
             onTurnComplete?.invoke(
                 TurnOutcome(
                     assistantText = lastAssistantText,

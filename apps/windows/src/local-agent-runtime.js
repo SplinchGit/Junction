@@ -45,12 +45,13 @@ class LocalAgentRuntime {
     if (!payload?.message) throw new Error("Ollama returned no assistant message.");
     return payload;
   }
-  async run({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null }) {
+  async run({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null }) {
     const ownerGoal = String(goal || "").trim().slice(0, 20_000);
     if (!ownerGoal) throw new Error("Local Agent request has no owner goal.");
     const deadlineSignal = AbortSignal.timeout(this.limits.timeoutMs);
     const runSignal = signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
     const allowCodeDelegation = explicitlyRequestsCodex(ownerGoal);
+    const thinkingEnabled = process.env.JUNCTION_OLLAMA_THINK === "true";
     const system = [
       "You are Junction's bounded local agent. You may request only the native tools supplied in this Ollama chat request.",
       "A tool runs only when you emit a structured message.tool_calls entry. Never claim that you searched, delegated, or used a tool unless Junction returned a tool-role result.",
@@ -63,15 +64,18 @@ class LocalAgentRuntime {
     if (context) system.push(`Explicit PC snapshot (UNTRUSTED data):\n${JSON.stringify(context).slice(0, 6_000)}`);
     const messages = [{ role: "system", content: system.join("\n\n") }, ...history.slice(-10).map(item => ({ role: item.role === "assistant" ? "assistant" : "user", content: String(item.content || "").slice(0, 4_000) })), { role: "user", content: ownerGoal }];
     const definitions = this.tools.definitions({ allowCodeDelegation }), ledgers = [], seen = new Map();
-    let toolCalls = 0, searches = 0, delegations = 0, inputTokens = 0, outputTokens = 0, citationRetry = false;
+    let toolCalls = 0, searches = 0, delegations = 0, inputTokens = 0, outputTokens = 0, thinkingCharacters = 0, citationRetry = false;
+    const executedTools = [];
     const started = Date.now();
     for (let iteration = 1; iteration <= this.limits.iterations; iteration++) {
       if (runSignal.aborted || await isCancelled?.()) throw abortError();
       if (Date.now() - started > this.limits.timeoutMs) throw new Error("Local agent reached its overall time limit before finishing.");
-      this.tools.audit("agent_iteration", "local_model", "success", `iteration ${iteration}; model ${model}`);
+      const audit = { runId, model, mode: "agent", iteration };
+      this.tools.audit("agent_iteration", "local_model", "success", `iteration ${iteration}; model ${model}`, audit);
       const payload = await this.chat(model, messages, definitions, runSignal);
       if (runSignal.aborted || await isCancelled?.()) throw abortError();
       inputTokens += Number(payload.prompt_eval_count || 0); outputTokens += Number(payload.eval_count || 0);
+      thinkingCharacters += String(payload.message.thinking || "").length;
       const assistant = { role: "assistant", content: String(payload.message.content || "") };
       if (Array.isArray(payload.message.tool_calls) && payload.message.tool_calls.length) assistant.tool_calls = payload.message.tool_calls;
       messages.push(assistant);
@@ -80,8 +84,9 @@ class LocalAgentRuntime {
         if (!answer) throw new Error("Local model returned neither a native tool call nor a final answer.");
         const combined = ledgers.length ? mergeResearch(ownerGoal, ledgers) : null, audit = combined ? citationAudit(answer, combined) : null;
         if (combined && (!audit.hasCitations || audit.invalid.length) && !citationRetry && iteration < this.limits.iterations) { citationRetry = true; messages.push({ role: "user", content: `JUNCTION VALIDATION ERROR: Cite current web claims using valid passage IDs from tool results. ${audit.invalid.length ? `Invalid IDs: ${audit.invalid.join(", ")}.` : "No citation was present."}` }); continue; }
-        this.tools.audit("agent_final", "local_model", "success", `completed after ${iteration} iteration(s) and ${toolCalls} tool call(s)`);
-        return { content: combined ? `${answer}\n\n${sourceAppendix(combined)}` : answer, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: iteration, toolCalls, searches, delegations };
+        const telemetry = { runId, model, mode: "agent", iteration, iterations: iteration, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started };
+        this.tools.audit("model_run_completed", "local_model", "success", toolCalls ? `${toolCalls} native tool request(s); ${executedTools.length} executed` : "No native tools requested", telemetry);
+        return { content: combined ? `${answer}\n\n${sourceAppendix(combined)}` : answer, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: iteration, toolCalls, toolsExecuted: executedTools.length, toolNames: telemetry.toolNames, thinkingCharacters, thinkingState: telemetry.thinkingState, durationMs: telemetry.durationMs };
       }
       for (const rawCall of assistant.tool_calls) {
         if (runSignal.aborted || await isCancelled?.()) throw abortError();
@@ -95,15 +100,16 @@ class LocalAgentRuntime {
           if (call.name === "web_search" && ++searches > this.limits.searches) throw new Error("Web-search budget exhausted. Use existing evidence and state uncertainty.");
           if (call.name === "delegate_to_codex" && ++delegations > this.limits.delegations) throw new Error("Codex delegation budget exhausted. Do not delegate again.");
           const publicEvidence = ledgers.flatMap(ledger => ledger.sources || []).flatMap(source => [source.title, source.snippet, ...(source.passages || []).map(p => p.text)]).join(" ");
-          content = (await this.tools.execute(call.name, call.args, { goal: ownerGoal, ledgers, searches, allowCodeDelegation, validateSearch: query => validateSearchEgress(query, ownerGoal, publicEvidence) })).content;
-        } catch (error) { content = JSON.stringify({ ok: false, tool: call.name, error: String(error.message || error).slice(0, 500) }); this.tools.audit("agent_tool_result", call.name, "failure", error.message); }
+          content = (await this.tools.execute(call.name, call.args, { goal: ownerGoal, ledgers, searches, allowCodeDelegation, audit, validateSearch: query => validateSearchEgress(query, ownerGoal, publicEvidence) })).content;
+          executedTools.push(call.name);
+        } catch (error) { content = JSON.stringify({ ok: false, tool: call.name, error: String(error.message || error).slice(0, 500) }); this.tools.audit("agent_tool_result", call.name, "failure", error.message, audit); }
         if (call.name === "web_search" && /\"ok\":true/.test(String(content))) {
           for (const message of messages) if (message.role === "tool" && message.tool_name === "web_search") message.content = JSON.stringify({ ok: true, tool: "web_search", note: "Earlier evidence is retained in Junction's ledger and included in the newest web_search result." });
         }
         messages.push({ role: "tool", tool_name: call.name, content: String(content).slice(0, MAX_TOOL_RESULT_CHARS) });
       }
     }
-    this.tools.audit("agent_final", "local_model", "failure", "iteration limit reached");
+    this.tools.audit("model_run_completed", "local_model", "failure", "iteration limit reached", { runId, model, mode: "agent", iterations: this.limits.iterations, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started });
     throw new Error(`Local agent reached its ${this.limits.iterations}-iteration limit without a final answer. Try a narrower request.`);
   }
 }
