@@ -29,6 +29,7 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
         job = scope.launch {
             var cursor = 0
             while (isActive) {
+                var retryDelay = 10_000L
                 try {
                     val pairing = LocalBrainPairingStore.load(context)
                     if (pairing != null) {
@@ -37,8 +38,11 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
                     }
                 } catch (error: TimeoutCancellationException) { lastError = "Conversation sync timed out; retrying"; cursor = 0 }
                 catch (error: CancellationException) { throw error }
-                catch (error: Exception) { lastError = error.message; cursor = 0 }
-                delay(if (cursor == 0) 10_000 else 100)
+                catch (error: Exception) {
+                    lastError = error.message; cursor = 0
+                    if (error is com.google.firebase.firestore.FirebaseFirestoreException && error.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.RESOURCE_EXHAUSTED) retryDelay = 300_000L
+                }
+                delay(if (cursor == 0) retryDelay else 100)
             }
         }
     }
@@ -84,7 +88,7 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
             }
         }
         if (outgoing.length() == 0 && cursor == 0) {
-            val brain = withTimeout(15_000) { FirebaseProvider.firestoreOrNull()?.collection("local_brains")?.document(pairing.brainId)?.get()?.await() }
+            val brain = withTimeout(15_000) { FirebaseProvider.firestoreOrNull()?.collection("local_brains")?.document(pairing.brainId)?.get(com.google.firebase.firestore.Source.SERVER)?.await() }
             val version = brain?.getString("conversationVersion")
             if (version != null && version == prefs.getString("version:${pairing.brainId}", null)) return 0
         }

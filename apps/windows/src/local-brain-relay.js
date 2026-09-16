@@ -2,7 +2,7 @@
 
 const crypto = require("node:crypto");
 const LOCAL_SOURCE = "junction_local_llm_v2";
-const POLL_INTERVAL_MS = 5_000;
+const POLL_INTERVAL_MS = 10_000;
 const LEASE_MS = 90_000;
 const OLLAMA_TIMEOUT_MS = 120_000;
 const STREAM_FLUSH_MS = 750;
@@ -44,18 +44,24 @@ class LocalBrainRelay {
   constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, syncConversations = null, onCommandStarted = null, now = () => Date.now() }) {
     Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, runLocalAgent, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
     this.active = new Map(); this.syncConversations = syncConversations;
+    this.retryAfter = 0; this.lastPairCheck = null;
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
   root(brainId) { return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(this.projectId)}/databases/(default)/documents/local_brains/${encodeURIComponent(brainId)}`; }
   async request(url, session, options = {}) {
+    if (this.now() < this.retryAfter) throw new Error("Firebase relay quota exceeded; retrying after backoff.");
     const response = await this.fetch(url, { signal: AbortSignal.timeout(15_000), ...options, headers: { authorization: `Bearer ${session.idToken}`, "content-type": "application/json", ...(options.headers || {}) } });
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(body?.error?.message || `Junction relay request failed (${response.status}).`);
+    if (!response.ok) {
+      const detail = body?.error || (Array.isArray(body) ? body.find(item => item.error)?.error : null);
+      if (response.status === 429 || detail?.status === "RESOURCE_EXHAUSTED") this.retryAfter = this.now() + 5 * 60_000;
+      throw new Error(detail?.message || `Junction relay request failed (${response.status}).`);
+    }
     return body || {};
   }
   async query(brainId, session, collection, status) {
-    const body = { structuredQuery: { from: [{ collectionId: collection }], where: { fieldFilter: { field: { fieldPath: "status" }, op: "EQUAL", value: { stringValue: status } } }, limit: 5 } };
+    const body = { structuredQuery: { from: [{ collectionId: collection }], where: { fieldFilter: { field: { fieldPath: "status" }, op: Array.isArray(status) ? "IN" : "EQUAL", value: Array.isArray(status) ? { arrayValue: { values: status.map(stringValue => ({ stringValue })) } } : { stringValue: status } } }, limit: Array.isArray(status) ? 20 : 5 } };
     const rows = await this.request(`${this.root(brainId)}:runQuery`, session, { method: "POST", body: JSON.stringify(body) });
     return (rows || []).map(row => row.document).filter(Boolean).map(document => ({ document, data: decodeDocument(document) }));
   }
@@ -72,23 +78,22 @@ class LocalBrainRelay {
     this.lastHeartbeatAt = this.now();
   }
   async poll() {
-    if (this.polling) return;
+    if (this.polling || this.now() < this.retryAfter) return;
     this.polling = true;
     try {
       const state = await this.getState();
       if (!state?.brainId || !state?.session || !state?.key) return;
       await this.heartbeat(state);
-      for (const pair of await this.query(state.brainId, state.session, "pairings", "claimed")) await this.activatePair(state, pair);
-      const pending = await this.query(state.brainId, state.session, "commands", "pending");
-      // `processing` is the pre-lease state written by released versions. Claim
-      // it once on upgrade so a formerly silent request does not remain stuck.
-      const legacyProcessing = await this.query(state.brainId, state.session, "commands", "processing");
-      const running = await this.query(state.brainId, state.session, "commands", "running");
-      const streaming = await this.query(state.brainId, state.session, "commands", "streaming");
-      for (const item of await this.query(state.brainId, state.session, "commands", "cancel_requested")) {
+      if (this.lastPairCheck === null || this.now() - this.lastPairCheck >= 60_000) {
+        for (const pair of await this.query(state.brainId, state.session, "pairings", "claimed")) await this.activatePair(state, pair);
+        this.lastPairCheck = this.now();
+      }
+      // A single query replaces five empty reads on every idle poll.
+      const commands = await this.query(state.brainId, state.session, "commands", ["pending", "processing", "running", "streaming", "cancel_requested"]);
+      for (const item of commands.filter(command => command.data.status === "cancel_requested")) {
         if (!this.active.has(item.document.name)) await this.update(item.document, state.session, { status: "cancelled", leaseUntilMs: 0 }, item.document.updateTime);
       }
-      for (const command of [...pending, ...legacyProcessing, ...running, ...streaming]) {
+      for (const command of commands.filter(command => command.data.status !== "cancel_requested")) {
         if ((command.data.status === "running" || command.data.status === "streaming") && Number(command.data.leaseUntilMs) > this.now()) continue;
         if (this.active.has(command.document.name) || this.active.size >= 8) continue;
         const work = this.run(state, command).finally(() => this.active.delete(command.document.name));

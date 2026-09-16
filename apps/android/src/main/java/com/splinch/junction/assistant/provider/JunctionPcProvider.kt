@@ -33,7 +33,7 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
             val uid = withTimeout(15_000) { LocalBrainPairingStore.ensureAnonymous(appContext) }
             if (uid != pairing.clientUid) error("This phone's Junction pairing has changed. Pair it again from Settings.")
             val firestore = FirebaseProvider.firestoreOrNull() ?: error("Firebase is unavailable.")
-            val brain = withTimeout(15_000) { firestore.collection("local_brains").document(pairing.brainId).get().await() }
+            val brain = withTimeout(15_000) { firestore.collection("local_brains").document(pairing.brainId).get(com.google.firebase.firestore.Source.SERVER).await() }
             val lastSeenAtMs = brain.getLong("lastSeenAtMs") ?: 0L
             if (!brain.exists() || brain.getString("status") != "active" ||
                 System.currentTimeMillis() - lastSeenAtMs > PC_ONLINE_WINDOW_MS
@@ -117,7 +117,13 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
                 registration.remove()
                 if (!terminal) document.update("status", "cancel_requested")
             }
-        } catch (error: Exception) { if (error is CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(error.message ?: "Could not contact your Junction PC.")); trySend(LlmEvent.Done); close() }
+        } catch (error: Exception) {
+            if (error is CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+            val message = if (error is com.google.firebase.firestore.FirebaseFirestoreException && error.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.RESOURCE_EXHAUSTED) {
+                "The cloud relay quota is exhausted. Try again after the Firebase quota resets or is increased. Your PC model is not the cause."
+            } else error.message ?: "Could not contact your Junction PC."
+            trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(message)); trySend(LlmEvent.Done); close()
+        }
     }
 
     override suspend fun readUntrusted(content: String, sourceHint: String) = null

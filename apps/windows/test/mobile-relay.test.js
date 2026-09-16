@@ -5,6 +5,22 @@ const {LocalBrainRelay,crypt,decodeDocument}=require('../src/local-brain-relay')
 const {LocalDataStore}=require('../src/local-data');
 const {PairedConversationSync}=require('../src/paired-conversation-sync');
 (async()=>{
+  let quotaRequests=0;
+  const quotaRelay=new LocalBrainRelay({projectId:'fixture',getState:async()=>({brainId:'brain',key:'key',session:{idToken:'fixture'}}),fetchImpl:async()=>{
+    quotaRequests++;
+    return {ok:false,status:429,json:async()=>[{error:{message:'Quota exceeded.',status:'RESOURCE_EXHAUSTED'}}]};
+  }});
+  await assert.rejects(quotaRelay.poll(),/Quota exceeded/);
+  await quotaRelay.poll();
+  await assert.rejects(quotaRelay.request('fixture', {idToken:'fixture'}),/quota exceeded/);
+  assert.equal(quotaRequests,1,'quota failure must back off rather than hammering Firebase');
+  const queries=[];
+  const idleRelay=new LocalBrainRelay({projectId:'fixture',getState:async()=>({brainId:'brain',key:'key',session:{idToken:'fixture'}})});
+  idleRelay.heartbeat=async()=>{};
+  idleRelay.query=async(_brain,_session,collection,status)=>{queries.push({collection,status});return []};
+  await idleRelay.poll();await idleRelay.poll();
+  assert.equal(queries.filter(x=>x.collection==='commands').length,2,'one command query per poll');
+  assert.equal(queries.filter(x=>x.collection==='pairings').length,1,'pairing checks must be throttled');
   const frames=[{message:{content:'Café '}},{message:{content:'works'}},{done:true,eval_count:2,message:{content:''}}];
   const bytes=Buffer.from(frames.map(x=>JSON.stringify(x)).join('\n')+'\n');
   const chunks=[];
@@ -35,7 +51,7 @@ const {PairedConversationSync}=require('../src/paired-conversation-sync');
   let releaseRun, heartbeats=0;
   const pendingRelay=new LocalBrainRelay({projectId:'fixture',getState:async()=>state});
   pendingRelay.heartbeat=async()=>{heartbeats++};
-  pendingRelay.query=async(_brain,_session,collection,status)=>collection==='commands'&&status==='pending'?[{document:{name:'slow'},data:{status:'pending'}}]:[];
+  pendingRelay.query=async(_brain,_session,collection,status)=>collection==='commands'&&status.includes('pending')?[{document:{name:'slow'},data:{status:'pending'}}]:[];
   pendingRelay.run=()=>new Promise(resolve=>{releaseRun=resolve});
   await pendingRelay.poll(); await pendingRelay.poll();
   assert.equal(heartbeats,2,'heartbeat must continue while inference is active');
