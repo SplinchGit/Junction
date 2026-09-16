@@ -20,8 +20,9 @@ const { ResearchCoordinator } = require("./research-coordinator");
 const { LocalAgentRuntime } = require("./local-agent-runtime");
 const { LocalAgentToolRegistry } = require("./local-agent-tools");
 const { PairedConversationSync } = require("./paired-conversation-sync");
+const { LanServer } = require("./lan-server");
 
-let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false;
+let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
@@ -56,6 +57,14 @@ function appendAudit(entry) {
     fs.appendFileSync(auditPath, `${JSON.stringify(row)}\n`, { encoding: "utf8", mode: 0o600 });
     return row;
   } catch { return null; }
+}
+async function createLanPairing() {
+  if (!lanServer || !identityStore) throw new Error("LAN service is not available.");
+  const lan = identityStore.lanStore();
+  const info = lanServer.info();
+  const oneTime = lan.createOneTimeToken({ metadata: { instanceId: info.instanceId } });
+  const code = `JLP1.${Buffer.from(JSON.stringify({ instanceId: info.instanceId, host: info.host, port: info.port, certificateSha256: info.certificateFingerprint, token: oneTime.token, expiresAtMillis: oneTime.expiresAt })).toString("base64url")}`;
+  return { code, qrDataUrl: await QRCode.toDataURL(code, { errorCorrectionLevel: "L", margin: 4, width: 360 }), expiresAt: oneTime.expiresAt };
 }
 
 async function startCompanion() {
@@ -99,6 +108,14 @@ async function createWindowImpl() {
   const createCodeDelegation = async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] });
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
   localAgent = new LocalAgentRuntime({ toolRegistry });
+  if (process.platform === "win32") {
+    try {
+      const candidateLanServer = new LanServer({ identityStore: identityStore.lanStore(), localData, runtime: localAgent,
+        bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: Number(process.env.JUNCTION_LAN_PORT || 0) });
+      await candidateLanServer.start();
+      lanServer = candidateLanServer;
+    } catch (error) { recordStartupIssue("LAN server unavailable", error); }
+  }
   localBrainRelay = new LocalBrainRelay({
     projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
     getState: async () => { const state = await freshLocalBrainState(); return state ? { ...state, conversationVersion: new PairedConversationSync(localData).version() } : null; },
@@ -197,6 +214,10 @@ function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEn
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
 ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3.5:2b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
+ipcMain.handle("junction:lan-pair", () => createLanPairing());
+ipcMain.handle("junction:lan-status", () => identityStore?.lanStore().status() || { instanceId: null, port: null, pairedDeviceCount: 0, pairedDeviceIds: [] });
+ipcMain.handle("junction:lan-revoke", () => { identityStore?.lanStore().revokeAll(); return { pairedDeviceCount: 0 }; });
+ipcMain.handle("junction:lan-revoke-device", (_event, deviceId) => ({ revoked: Boolean(identityStore?.lanStore().revokeDevice(deviceId)) }));
 ipcMain.handle("junction:revoke-local-brain",()=>{identityStore.setSecureValue("local-brain-v1","");return {enabled:false};});
 ipcMain.handle("junction:sign-in", async () => {
   const session = await nativeGoogleFirebaseSignIn({ shell, googleClientId: process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID, firebaseApiKey: process.env.JUNCTION_FIREBASE_API_KEY });
@@ -318,4 +339,13 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 app.on("activate", () => { createWindow().catch(() => {}); });
-app.on("before-quit", () => { isQuitting=true; localBrainRelay?.stop(); companion?.server.close(); });
+app.on("before-quit", event => {
+  if (isQuitting) return;
+  event.preventDefault(); isQuitting = true;
+  shutdownPromise = (async () => {
+    localBrainRelay?.stop();
+    await lanServer?.stop();
+    companion?.server.close();
+    app.quit();
+  })().catch(() => app.quit());
+});

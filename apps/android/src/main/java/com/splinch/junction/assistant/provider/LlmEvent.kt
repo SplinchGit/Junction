@@ -20,7 +20,8 @@ sealed class LlmEvent {
     data class TextDone(
         val text: String,
         val thinking: String? = null,
-        val tokensPerSecond: Double? = null
+        val tokensPerSecond: Double? = null,
+        val messageId: String? = null
     ) : LlmEvent()
     data class Thinking(val text: String) : LlmEvent()
     data class ToolCallRequested(

@@ -13,7 +13,8 @@ import com.splinch.junction.data.sync.firebase.ChatSyncManager
 
 class SyncingConversationStore(
     private val delegate: ConversationStore,
-    private val syncManager: ChatSyncManager
+    private val syncManager: ChatSyncManager,
+    private val lanDelete: (suspend (String) -> Boolean)? = null
 ) : ConversationStore {
     override suspend fun loadSession(): ChatSession? = delegate.loadSession()
 
@@ -61,7 +62,7 @@ class SyncingConversationStore(
     }
 
     override suspend fun deleteSession(sessionId: String) {
-        syncManager.tombstoneConversation(sessionId)
+        if (lanDelete?.invoke(sessionId) != true) syncManager.tombstoneConversation(sessionId)
         delegate.deleteSession(sessionId)
     }
 

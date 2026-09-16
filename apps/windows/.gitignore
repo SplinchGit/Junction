@@ -1,0 +1,9 @@
+# Device-local LAN credentials and pairing state (DPAPI encrypted at runtime).
+lan-tls*
+lan-instance*
+lan-pairing*
+lan-revocation*
+lan-tokens*
+*.key
+*.crt
+*.pem

@@ -59,6 +59,9 @@ import com.splinch.junction.data.sync.firebase.AuthManager
 import com.splinch.junction.data.sync.firebase.FirebaseProvider
 import com.splinch.junction.data.sync.firebase.LocalBrainPairing
 import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
+import com.splinch.junction.data.sync.lan.LanIdentityStore
+import com.splinch.junction.data.sync.lan.LanProtocol
+import com.splinch.junction.data.sync.lan.LanTransport
 import com.splinch.junction.ui.component.JunctionTextField
 import com.splinch.junction.feature.settings.ui.component.GitHubSettingsSection
 import com.splinch.junction.ui.component.ModelCard
@@ -313,6 +316,11 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(text = "Pair your Junction PC", style = MaterialTheme.typography.titleSmall)
                 Text("On the PC, open Junction Settings → Local Junction Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                var remoteOnly by remember { mutableStateOf(KeyStorage(context).getSecret("lan_mode_v1") == "remote") }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text("Use Firebase when away from home (5G / remote)", style = MaterialTheme.typography.bodySmall)
+                    Switch(checked = remoteOnly, onCheckedChange = { remoteOnly = it; KeyStorage(context).setSecret("lan_mode_v1", if (it) "remote" else "auto") })
+                }
                 OutlinedButton(onClick = {
                     localBrainQrScanner.launch(ScanOptions().apply {
                         setPrompt("Hold the black-and-white Junction PC QR code in the frame")
@@ -322,9 +330,18 @@ fun SettingsScreen(
                         setOrientationLocked(true)
                     })
                 }) { Text("Scan PC QR code") }
-                JunctionTextField(value = localPairingCode, onValueChange = { localPairingCode = it }, label = "PC pairing code", placeholder = "JBP1.…")
+                JunctionTextField(value = localPairingCode, onValueChange = { localPairingCode = it }, label = "PC pairing code", placeholder = "JLP1.… (LAN) or JBP1.… (remote)")
                 Button(onClick = {
                     scope.launch {
+                        if (localPairingCode.startsWith("JLP1.")) {
+                            localPairingStatus = "Pairing directly over your local network…"
+                            runCatching {
+                                val code = LanProtocol.parsePairingCode(localPairingCode) ?: error("That LAN pairing code is invalid or expired.")
+                                withContext(Dispatchers.IO) { LanTransport(LanIdentityStore(context)).pair(code).getOrThrow() }
+                            }.onSuccess { localPairingStatus = "Paired directly over LAN. Local LLM will use this PC when reachable." }
+                                .onFailure { localPairingStatus = "LAN pairing failed: ${it.message}" }
+                            return@launch
+                        }
                         val parsed = LocalBrainPairingStore.parseCode(localPairingCode)
                         if (parsed == null) { localPairingStatus = "That pairing code is invalid."; return@launch }
                         localPairingStatus = "Pairing securely…"

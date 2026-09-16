@@ -68,6 +68,10 @@ class DeviceIdentityStore {
   getSecureValue(name) {
     try { if(!/^[a-z0-9_-]{1,80}$/i.test(name)||!this.safeStorage.isEncryptionAvailable()) return ""; return this.safeStorage.decryptString(Buffer.from(fs.readFileSync(path.join(this.directory, `secure-${name}.bin`),"utf8"),"base64")); } catch { return ""; }
   }
+  /** Protected LAN identity storage. Secrets are kept behind Electron DPAPI safeStorage. */
+  lanStore() { return new (require("./lan-identity").LanIdentityStore)(this.directory, this.safeStorage); }
+  setLanTlsIdentity(key, certificate) { return this.lanStore().setTlsIdentity(key, certificate); }
+  getLanTlsIdentity() { return this.lanStore().getTlsIdentity(); }
 }
 
 module.exports = { DeviceIdentityStore };

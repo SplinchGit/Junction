@@ -449,7 +449,7 @@ class ChatManager(
                 var laneError: String? = null
                 try {
                     val frontierRequested = useFrontier && currentProvider.frontierModel != null
-                    currentProvider.act(contextBlocks, tools, frontierRequested).collect { event ->
+                    currentProvider.act(contextBlocks, tools, frontierRequested, session.sessionId).collect { event ->
                         when (event) {
                             is LlmEvent.Activity -> _turnActivity.value = event.label.takeIf { it.isNotBlank() }
                             is LlmEvent.TextDelta -> {
@@ -483,6 +483,7 @@ class ChatManager(
                                             sender = Sender.ASSISTANT,
                                             content = final,
                                             provenance = Provenance.JUNCTION,
+                                            id = event.messageId ?: UUID.randomUUID().toString(),
                                             sourceRef = "assistant_text:$itemId",
                                             modelLabel = turnModelLabel,
                                             thinking = finalThinking,

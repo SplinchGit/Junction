@@ -56,6 +56,7 @@ const mainProcess = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf
 assert.match(renderer, /data-view="chat"/); assert.match(renderer, />Feed</); assert.match(renderer, />Audit</); assert.match(renderer, /Context &amp; devices/); assert.match(renderer, />Settings</);
 assert.match(renderer, /data-view="projects"/); assert.match(renderer, /No automatic merges/); assert.doesNotMatch(renderer, /id="agent-toggle"/); assert.match(renderer, /Local-model tools are always available/); assert.match(renderer, /What the model actually did/); assert.match(renderer, /audit\.css/);
 assert.match(mainProcess, /nativeToolsAvailable=config\.id==="local"/); assert.doesNotMatch(mainProcess, /request\.agent/);
+assert.match(mainProcess, /event\.preventDefault\(\)/); assert.match(mainProcess, /await lanServer\?\.stop\(\)/);
 assert.match(renderer, /data-view="mafioso"/); assert.match(renderer, /id="open-mafioso"/);
 assert.match(renderer, /Codex on this PC/); assert.match(renderer, /does not continuously capture/i); assert.match(renderer, /include once/i); assert.match(renderer, /Content-Security-Policy/);
 const drawerScript = fs.readFileSync(path.join(__dirname, "../renderer/parity.js"), "utf8"); assert.match(drawerScript,/renameConversation/); assert.match(drawerScript,/deleteConversation/); assert.match(drawerScript,/Ctrl\+B/); assert.match(drawerScript,/ArrowDown/); assert.match(drawerScript,/F2/);

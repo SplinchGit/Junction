@@ -40,7 +40,8 @@ class AnthropicProvider(
     override fun act(
         context: List<ContextBlock>,
         tools: List<ToolDefinition>,
-        useFrontier: Boolean
+        useFrontier: Boolean,
+        conversationId: String?
     ): Flow<LlmEvent> = flow {
         val model = if (useFrontier && frontierModel != null) frontierModel else workhorseModel
 

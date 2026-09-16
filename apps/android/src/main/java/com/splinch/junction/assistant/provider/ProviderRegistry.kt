@@ -12,13 +12,15 @@ import android.content.Context
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
 import com.splinch.junction.data.preference.UserPrefsRepository
+import com.splinch.junction.data.sync.lan.LanConversationSync
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.ConcurrentHashMap
 
 class ProviderRegistry(
     private val context: Context,
     private val prefs: UserPrefsRepository,
-    private val keyStorage: KeyStorage = KeyStorage(context)
+    private val keyStorage: KeyStorage = KeyStorage(context),
+    private val conversationSync: LanConversationSync? = null
 ) {
     // Health tracking: providerIds that are temporarily deprioritised
     private val deprioritised = ConcurrentHashMap<String, Long>()
@@ -111,7 +113,7 @@ class ProviderRegistry(
         }
         val frontierId = config.frontierModel.ifBlank { null }
 
-        if (config.providerId == "local") return JunctionPcProvider(modelId.ifBlank { "qwen3.5:2b" })
+        if (config.providerId == "local") return LanFirstJunctionPcProvider(context, modelId.ifBlank { "qwen3.5:2b" }, conversationSync = conversationSync)
 
         if (config.providerId == "anthropic") {
             return AnthropicProvider(

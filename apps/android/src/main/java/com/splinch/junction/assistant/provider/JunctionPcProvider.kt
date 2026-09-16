@@ -22,7 +22,7 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
     override val id = "local"
     override val frontierModel: String? = null
 
-    override fun act(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean): Flow<LlmEvent> = callbackFlow {
+    override fun act(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean, conversationId: String?): Flow<LlmEvent> = callbackFlow {
         val appContext = FirebaseProvider.applicationContextOrNull()
         val pairing = appContext?.let { LocalBrainPairingStore.load(it) }
         if (appContext == null || pairing == null) {

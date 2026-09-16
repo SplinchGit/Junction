@@ -33,7 +33,8 @@ interface LlmProvider {
     fun act(
         context: List<ContextBlock>,
         tools: List<ToolDefinition>,
-        useFrontier: Boolean = false
+        useFrontier: Boolean = false,
+        conversationId: String? = null
     ): Flow<LlmEvent>
 
     /**
