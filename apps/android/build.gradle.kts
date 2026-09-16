@@ -279,6 +279,7 @@ dependencies {
     // injection suite exercise the same JSON parsing the app uses at runtime.
     testImplementation("org.json:json:20250107")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+    testImplementation("com.squareup.okhttp3:okhttp-tls:5.3.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("junit:junit:4.13.2")

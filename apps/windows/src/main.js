@@ -110,8 +110,8 @@ async function createWindowImpl() {
   localAgent = new LocalAgentRuntime({ toolRegistry });
   if (process.platform === "win32") {
     try {
-      const candidateLanServer = new LanServer({ identityStore: identityStore.lanStore(), localData, runtime: localAgent,
-        bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: Number(process.env.JUNCTION_LAN_PORT || 0) });
+      const candidateLanServer = new LanServer({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
+        bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: Number(process.env.JUNCTION_LAN_PORT || 43111) });
       await candidateLanServer.start();
       lanServer = candidateLanServer;
     } catch (error) { recordStartupIssue("LAN server unavailable", error); }
@@ -186,6 +186,10 @@ async function freshLocalBrainState(){
   let state=JSON.parse(raw);
   if(Number(state.session?.expiresAt)<Date.now()+60_000){state={...state,session:await refreshFirebaseSession(state.session,process.env.JUNCTION_FIREBASE_API_KEY)};identityStore.setSecureValue("local-brain-v1",JSON.stringify(state));}
   return state;
+}
+function localBrainBootstrapState(){
+  const raw=identityStore.getSecureValue("local-brain-v1"); if(!raw)return null;
+  const state=JSON.parse(raw); return state?.brainId&&state?.key?{brainId:state.brainId,key:state.key}:null;
 }
 async function enableLocalBrain(){
   let state=await freshLocalBrainState();

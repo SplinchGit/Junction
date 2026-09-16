@@ -19,14 +19,15 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import okhttp3.CertificatePinner
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import com.splinch.junction.data.sync.firebase.LocalBrainPairing
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.coroutines.resume
 
 enum class LanConnectionState { DISCONNECTED, CONNECTING, AUTHENTICATING, CONNECTED, FAILED }
@@ -58,8 +59,8 @@ class LanTransport(
         closed = false
         _state.value = LanConnectionState.CONNECTING
         val connected = CompletableDeferred<Unit>()
-        val pin = "sha256/" + hexToBase64(target.certificateFingerprint)
-        val client = OkHttpClient.Builder().certificatePinner(CertificatePinner.Builder().add(target.host, pin).build()).build()
+        require(stored != null && target.instanceId == stored.instanceId && target.certificateFingerprint.equals(stored.certificateSha256, true)) { "LAN identity differs from paired PC" }
+        val client = LanTls.client(stored.certificateSha256)
         val request = Request.Builder().url("wss://${target.host}:${target.port}/lan").build()
         socket = client.newWebSocket(request, listener(connected, target))
         return runCatching { connected.await() }.onFailure { close() }
@@ -68,21 +69,59 @@ class LanTransport(
     /** Completes the one-time QR bootstrap; the token is never persisted. */
     suspend fun pair(code: LanProtocol.PairingCode): Result<Unit> = runCatching {
         require(code.expiresAtMillis > System.currentTimeMillis()) { "LAN pairing code has expired" }
-        val pin = "sha256/" + hexToBase64(code.certificateSha256)
-        val client = OkHttpClient.Builder().certificatePinner(CertificatePinner.Builder().add(code.host, pin).build()).build()
+        val client = LanTls.client(code.certificateSha256)
+        val deviceId = identity.deviceId(); val publicKey = identity.publicKeyBase64()
         suspendCancellableCoroutine<Unit> { continuation ->
             val request = Request.Builder().url("wss://${code.host}:${code.port}/lan").build()
             val ws = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     webSocket.send(LanProtocol.encode(LanProtocol.Envelope("pair", UUID.randomUUID().toString(), mapOf(
-                        "token" to code.token, "deviceId" to identity.deviceId(), "publicKey" to identity.publicKeyBase64()
+                        "token" to code.token, "deviceId" to deviceId, "publicKey" to publicKey
                     ))))
                 }
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     val message = LanProtocol.decode(text) ?: run { webSocket.close(1002, "invalid frame"); return }
                     if (message.type == "authenticated" && message.payload["paired"] == true) {
-                        identity.savePairing(code.copy(token = "")); if (continuation.isActive) continuation.resume(Unit); webSocket.close(1000, "paired")
+                        identity.savePairing(code); if (continuation.isActive) continuation.resume(Unit); webSocket.close(1000, "paired")
                     } else if (message.type == "chat.error" && continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException(message.payload["message"]?.toString() ?: "LAN pairing rejected")))
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { if (continuation.isActive) continuation.resumeWith(Result.failure(t)) }
+            })
+            continuation.invokeOnCancellation { ws.cancel(); client.dispatcher.executorService.shutdown() }
+        }
+        client.dispatcher.executorService.shutdown()
+    }
+
+    /** Migrates an existing encrypted Firebase pairing into asymmetric LAN trust. */
+    suspend fun bootstrap(endpoint: LanEndpoint, pairing: LocalBrainPairing): Result<Unit> = runCatching {
+        require(endpoint.certificateFingerprint.matches(Regex("[0-9a-fA-F]{64}")))
+        val client = LanTls.client(endpoint.certificateFingerprint)
+        val deviceId = identity.deviceId(); val publicKey = identity.publicKeyBase64()
+        val nonce = UUID.randomUUID().toString()
+        val transcript = "junction-lan-bootstrap-v2\n${pairing.brainId}\n$deviceId\n$publicKey\n${endpoint.certificateFingerprint}\n${endpoint.instanceId}\n$nonce"
+        val key = Base64.decode(pairing.key, Base64.URL_SAFE or Base64.NO_WRAP)
+        fun mac(role: String): ByteArray = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal("$role\n$transcript".toByteArray(Charsets.UTF_8))
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val request = Request.Builder().url("wss://${endpoint.host}:${endpoint.port}/lan").build()
+            val ws = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    val proof = mac("client")
+                    webSocket.send(LanProtocol.encode(LanProtocol.Envelope("pair.bootstrap", UUID.randomUUID().toString(), mapOf(
+                        "brainId" to pairing.brainId, "deviceId" to deviceId, "publicKey" to publicKey, "nonce" to nonce,
+                        "proof" to Base64.encodeToString(proof, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+                    ))))
+                }
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    val message = LanProtocol.decode(text) ?: run { webSocket.close(1002, "invalid frame"); return }
+                    if (message.type == "authenticated" && message.payload["paired"] == true) {
+                        val supplied = runCatching { Base64.decode(message.payload["serverProof"]?.toString().orEmpty(), Base64.URL_SAFE or Base64.NO_WRAP) }.getOrDefault(byteArrayOf())
+                        if (!java.security.MessageDigest.isEqual(mac("server"), supplied)) {
+                            if (continuation.isActive) continuation.resumeWith(Result.failure(SecurityException("PC pairing proof did not match")))
+                            webSocket.close(1008, "Untrusted PC"); return
+                        }
+                        identity.savePairing(LanProtocol.PairingCode(endpoint.instanceId, endpoint.host, endpoint.port, endpoint.certificateFingerprint, "", Long.MAX_VALUE))
+                        if (continuation.isActive) continuation.resume(Unit); webSocket.close(1000, "paired")
+                    } else if (message.type == "chat.error" && continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException(message.payload["message"]?.toString() ?: "LAN bootstrap rejected")))
                 }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { if (continuation.isActive) continuation.resumeWith(Result.failure(t)) }
             })
@@ -101,7 +140,7 @@ class LanTransport(
         val requestId = UUID.randomUUID().toString()
         val response = kotlinx.coroutines.withTimeout(timeoutMs) {
             coroutineScope {
-                val result = async { events.filter { it.requestId == requestId }.first() }
+                val result = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { events.filter { it.requestId == requestId }.first() }
                 send(type, payload, requestId)
                 result.await()
             }
@@ -121,7 +160,7 @@ class LanTransport(
     private fun listener(connected: CompletableDeferred<Unit>, target: LanEndpoint) = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             _state.value = LanConnectionState.AUTHENTICATING
-            webSocket.send(LanProtocol.encode(LanProtocol.Envelope("hello", payload = helloPayload(identity.deviceId(), target.certificateFingerprint))))
+            webSocket.send(LanProtocol.encode(LanProtocol.Envelope("hello", UUID.randomUUID().toString(), helloPayload(identity.deviceId(), target.certificateFingerprint))))
         }
         override fun onMessage(webSocket: WebSocket, text: String) {
             val message = LanProtocol.decode(text) ?: run { webSocket.close(1002, "invalid frame"); return }
@@ -160,5 +199,4 @@ class LanTransport(
         }
     }
 
-    private fun hexToBase64(hex: String): String = Base64.encodeToString(hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray(), Base64.NO_WRAP)
 }

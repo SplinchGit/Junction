@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { EventEmitter } = require("node:events");
 const { X509Certificate } = require("node:crypto");
 const { test } = require("node:test");
-const { LanServer, authMessage, createTlsIdentity } = require("../src/lan-server");
+const { LanServer, authMessage, certificateFingerprint, createTlsIdentity } = require("../src/lan-server");
 const { LanDiscovery, SERVICE_TYPE } = require("../src/lan-discovery");
 const lanServerSource = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/lan-server.js"), "utf8");
 const mainSource = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/main.js"), "utf8");
@@ -49,6 +49,29 @@ test("authenticates a paired Ed25519 client with a pinned certificate fingerprin
   assert.equal(server.connectionState(socket), "authenticated");
 });
 
+test("bootstraps LAN trust from an existing local-brain pairing and rejects a bad proof", async () => {
+  const phone = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" }), publicKey = phone.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const sharedKey = crypto.randomBytes(32), brainId = crypto.randomBytes(32).toString("base64url"), paired = {};
+  const fixture = identityFixture(); fixture.store.getPairedAndroidKeys = () => paired; fixture.store.setPairedAndroidKeys = value => Object.assign(paired, value);
+  const server = new LanServer({ identityStore: fixture.store, getBootstrapState: () => ({ brainId, key: sharedKey.toString("base64url") }) });
+  const nonce = crypto.randomUUID();
+  const request = (socket, proof) => socket.receive({ protocolVersion: 1, type: "pair.bootstrap", requestId: "bootstrap", payload: { brainId, deviceId: "phone-1", publicKey, proof, nonce } });
+  const message = `junction-lan-bootstrap-v2\n${brainId}\nphone-1\n${publicKey}\n${server.certificateFingerprint}\n${server.instanceId}\n${nonce}`;
+  const valid = crypto.createHmac("sha256", sharedKey).update(`client\n${message}`).digest("base64url");
+  const accepted = new FakeSocket(); server.accept(accepted); request(accepted, valid); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(accepted.sent[0].type, "authenticated"); assert.ok(paired["phone-1"]?.publicKey);
+  assert.equal(accepted.sent[0].payload.serverProof, crypto.createHmac("sha256", sharedKey).update(`server\n${message}`).digest("base64url"));
+  const signed = new FakeSocket(); server.accept(signed);
+  signed.receive({ protocolVersion: 1, type: "hello", requestId: "h", payload: { deviceId: "phone-1", certificateFingerprint: server.certificateFingerprint } });
+  signed.receive({ protocolVersion: 1, type: "authenticate", requestId: "a", payload: { deviceId: "phone-1", signature: crypto.sign("sha256", Buffer.from(authMessage(signed.sent[0].payload.nonce, server.instanceId, "phone-1")), phone.privateKey).toString("base64") } });
+  assert.equal(server.connectionState(signed), "authenticated"); signed.close();
+  const rejected = new FakeSocket(); server.accept(rejected); request(rejected, crypto.randomBytes(32).toString("base64url")); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(rejected.sent[0].type, "chat.error");
+  fixture.store.getRevocationState = () => ({ "phone-1": { revokedAt: 0 } });
+  const revoked = new FakeSocket(); server.accept(revoked); request(revoked, valid); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(revoked.sent[0].type, "chat.error");
+});
+
 test("creates a local TLS identity with a usable advertised DNS SAN", () => {
   assert.doesNotMatch(lanServerSource, /execFileSync|openssl/);
   let saved;
@@ -57,6 +80,8 @@ test("creates a local TLS identity with a usable advertised DNS SAN", () => {
   assert.match(identity.certificate, /BEGIN CERTIFICATE/);
   assert.deepEqual(saved, identity);
   assert.match(new X509Certificate(identity.certificate).subjectAltName, /DNS:pc-1\.local/);
+  const publicKeyDer = new X509Certificate(identity.certificate).publicKey.export({ type: "spki", format: "der" });
+  assert.equal(certificateFingerprint(identity.certificate), crypto.createHash("sha256").update(publicKeyDer).digest("hex"));
 });
 
 test("scopes active runs and replay by connection plus request ID", async () => {
@@ -283,13 +308,14 @@ test("answers service and address-resolution queries on the selected bind addres
   const advertiser = new (require("../src/lan-discovery").MulticastDnsAdvertiser)({ mdnsFactory: () => mdns });
   advertiser.publish({ instanceId: "pc-1", port: 1234, address: "192.168.1.20", txt: { protocolVersion: "1" } });
   for (const question of [
-    { name: SERVICE_TYPE, type: "PTR" },
-    { name: "pc-1." + SERVICE_TYPE, type: "SRV" },
-    { name: "pc-1." + SERVICE_TYPE, type: "TXT" },
-    { name: "pc-1.local", type: "A" },
-    { name: "pc-1.local", type: "AAAA" },
+    { name: SERVICE_TYPE + ".", type: "PTR" },
+    { name: "pc-1." + SERVICE_TYPE + ".", type: "SRV" },
+    { name: "pc-1." + SERVICE_TYPE + ".", type: "TXT" },
+    { name: "pc-1.local.", type: "A" },
+    { name: "pc-1.local.", type: "AAAA" },
   ]) advertiser.answer({ questions: [question] });
   assert.equal(responses.length, 5);
+  assert.deepEqual(responses[0].additionals.map(record => record.type), ["SRV", "TXT", "A"]);
   assert.equal(responses[3].answers[0].data, "192.168.1.20");
   assert.equal(JSON.stringify(responses).includes("secret"), false);
 });

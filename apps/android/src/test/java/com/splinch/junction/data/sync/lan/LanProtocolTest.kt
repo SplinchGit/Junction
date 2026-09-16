@@ -84,7 +84,7 @@ class LanProtocolTest {
 
     @Test
     fun `LAN discovery uses local service and exact fingerprint TXT attribute`() {
-        assertEquals("_junction._tcp.local", LanProtocol.SERVICE_TYPE)
+        assertEquals("_junction._tcp.", LanProtocol.SERVICE_TYPE)
         assertEquals("certificateFingerprint", LanDiscovery.CERTIFICATE_FINGERPRINT_ATTRIBUTE)
     }
 
@@ -95,5 +95,20 @@ class LanProtocolTest {
         )))
         val events = decoded?.payload?.get("events") as? List<*>
         assertEquals("conversation.deleted", (events?.firstOrNull() as? Map<*, *>)?.get("type"))
+    }
+
+    @Test
+    fun `successful pairing becomes persistent trust without retaining token expiry`() {
+        val temporary = LanProtocol.PairingCode("pc-1", "192.168.1.20", 43123, "ab".repeat(32), "one-time", 1234L)
+        val trusted = LanProtocol.persistentTrust(temporary)
+        assertEquals("", trusted.token)
+        assertEquals(Long.MAX_VALUE, trusted.expiresAtMillis)
+    }
+
+    @Test
+    fun `connection mode has exactly wifi and firebase choices and migrates old values`() {
+        assertEquals(LanConnectionMode.WIFI, LanConnectionMode.fromStored("auto"))
+        assertEquals(LanConnectionMode.FIREBASE, LanConnectionMode.fromStored("remote"))
+        assertEquals(setOf("wifi", "firebase"), LanConnectionMode.entries.map { it.stored }.toSet())
     }
 }

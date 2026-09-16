@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets
 /** Versioned, bounded wire representation shared by discovery, auth, and streaming. */
 object LanProtocol {
     const val VERSION = 1
-    const val SERVICE_TYPE = "_junction._tcp.local"
+    const val SERVICE_TYPE = "_junction._tcp."
     const val MAX_FRAME_BYTES = 64 * 1024
     const val MAX_REQUEST_ID = 160
     private const val MAX_TYPE = 64
@@ -83,6 +83,8 @@ object LanProtocol {
     fun authMessage(nonce: String, instanceId: String, deviceId: String): ByteArray =
         "junction-lan-v1\n$nonce\n$instanceId\n$deviceId".toByteArray(StandardCharsets.UTF_8)
 
+    fun persistentTrust(code: PairingCode): PairingCode = code.copy(token = "", expiresAtMillis = Long.MAX_VALUE)
+
     private fun JSONObject.toMap(): Map<String, Any?> = keys().asSequence().associateWith { key ->
         when (val value = get(key)) {
             is JSONObject -> value.toMap()
@@ -102,4 +104,15 @@ object LanProtocol {
     }
 
     private val REQUEST_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,$MAX_REQUEST_ID}")
+}
+
+enum class LanConnectionMode(val stored: String) {
+    WIFI("wifi"), FIREBASE("firebase");
+
+    companion object {
+        fun fromStored(value: String?): LanConnectionMode = when (value) {
+            "firebase", "remote" -> FIREBASE
+            else -> WIFI
+        }
+    }
 }

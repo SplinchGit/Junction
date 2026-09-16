@@ -7,7 +7,9 @@ const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const outputName = process.env.JUNCTION_PACK_OUTPUT || "workspace-win-unpacked";
-const runtime = path.join(root, "dist", outputName);
+const runtime = process.env.JUNCTION_RUNTIME_DIRECTORY
+  ? path.resolve(process.env.JUNCTION_RUNTIME_DIRECTORY)
+  : path.join(root, "dist", outputName);
 const target = path.join(runtime, "Junction.exe");
 const resources = path.join(runtime, "resources", "app.asar");
 const desktop = path.join(os.homedir(), "Desktop");

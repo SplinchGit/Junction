@@ -12,7 +12,7 @@ import java.security.Signature
 class LanIdentityStore(context: Context) {
     private val appContext = context.applicationContext
     private val keys = KeyStorage(appContext)
-    private val keyAlias = "junction.lan.ed25519.v1"
+    private val keyAlias by lazy { if (keyStore().containsAlias("junction.lan.ed25519.v1")) "junction.lan.ed25519.v1" else "junction.lan.p256.v1" }
 
     /** Stable per-installation identifier held in the encrypted secret store. */
     fun deviceId(): String {
@@ -29,7 +29,7 @@ class LanIdentityStore(context: Context) {
     fun sign(message: ByteArray): String {
         ensureKey()
         val key = keyStore().getKey(keyAlias, null)
-        val signature = Signature.getInstance("Ed25519")
+        val signature = Signature.getInstance(if (keyAlias.endsWith("p256.v1")) "SHA256withECDSA" else "Ed25519")
         signature.initSign(key as java.security.PrivateKey)
         signature.update(message)
         return Base64.encodeToString(signature.sign(), Base64.NO_WRAP)
@@ -37,16 +37,17 @@ class LanIdentityStore(context: Context) {
 
     fun savePairing(pairing: LanProtocol.PairingCode) {
         ensureKey()
+        val trusted = LanProtocol.persistentTrust(pairing)
         keys.setSecret(PAIRING_SECRET, JSONObject().apply {
-            put("instanceId", pairing.instanceId); put("host", pairing.host); put("port", pairing.port)
-            put("certificateSha256", pairing.certificateSha256)
-            put("expiresAtMillis", pairing.expiresAtMillis)
+            put("instanceId", trusted.instanceId); put("host", trusted.host); put("port", trusted.port)
+            put("certificateSha256", trusted.certificateSha256)
+            put("expiresAtMillis", trusted.expiresAtMillis)
         }.toString())
     }
 
     fun loadPairing(): LanProtocol.PairingCode? = runCatching {
         val json = keys.getSecret(PAIRING_SECRET).takeIf { it.isNotBlank() }?.let(::JSONObject) ?: return null
-        LanProtocol.PairingCode(json.getString("instanceId"), json.getString("host"), json.getInt("port"), json.getString("certificateSha256"), "", json.getLong("expiresAtMillis"))
+        LanProtocol.PairingCode(json.getString("instanceId"), json.getString("host"), json.getInt("port"), json.getString("certificateSha256"), "", Long.MAX_VALUE)
     }.getOrNull()
 
     fun clearPairing() = keys.clearSecret(PAIRING_SECRET)
@@ -54,7 +55,11 @@ class LanIdentityStore(context: Context) {
     private fun ensureKey() {
         val store = keyStore()
         if (!store.containsAlias(keyAlias)) {
-            KeyPairGenerator.getInstance("Ed25519", "AndroidKeyStore").apply { initialize(android.security.keystore.KeyGenParameterSpec.Builder(keyAlias, android.security.keystore.KeyProperties.PURPOSE_SIGN).build()) }.generateKeyPair()
+            KeyPairGenerator.getInstance("EC", "AndroidKeyStore").apply {
+                initialize(android.security.keystore.KeyGenParameterSpec.Builder(keyAlias, android.security.keystore.KeyProperties.PURPOSE_SIGN)
+                    .setAlgorithmParameterSpec(java.security.spec.ECGenParameterSpec("secp256r1"))
+                    .setDigests(android.security.keystore.KeyProperties.DIGEST_SHA256).build())
+            }.generateKeyPair()
         }
     }
 

@@ -62,6 +62,7 @@ import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import com.splinch.junction.data.sync.lan.LanIdentityStore
 import com.splinch.junction.data.sync.lan.LanProtocol
 import com.splinch.junction.data.sync.lan.LanTransport
+import com.splinch.junction.data.sync.lan.LanConnectionMode
 import com.splinch.junction.ui.component.JunctionTextField
 import com.splinch.junction.feature.settings.ui.component.GitHubSettingsSection
 import com.splinch.junction.ui.component.ModelCard
@@ -316,10 +317,10 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(text = "Pair your Junction PC", style = MaterialTheme.typography.titleSmall)
                 Text("On the PC, open Junction Settings → Local Junction Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                var remoteOnly by remember { mutableStateOf(KeyStorage(context).getSecret("lan_mode_v1") == "remote") }
+                var useFirebase by remember { mutableStateOf(LanConnectionMode.fromStored(KeyStorage(context).getSecret("lan_mode_v1")) == LanConnectionMode.FIREBASE) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Text("Use Firebase when away from home (5G / remote)", style = MaterialTheme.typography.bodySmall)
-                    Switch(checked = remoteOnly, onCheckedChange = { remoteOnly = it; KeyStorage(context).setSecret("lan_mode_v1", if (it) "remote" else "auto") })
+                    Text(if (useFirebase) "5G / Firebase relay" else "Wi-Fi / direct PC relay", style = MaterialTheme.typography.bodySmall)
+                    Switch(checked = useFirebase, onCheckedChange = { useFirebase = it; KeyStorage(context).setSecret("lan_mode_v1", if (it) LanConnectionMode.FIREBASE.stored else LanConnectionMode.WIFI.stored) })
                 }
                 OutlinedButton(onClick = {
                     localBrainQrScanner.launch(ScanOptions().apply {

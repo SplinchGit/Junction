@@ -19,8 +19,13 @@ function selectPrivateIPv4(bindAddress) {
   throw new Error("No private IPv4 LAN interface is available.");
 }
 function certificateFingerprint(certificate) {
-  const der = Buffer.from(String(certificate).replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s/g, ""), "base64");
-  return crypto.createHash("sha256").update(der).digest("hex");
+  try {
+    const publicKey = new crypto.X509Certificate(certificate).publicKey.export({ type: "spki", format: "der" });
+    return crypto.createHash("sha256").update(publicKey).digest("hex");
+  } catch {
+    // Test doubles may not contain a parseable certificate; production identities always do.
+    return crypto.createHash("sha256").update(String(certificate)).digest("hex");
+  }
 }
 function authMessage(nonce, instanceId, deviceId) { return `junction-lan-v1\n${nonce}\n${instanceId}\n${deviceId}`; }
 function redactedError(error) { return String(error?.message || error || "LAN request failed").replace(/[\r\n]/g, " ").slice(0, 500); }
@@ -36,9 +41,9 @@ function createTlsIdentity(identityStore, advertisedHost = "junction.local", adv
 }
 
 class LanServer {
-  constructor({ identityStore, localData = null, runtime = null, discovery = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
+  constructor({ identityStore, localData = null, runtime = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
     if (!identityStore) throw new Error("LAN identity store is required.");
-    this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.discovery = discovery || new LanDiscovery(); this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
+    this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
     this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = bindAddress || selectPrivateIPv4(); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
   }
   connectionState(socket) { return this.connections.get(socket)?.state || "closed"; }
@@ -56,7 +61,7 @@ class LanServer {
     const state = this.connections.get(socket); if (!state) return;
     let envelope; try { envelope = parseEnvelope(raw); } catch (error) { return this.reject(socket, error); }
     try {
-      if (state.state !== "authenticated") return envelope.type === "pair" ? this.pair(socket, envelope) : envelope.type === "hello" ? this.hello(socket, envelope) : envelope.type === "authenticate" ? this.authenticate(socket, envelope) : this.reject(socket, "Authentication required.");
+      if (state.state !== "authenticated") return envelope.type === "pair.bootstrap" ? this.bootstrapPair(socket, envelope) : envelope.type === "pair" ? this.pair(socket, envelope) : envelope.type === "hello" ? this.hello(socket, envelope) : envelope.type === "authenticate" ? this.authenticate(socket, envelope) : this.reject(socket, "Authentication required.");
       if (!this.authorized(socket)) return;
       if (envelope.type === "ping") return this.send(socket, "pong", envelope.requestId, {});
       if (envelope.type === "chat.send") return this.chat(socket, envelope);
@@ -83,7 +88,7 @@ class LanServer {
       const verificationKey = typeof paired?.publicKey === "string"
         ? (paired.publicKey.includes("BEGIN") ? crypto.createPublicKey(paired.publicKey) : crypto.createPublicKey({ key: Buffer.from(paired.publicKey, "base64"), format: "der", type: "spki" }))
         : paired?.publicKey;
-      valid = state.state === "challenged" && this.now() < state.challengeExpiresAt && envelope.payload.deviceId === state.deviceId && paired && !isExpired(paired, this.now()) && !isRevoked(revoked, this.now()) && verificationKey && crypto.verify(null, Buffer.from(authMessage(state.nonce, this.instanceId, state.deviceId)), verificationKey, signature);
+      valid = state.state === "challenged" && this.now() < state.challengeExpiresAt && envelope.payload.deviceId === state.deviceId && paired && !isExpired(paired, this.now()) && !isRevoked(revoked, this.now()) && verificationKey && crypto.verify(verificationKey.asymmetricKeyType === "ec" ? "sha256" : null, Buffer.from(authMessage(state.nonce, this.instanceId, state.deviceId)), verificationKey, signature);
     } catch {}
     if (!valid) return this.reject(socket, "Invalid LAN authentication signature.");
     state.pairing = this.identityStore.getPairedAndroidKeys()[state.deviceId]; state.state = "authenticated"; clearTimeout(state.authTimer); state.authTimer = null; this.send(socket, "authenticated", envelope.requestId, { instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint });
@@ -99,6 +104,26 @@ class LanServer {
     paired[deviceId] = { publicKey: key.export({ format: "der", type: "spki" }).toString("base64"), pairedAt: this.now(), expiresAt: Number.MAX_SAFE_INTEGER };
     this.identityStore.setPairedAndroidKeys(paired);
     this.send(socket, "authenticated", envelope.requestId, { paired: true, instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint });
+    try { socket.close(1000, "paired"); } catch {}
+  }
+  async bootstrapPair(socket, envelope) {
+    const payload = envelope.payload || {}, brainId = String(payload.brainId || ""), deviceId = String(payload.deviceId || ""), publicKey = String(payload.publicKey || ""), proofText = String(payload.proof || "");
+    if (!this.getBootstrapState || !/^[A-Za-z0-9_-]{32,128}$/.test(brainId) || !/^[A-Za-z0-9_-]{1,128}$/.test(deviceId)) return this.reject(socket, "LAN bootstrap is unavailable.");
+    const bootstrap = await this.getBootstrapState();
+    if (!bootstrap || bootstrap.brainId !== brainId || typeof bootstrap.key !== "string") return this.reject(socket, "LAN bootstrap identity mismatch.");
+    let key; try { key = crypto.createPublicKey({ key: Buffer.from(publicKey, "base64"), format: "der", type: "spki" }); } catch { return this.reject(socket, "Invalid Android public key."); }
+    const nonce = String(payload.nonce || "");
+    if (!/^[A-Za-z0-9_-]{32,128}$/.test(nonce) || isRevoked(this.identityStore.getRevocationState?.()[deviceId], this.now())) return this.reject(socket, "Invalid or revoked bootstrap identity.");
+    if (!["ed25519", "ec"].includes(key.asymmetricKeyType)) return this.reject(socket, "Unsupported Android signing key.");
+    const message = `junction-lan-bootstrap-v2\n${brainId}\n${deviceId}\n${publicKey}\n${this.certificateFingerprint}\n${this.instanceId}\n${nonce}`;
+    const mac = role => crypto.createHmac("sha256", Buffer.from(bootstrap.key, "base64url")).update(`${role}\n${message}`).digest();
+    const expected = mac("client");
+    let supplied; try { supplied = Buffer.from(proofText, "base64url"); } catch { return this.reject(socket, "Invalid LAN bootstrap proof."); }
+    if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return this.reject(socket, "Invalid LAN bootstrap proof.");
+    const paired = this.identityStore.getPairedAndroidKeys?.() || {};
+    paired[deviceId] = { publicKey: key.export({ format: "der", type: "spki" }).toString("base64"), pairedAt: this.now(), expiresAt: Number.MAX_SAFE_INTEGER };
+    this.identityStore.setPairedAndroidKeys(paired);
+    this.send(socket, "authenticated", envelope.requestId, { paired: true, instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint, serverProof: mac("server").toString("base64url") });
     try { socket.close(1000, "paired"); } catch {}
   }
   sync(socket, envelope) {

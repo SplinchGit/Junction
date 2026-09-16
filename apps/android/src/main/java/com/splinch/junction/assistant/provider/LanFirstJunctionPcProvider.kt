@@ -1,6 +1,7 @@
 package com.splinch.junction.assistant.provider
 
 import android.content.Context
+import android.util.Log
 import com.splinch.junction.assistant.context.ContextBlock
 import com.splinch.junction.assistant.context.ReaderOutput
 import com.splinch.junction.assistant.tools.ToolDefinition
@@ -10,7 +11,9 @@ import com.splinch.junction.data.sync.lan.LanIdentityStore
 import com.splinch.junction.data.sync.lan.LanProtocol
 import com.splinch.junction.data.sync.lan.LanTransport
 import com.splinch.junction.data.sync.lan.LanConversationSync
+import com.splinch.junction.data.sync.lan.LanConnectionMode
 import com.splinch.junction.data.secret.KeyStorage
+import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +28,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.UUID
 import kotlin.coroutines.resume
 
-/** Selects the private LAN path first and retains the existing Firebase provider as fallback. */
+/** One mode selector for direct Wi-Fi or the existing Firebase PC provider. */
 class LanFirstJunctionPcProvider(
     context: Context,
     override val workhorseModel: String,
@@ -44,25 +47,23 @@ class LanFirstJunctionPcProvider(
         conversationId: String?
     ): Flow<LlmEvent> = callbackFlow {
         val identity = LanIdentityStore(appContext)
-        if (KeyStorage(appContext).getSecret(LAN_MODE_SECRET) == "remote") {
+        if (LanConnectionMode.fromStored(KeyStorage(appContext).getSecret(LAN_MODE_SECRET)) == LanConnectionMode.FIREBASE) {
             remote.act(context, tools, useFrontier, conversationId).collect { trySend(it).isSuccess }
             close()
             return@callbackFlow
         }
-        val pairing = identity.loadPairing()
-        if (pairing == null || pairing.expiresAtMillis <= System.currentTimeMillis()) {
-            remote.act(context, tools, useFrontier, conversationId).collect { trySend(it).isSuccess }
-            close()
-            return@callbackFlow
-        }
-
         val transport = LanTransport(identity, scope)
+        var pairing = identity.loadPairing()
+        val legacy = LocalBrainPairingStore.load(appContext)
+        Log.i(TAG, "Wi-Fi relay trust: lan=${pairing != null}, legacy=${legacy != null}")
         val discovered = runCatching {
             withTimeout(DISCOVERY_TIMEOUT_MS) {
                 suspendCancellableCoroutine { continuation ->
                     val discovery = LanDiscovery(appContext)
                     discovery.discover({ endpoint ->
-                        if (endpoint.instanceId == pairing.instanceId && endpoint.certificateFingerprint.equals(pairing.certificateSha256, true) && continuation.isActive) {
+                        val sameIdentity = endpoint.instanceId == pairing?.instanceId
+                        val matches = pairing == null || (sameIdentity && (legacy != null || endpoint.certificateFingerprint.equals(pairing?.certificateSha256, true)))
+                        if (matches && continuation.isActive) {
                             discovery.stop(); continuation.resume(endpoint)
                         }
                     })
@@ -70,18 +71,33 @@ class LanFirstJunctionPcProvider(
                 }
             }
         }.getOrNull()
+        val trustChanged = discovered != null && pairing != null && !discovered.certificateFingerprint.equals(pairing.certificateSha256, true)
+        if ((pairing == null || trustChanged) && discovered != null && legacy != null) {
+            runCatching { withTimeout(CONNECT_TIMEOUT_MS) { transport.bootstrap(discovered, legacy).getOrThrow() } }
+                .onSuccess { Log.i(TAG, "Existing PC pairing migrated to LAN trust") }
+                .onFailure { Log.w(TAG, "LAN trust migration failed: ${it.javaClass.simpleName}") }
+            pairing = identity.loadPairing()
+        }
+        if (pairing == null) {
+            transport.close()
+            val error = if (legacy == null) "Pair this phone with your Junction PC in Settings." else if (discovered == null) "Your paired PC was not found on this Wi-Fi. Open Junction on the PC." else "Could not verify your paired PC's LAN identity. Your existing pairing is still saved."
+            trySend(LlmEvent.Error(error)); trySend(LlmEvent.Done); close(); return@callbackFlow
+        }
         val endpoint = discovered ?: LanEndpoint(pairing.host, pairing.port, pairing.instanceId, pairing.certificateSha256)
-        val connected = runCatching { withTimeout(CONNECT_TIMEOUT_MS) { transport.connect(endpoint).getOrThrow() } }.isSuccess
+        val connected = runCatching { withTimeout(CONNECT_TIMEOUT_MS) { transport.connect(endpoint).getOrThrow() } }
+            .onSuccess { Log.i(TAG, "Authenticated direct LAN connection") }
+            .onFailure { Log.w(TAG, "LAN authentication failed: ${it.javaClass.simpleName}") }.isSuccess
         if (!connected) {
             transport.close()
-            remote.act(context, tools, useFrontier, conversationId).collect { trySend(it).isSuccess }
+            trySend(LlmEvent.Error("Your paired Junction PC was not reachable on this Wi-Fi network."))
+            trySend(LlmEvent.Done)
             close()
             return@callbackFlow
         }
         conversationSync?.reconcile(transport)
 
         val requestId = UUID.randomUUID().toString()
-        val collector: Job = launch {
+        val collector: Job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
                 when (event.type) {
                     "chat.started" -> trySend(LlmEvent.Activity("Connected to Junction on this network"))
@@ -126,9 +142,10 @@ class LanFirstJunctionPcProvider(
 
     companion object {
         const val CONNECT_TIMEOUT_MS = 5_000L
-        const val DISCOVERY_TIMEOUT_MS = 1_500L
+        const val DISCOVERY_TIMEOUT_MS = 5_000L
         const val MAX_CONTEXT_BLOCKS = 16
         const val MAX_BLOCK_CHARS = 8_000
         const val LAN_MODE_SECRET = "lan_mode_v1"
+        private const val TAG = "JunctionLanProvider"
     }
 }
