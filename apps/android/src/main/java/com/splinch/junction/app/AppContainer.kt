@@ -39,6 +39,7 @@ class AppContainer(context: Context) {
     val prefs = UserPrefsRepository(appContext)
     val authManager = AuthManager(appContext)
     val chatSyncManager = ChatSyncManager(appContext, database.chatDao(), authManager)
+    val pairedConversationSyncManager = com.splinch.junction.data.sync.firebase.PairedConversationSyncManager(appContext, database.chatDao()).also { it.start() }
     val feedSyncManager = FeedSyncManager(database.feedDao(), authManager)
     val prefsSyncManager = PrefsSyncManager(prefs, authManager)
     val auditSyncManager = AuditSyncManager(database.actionLogDao(), authManager)

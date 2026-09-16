@@ -225,9 +225,10 @@ service cloud.firestore {
         && request.resource.data.status == 'active'
         && (!('lastSeenAtMs' in request.resource.data) || request.resource.data.lastSeenAtMs is int);
       allow update: if isPc()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','lastSeenAtMs'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','lastSeenAtMs','conversationVersion'])
         && request.resource.data.status == 'active'
-        && request.resource.data.lastSeenAtMs is int;
+        && request.resource.data.lastSeenAtMs is int
+        && (!('conversationVersion' in request.resource.data) || (request.resource.data.conversationVersion is string && request.resource.data.conversationVersion.size() <= 64));
 
       match /pairings/{pairId} {
         // Direct get by a 256-bit one-time ID only; no listing or secret fields.
@@ -267,7 +268,11 @@ service cloud.firestore {
           && request.resource.data.nonce is string && request.resource.data.nonce.size() <= 64;
         allow update: if isBrainPc()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','thinkingCiphertext','thinkingNonce','tokensPerSecond','partialCiphertext','partialNonce','streamSequence','leaseUntilMs','error'])
-          && request.resource.data.status in ['running','streaming','done','error'];
+          && request.resource.data.status in ['running','streaming','done','error','cancelled'];
+        allow update: if request.auth != null && request.auth.uid == resource.data.clientUid
+          && resource.data.status in ['pending','running','streaming']
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'cancel_requested';
         allow delete: if false;
       }
     }

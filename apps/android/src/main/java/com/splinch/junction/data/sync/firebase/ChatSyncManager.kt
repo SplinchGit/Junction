@@ -15,6 +15,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.isActive
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -27,6 +30,11 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
     private var currentUserId: String? = null
     private var activeConversationId: String? = null
     private var authJob: Job? = null
+    private var retryJob: Job? = null
+
+    fun enqueueSession(session: ChatSessionEntity) { scope.launch { runCatching { withTimeout(15_000) { onLocalSessionSaved(session) } } } }
+    fun enqueueMessage(id: String, message: ChatMessageEntity) { scope.launch { runCatching { withTimeout(15_000) { onLocalMessageAppended(id, message) } } } }
+    fun enqueueRename(id: String, title: String) { scope.launch { runCatching { withTimeout(15_000) { renameConversation(id, title) } } } }
     private var conversationListener: ListenerRegistration? = null
     private val messageListeners = mutableMapOf<String, ListenerRegistration>()
 
@@ -37,9 +45,13 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
                 stopUserWork()
                 val uid = user?.uid?.takeIf { authManager.claimSyncOwner(it) } ?: return@collectLatest
                 currentUserId = uid
-                flushTombstones(uid)
-                backfillLocal(uid)
                 attachConversationShelf(uid)
+                retryJob = scope.launch {
+                    while (isActive) {
+                        runCatching { withTimeout(20_000) { flushTombstones(uid); backfillLocal(uid) } }
+                        delay(15_000)
+                    }
+                }
             }
         }
     }
@@ -167,7 +179,7 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
             "updatedAt" to session.sharedUpdatedAt.coerceAtLeast(session.startedAt),
             "createdByDeviceId" to creator,
             "schemaVersion" to 1,
-            "deletedAt" to null
+            // Never clear a deletion made concurrently on another device.
         ), SetOptions.merge()).await()
     }
 
@@ -207,6 +219,7 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
         .collection("users").document(uid).collection("shared_conversations").document(id)
 
     private fun stopUserWork() {
+        retryJob?.cancel(); retryJob = null
         currentUserId = null
         conversationListener?.remove(); conversationListener = null
         messageListeners.values.forEach { it.remove() }; messageListeners.clear()

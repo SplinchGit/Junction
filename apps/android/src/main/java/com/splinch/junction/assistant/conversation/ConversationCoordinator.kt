@@ -36,6 +36,8 @@ class ConversationCoordinator(
     }
 
     suspend fun append(message: ChatMessage) {
+        // A deletion arriving from another device must not recreate the old ID.
+        if (store.loadSessionById(session.sessionId) == null) startNew()
         store.appendMessage(session.sessionId, message)
         // Room's Flow re-queries only after its invalidation tracker fires, which lands
         // a beat after this write returns. Callers that read `messages` immediately

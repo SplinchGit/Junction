@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,10 +29,11 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
             trySend(LlmEvent.Error("Pair this phone with your Junction PC in Settings to use Local LLM.")); trySend(LlmEvent.Done); close(); return@callbackFlow
         }
         try {
-            val uid = LocalBrainPairingStore.ensureAnonymous(appContext)
+            trySend(LlmEvent.Activity("Connecting to your Junction PC"))
+            val uid = withTimeout(15_000) { LocalBrainPairingStore.ensureAnonymous(appContext) }
             if (uid != pairing.clientUid) error("This phone's Junction pairing has changed. Pair it again from Settings.")
             val firestore = FirebaseProvider.firestoreOrNull() ?: error("Firebase is unavailable.")
-            val brain = firestore.collection("local_brains").document(pairing.brainId).get().await()
+            val brain = withTimeout(15_000) { firestore.collection("local_brains").document(pairing.brainId).get().await() }
             val lastSeenAtMs = brain.getLong("lastSeenAtMs") ?: 0L
             if (!brain.exists() || brain.getString("status") != "active" ||
                 System.currentTimeMillis() - lastSeenAtMs > PC_ONLINE_WINDOW_MS
@@ -46,17 +49,21 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
             }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)
-            document.set(mapOf("id" to requestId, "clientUid" to uid, "status" to "pending", "ciphertext" to ciphertext, "nonce" to nonce, "createdAt" to Timestamp.now(), "source" to SOURCE)).await()
+            withTimeout(15_000) { document.set(mapOf("id" to requestId, "clientUid" to uid, "status" to "pending", "ciphertext" to ciphertext, "nonce" to nonce, "createdAt" to Timestamp.now(), "source" to SOURCE)).await() }
             trySend(LlmEvent.Activity("Waiting for your Junction PC"))
             var terminal = false
             var streamedText = ""
+            var streamSequence = 0L
             val registration = document.addSnapshotListener { snapshot, failure ->
                 if (terminal) return@addSnapshotListener
                 if (failure != null) { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error("Local Junction connection interrupted: ${failure.message}")); trySend(LlmEvent.Done); close(); return@addSnapshotListener }
                 if (snapshot == null) return@addSnapshotListener
                 when (snapshot.getString("status")) {
-                    "running" -> trySend(LlmEvent.Activity("Local model is working"))
+                    "running" -> trySend(LlmEvent.Activity(snapshot.getString("error")?.takeIf { it.isNotBlank() } ?: "Local model is working on your PC"))
                     "streaming" -> runCatching {
+                        val sequence = snapshot.getLong("streamSequence") ?: 0L
+                        if (sequence <= streamSequence) return@runCatching
+                        streamSequence = sequence
                         trySend(LlmEvent.Activity("Generating response"))
                         val partial = LocalBrainPairingStore.decrypt(
                             pairing.key,
@@ -64,7 +71,7 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
                             snapshot.getString("partialCiphertext").orEmpty(),
                             snapshot.getString("partialNonce").orEmpty()
                         )
-                        val delta = if (partial.startsWith(streamedText)) partial.removePrefix(streamedText) else partial
+                        val delta = if (partial.startsWith(streamedText)) partial.removePrefix(streamedText) else ""
                         streamedText = partial
                         if (delta.isNotEmpty()) trySend(LlmEvent.TextDelta(delta))
                     }.onFailure {
@@ -86,19 +93,19 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
                             }
                         val tokensPerSecond = snapshot.get("tokensPerSecond")
                             ?.toString()?.toDoubleOrNull()
-                        // The relay returns one encrypted final response (rather than a
-                        // token stream), so it must use TextDone for ChatManager to persist
-                        // it as the assistant turn.
+                        // Persist the authoritative final text after streamed previews.
                         terminal = true
                         trySend(LlmEvent.TextDone(response, thinking, tokensPerSecond)); trySend(LlmEvent.Done); close()
                     }.onFailure { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error("Local Junction returned an invalid encrypted response.")); trySend(LlmEvent.Done); close() }
                     "error" -> { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(snapshot.getString("error") ?: "Your Junction PC could not run the local model.")); trySend(LlmEvent.Done); close() }
+                    "cancelled" -> { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Done); close() }
                 }
             }
             val timeout = launch {
                 delay(AGENT_REQUEST_TIMEOUT_MS)
                 if (!terminal) {
                     terminal = true
+                    document.update("status", "cancel_requested")
                     trySend(LlmEvent.Activity(""))
                     trySend(LlmEvent.Error("Your Junction PC did not finish this request in time. Check that Junction and Ollama are running, then try again."))
                     trySend(LlmEvent.Done)
@@ -110,15 +117,15 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : L
                 registration.remove()
                 if (!terminal) document.update("status", "cancel_requested")
             }
-        } catch (error: Exception) { trySend(LlmEvent.Error(error.message ?: "Could not contact your Junction PC.")); trySend(LlmEvent.Done); close() }
+        } catch (error: Exception) { if (error is CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(error.message ?: "Could not contact your Junction PC.")); trySend(LlmEvent.Done); close() }
     }
 
     override suspend fun readUntrusted(content: String, sourceHint: String) = null
     private companion object {
         const val SOURCE = "junction_local_llm_v2"
-        const val MAX_CONTEXT_BLOCKS = 18
-        const val MAX_BLOCK_CHARS = 4_000
-        const val AGENT_REQUEST_TIMEOUT_MS = 360_000L
+        const val MAX_CONTEXT_BLOCKS = 8
+        const val MAX_BLOCK_CHARS = 2_000
+        const val AGENT_REQUEST_TIMEOUT_MS = 480_000L
         // The desktop relay updates its signed-in heartbeat every 15 seconds.
         // This generous window tolerates a brief network handover without
         // making the first phone message wait for the full request timeout.

@@ -120,11 +120,17 @@ and a 256-bit secret stored in Android's encrypted storage and Windows DPAPI sto
 streamed responses travel through Firebase as ciphertext bound to the brain, request, and message
 stage; Firebase does not receive the conversation plaintext.
 
-Ordinary Local Brain chat has no network, computer, scheduling, or source tools. When the owner
-explicitly enables **Tools** for a phone conversation—or **Agent** for one Windows message—the PC
-runs a separate bounded Local Agent. It may perform up to three safe searches over five decisions,
-but it cannot mutate either device, send messages, schedule work, or edit code. Every generated
-query passes a deterministic egress check before it leaves the PC.
+Local Brain messages run through the PC's bounded Local Agent, with web search available on every
+turn. Current-fact questions trigger a host-enforced search before inference. Every generated query
+passes a deterministic egress check before it leaves the PC. The phone receives progress and
+encrypted text previews while Ollama runs on the PC; the final response includes source references.
+The relay keeps its heartbeat alive during inference and reports offline and timeout errors.
+
+Paired devices also exchange encrypted conversation records automatically: new chats, messages,
+renames, and deletions converge while both apps are running and online, normally within 10–30
+seconds. Changes made offline retry on reconnection. This uses the existing pairing independently
+of Google account sync. Deletions retain tombstones to prevent stale devices restoring a chat.
+The PC must remain awake with Junction and Ollama running for phone inference.
 
 A local model cannot turn a hallucinated marker into an action. Coding-agent work still starts
 locally from Windows **Projects** and is handed to Codex behind its own approval and review flow.
@@ -184,8 +190,8 @@ untrusted content from silently acquiring authority and to keep the blast radius
 - Provider secrets encrypted with Electron `safeStorage`; Firebase refresh tokens protected by DPAPI.
 - On-demand foreground-app inspection through Windows UI Automation. It records bounded structured
   metadata, not screenshots, and does not provide coordinate clicking or broad automation.
-- Manual, opt-in convergence of supported conversations and owner memory plus a read-only shared
-  mobile Feed.
+- Automatic conversation convergence over encrypted PC pairing; optional account sync for supported
+  conversations and owner memory plus a read-only shared mobile Feed.
 - Direct local Ollama chat, subscription-backed Codex chat, built-in Junction Research, encrypted
   Local Brain relay, bounded Local Agent, and isolated Codex project delegation.
 
@@ -196,7 +202,8 @@ updates still need Windows-native implementations.
 ## Privacy and data flow
 
 - Chat history, Feed, memory, provider usage, and audit data are local by default.
-- Sync does nothing until the owner signs in and enables it on each device.
+- Account sync requires sign-in and opt-in on each device. Pairing a Local Brain also enables
+  encrypted conversation sync between that PC and phone.
 - Provider keys, raw screenshots, raw PC context, tool arguments, local audit rows, and pairing
   secrets are not synchronized.
 - Shared messages are immutable and provenance-labelled. Deleted conversations and memories use

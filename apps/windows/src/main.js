@@ -19,6 +19,7 @@ const { WebResearchClient, researchContext, sourceAppendix } = require("./web-re
 const { ResearchCoordinator } = require("./research-coordinator");
 const { LocalAgentRuntime } = require("./local-agent-runtime");
 const { LocalAgentToolRegistry } = require("./local-agent-tools");
+const { PairedConversationSync } = require("./paired-conversation-sync");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false;
 const activeAgentRuns = new Map();
@@ -100,12 +101,15 @@ async function createWindowImpl() {
   localAgent = new LocalAgentRuntime({ toolRegistry });
   localBrainRelay = new LocalBrainRelay({
     projectId: process.env.JUNCTION_FIREBASE_PROJECT_ID,
-    getState: freshLocalBrainState,
+    getState: async () => { const state = await freshLocalBrainState(); return state ? { ...state, conversationVersion: new PairedConversationSync(localData).version() } : null; },
     workspacePath: junctionRepository,
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
     runLocalAgent: request => localAgent.run(request),
+    syncConversations: payload => new PairedConversationSync(localData, () => {
+      scheduleSharedSync(); mainWindow?.webContents.send("junction:conversations-changed");
+    }).sync(payload),
     // A local model can request a coding task, but never applies code itself.
     // This creates only the existing approval-gated Codex worktree draft.
     createCodeDelegation
@@ -133,6 +137,9 @@ async function createWindowImpl() {
   }
   reconcilePendingDeregistration().catch(()=>{});
   scheduleSharedSync();
+  if (!globalThis.junctionSharedPoll) globalThis.junctionSharedPoll = setInterval(() => {
+    if (identity?.syncEnabled && identityStore?.getSession()) syncSharedState().catch(() => {});
+  }, 10_000);
   return window;
 }
 
@@ -183,12 +190,12 @@ async function reconcilePendingDeregistration(){
 
 async function syncSharedState(){
   if(sharedSyncPromise)return sharedSyncPromise;
-  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
+  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};mainWindow?.webContents.send("junction:conversations-changed");return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
 }
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
-ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3.5:2b",relayError:localBrainRelay?.lastError||null};});
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3.5:2b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
 ipcMain.handle("junction:revoke-local-brain",()=>{identityStore.setSecureValue("local-brain-v1","");return {enabled:false};});
 ipcMain.handle("junction:sign-in", async () => {

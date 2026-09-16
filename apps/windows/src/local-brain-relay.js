@@ -5,7 +5,7 @@ const LOCAL_SOURCE = "junction_local_llm_v2";
 const POLL_INTERVAL_MS = 5_000;
 const LEASE_MS = 90_000;
 const OLLAMA_TIMEOUT_MS = 120_000;
-const STREAM_FLUSH_MS = 180;
+const STREAM_FLUSH_MS = 750;
 const MAX_RESPONSE_CHARS = 48_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
@@ -41,14 +41,15 @@ async function readNdjson(stream, onEvent) {
 
 /** PC-only endpoint for encrypted, paired local inference. */
 class LocalBrainRelay {
-  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, onCommandStarted = null, now = () => Date.now() }) {
+  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, syncConversations = null, onCommandStarted = null, now = () => Date.now() }) {
     Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, runLocalAgent, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
+    this.active = new Map(); this.syncConversations = syncConversations;
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null; }
   root(brainId) { return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(this.projectId)}/databases/(default)/documents/local_brains/${encodeURIComponent(brainId)}`; }
   async request(url, session, options = {}) {
-    const response = await this.fetch(url, { ...options, headers: { authorization: `Bearer ${session.idToken}`, "content-type": "application/json", ...(options.headers || {}) } });
+    const response = await this.fetch(url, { signal: AbortSignal.timeout(15_000), ...options, headers: { authorization: `Bearer ${session.idToken}`, "content-type": "application/json", ...(options.headers || {}) } });
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error?.message || `Junction relay request failed (${response.status}).`);
     return body || {};
@@ -66,8 +67,8 @@ class LocalBrainRelay {
   async create(brainId, path, session, values) { return this.request(`${this.root(brainId)}/${path}`, session, { method: "PATCH", body: JSON.stringify(fields(values)) }); }
   async heartbeat(state) {
     if (this.now() - this.lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
-    const url = `${this.root(state.brainId)}?updateMask.fieldPaths=status&updateMask.fieldPaths=lastSeenAtMs`;
-    await this.request(url, state.session, { method: "PATCH", body: JSON.stringify(fields({ status: "active", lastSeenAtMs: this.now() })) });
+    const url = `${this.root(state.brainId)}?updateMask.fieldPaths=status&updateMask.fieldPaths=lastSeenAtMs${state.conversationVersion ? "&updateMask.fieldPaths=conversationVersion" : ""}`;
+    await this.request(url, state.session, { method: "PATCH", body: JSON.stringify(fields({ status: "active", lastSeenAtMs: this.now(), ...(state.conversationVersion ? { conversationVersion: state.conversationVersion } : {}) })) });
     this.lastHeartbeatAt = this.now();
   }
   async poll() {
@@ -84,9 +85,14 @@ class LocalBrainRelay {
       const legacyProcessing = await this.query(state.brainId, state.session, "commands", "processing");
       const running = await this.query(state.brainId, state.session, "commands", "running");
       const streaming = await this.query(state.brainId, state.session, "commands", "streaming");
+      for (const item of await this.query(state.brainId, state.session, "commands", "cancel_requested")) {
+        if (!this.active.has(item.document.name)) await this.update(item.document, state.session, { status: "cancelled", leaseUntilMs: 0 }, item.document.updateTime);
+      }
       for (const command of [...pending, ...legacyProcessing, ...running, ...streaming]) {
         if ((command.data.status === "running" || command.data.status === "streaming") && Number(command.data.leaseUntilMs) > this.now()) continue;
-        await this.run(state, command);
+        if (this.active.has(command.document.name) || this.active.size >= 8) continue;
+        const work = this.run(state, command).finally(() => this.active.delete(command.document.name));
+        this.active.set(command.document.name, work);
       }
       this.lastError = null;
     } finally { this.polling = false; }
@@ -110,15 +116,32 @@ class LocalBrainRelay {
   }
   async run(state, item) {
     const id = item.data.id || item.document.name.split("/").pop();
+    let claimed = false, renewal = null;
     try {
-      this.onCommandStarted?.();
       await this.update(item.document, state.session, { status: "running", leaseUntilMs: this.now() + LEASE_MS, error: "" }, item.document.updateTime);
+      claimed = true;
       const plaintext = crypt(state.key, `JBP1|${state.brainId}|${id}|request`, Buffer.from(item.data.ciphertext, "base64url"), Buffer.from(item.data.nonce, "base64url"), false);
       const payload = JSON.parse(plaintext);
+      if (payload.mode === "conversation_sync") {
+        if (!this.syncConversations) throw new Error("Update Junction on the PC to enable paired conversation sync.");
+        const result = await this.syncConversations(payload);
+        const encrypted = crypt(state.key, `JBP1|${state.brainId}|${id}|response`, Buffer.from(JSON.stringify(result)), null, true);
+        await this.update(item.document, state.session, { status: "done", responseCiphertext: encrypted.ciphertext, responseNonce: encrypted.nonce, leaseUntilMs: 0 }, null);
+        return;
+      }
+      this.onCommandStarted?.();
       if (!Array.isArray(payload.messages) || typeof payload.model !== "string") throw new Error("Invalid encrypted local-model request.");
+      const runStats = { requestId: id, model: payload.model, host: "PC", startedAt: this.now(), partialUpdates: 0, firstPartialAt: null, completedAt: null };
+      this.lastRun = runStats;
       // Tool availability is a server-side invariant. Ignore legacy phone
       // clients that still send mode="chat" and grant the longer agent lease.
       await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null);
+      let renewing = false;
+      renewal = setInterval(async () => {
+        if (renewing) return; renewing = true;
+        try { const fresh = await this.getState(); if (fresh?.session) state.session = fresh.session; await this.heartbeat(state); await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null); }
+        catch (error) { this.lastError = error.message; } finally { renewing = false; }
+      }, 10_000);
       // A language model is not an authority to start coding work. Ordinary
       // phone chat intentionally cannot turn a hallucinated marker into a
       // Codex draft; that requires a future separately-approved request shape.
@@ -129,6 +152,8 @@ class LocalBrainRelay {
         const partial = crypt(state.key, `JBP1|${state.brainId}|${id}|partial`, Buffer.from(answer), null, true);
         await this.update(item.document, state.session, { status: "streaming", partialCiphertext: partial.ciphertext, partialNonce: partial.nonce, streamSequence: ++sequence, leaseUntilMs: this.now() + LEASE_MS }, null);
         lastFlush = this.now();
+        runStats.partialUpdates = sequence;
+        runStats.firstPartialAt ??= lastFlush;
       };
       {
         if (!this.runLocalAgent) throw new Error("The local tool runtime is unavailable on this PC.");
@@ -143,7 +168,11 @@ class LocalBrainRelay {
           try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
         }, 1_000);
         try {
-          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id });
+          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
+            onProgress: async progress => {
+              if (progress.text !== undefined) { answer = progress.text; await flush(); }
+              else await this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: String(progress.stage || "Working on your PC").slice(0, 150) }, null);
+            } });
           answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
         } finally { clearInterval(cancellationPoll); }
       }
@@ -159,11 +188,13 @@ class LocalBrainRelay {
       const thought = thinking.trim(), encryptedThinking = thought ? crypt(state.key, `JBP1|${state.brainId}|${id}|thinking`, Buffer.from(thought.slice(0, MAX_RESPONSE_CHARS)), null, true) : null;
       const tokensPerSecond = Number(final?.eval_count) && Number(final?.eval_duration) ? (Number(final.eval_count) / (Number(final.eval_duration) / 1e9)).toFixed(1) : "";
       await this.update(item.document, state.session, { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", tokensPerSecond, leaseUntilMs: 0 }, null);
+      runStats.completedAt = this.now();
     } catch (error) {
+      if (!claimed) { this.lastError = error.message; return; }
       if (error.name === "AbortError" && await this.cancelled(state, item).catch(() => false)) {
         await this.update(item.document, state.session, { status: "cancelled", error: "", leaseUntilMs: 0 }, null).catch(() => {});
       } else await this.markError(state, item, error.name === "AbortError" ? new Error("Local model timed out. Check Ollama and try again.") : error);
-    }
+    } finally { if (renewal) clearInterval(renewal); }
   }
 }
 module.exports = { LocalBrainRelay, LOCAL_SOURCE, decodeDocument, crypt, readNdjson };

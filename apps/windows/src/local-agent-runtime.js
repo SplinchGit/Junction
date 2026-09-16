@@ -52,9 +52,24 @@ class LocalAgentRuntime {
     this.tools = toolRegistry || new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
     this.limits = { iterations: limits.iterations || MAX_ITERATIONS, toolCalls: limits.toolCalls || MAX_TOOL_CALLS, searches: limits.searches || MAX_SEARCHES, delegations: limits.delegations || MAX_CODEX_DELEGATIONS, timeoutMs: limits.timeoutMs || AGENT_TIMEOUT_MS };
   }
-  async chat(model, messages, tools, signal) {
+  async chat(model, messages, tools, signal, onText = null) {
     const timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, tools, stream: false, think: process.env.JUNCTION_OLLAMA_THINK === "true", keep_alive: "5m", options: { temperature: 0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: 350 } }) });
+    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, tools, stream: Boolean(onText), think: process.env.JUNCTION_OLLAMA_THINK === "true", keep_alive: "5m", options: { temperature: 0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: 350 } }) });
+    if (response.ok && onText && response.body) {
+      const decoder = new TextDecoder(); let buffer = "", content = "", thinking = "", final = null; const calls = [];
+      const consume = async line => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line); if (event.error) throw new Error(event.error);
+        content += event.message?.content || ""; thinking += event.message?.thinking || "";
+        calls.push(...(event.message?.tool_calls || []));
+        if (event.message?.content) await onText(content);
+        if (event.done) final = event;
+      };
+      for await (const chunk of response.body) { buffer += decoder.decode(chunk, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); for (const line of lines) await consume(line); }
+      buffer += decoder.decode(); await consume(buffer);
+      if (!final) throw new Error("The local model stream ended before completion. Please retry.");
+      return { ...final, message: { role: "assistant", content, thinking, ...(calls.length ? { tool_calls: calls } : {}) } };
+    }
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(payload?.error || `Local agent returned HTTP ${response.status}.`);
     if (!payload?.message) throw new Error("Ollama returned no assistant message.");
@@ -67,6 +82,7 @@ class LocalAgentRuntime {
     const gate = new Promise(resolve => { release = resolve; });
     this.pending = previous.then(() => gate);
     try {
+      await request.onProgress?.({ stage: "Waiting for the PC model" });
       await waitWithSignal(previous, request.signal);
       request.signal?.throwIfAborted();
       await this.prepareModel(request.model, request.signal);
@@ -88,7 +104,7 @@ class LocalAgentRuntime {
       await unloaded.json();
     }
   }
-  async runNow({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null, forceSearch = false }) {
+  async runNow({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null, forceSearch = false, onProgress = null }) {
     const ownerGoal = String(goal || "").trim().slice(0, 20_000);
     if (!ownerGoal) throw new Error("Local Agent request has no owner goal.");
     const deadlineSignal = AbortSignal.timeout(this.limits.timeoutMs);
@@ -117,6 +133,7 @@ class LocalAgentRuntime {
     const executedTools = [];
     const started = Date.now();
     if (forceSearch || requiresSearch(ownerGoal)) {
+      await onProgress?.({ stage: "Searching the web on your PC" });
       // The host enforces research; tiny models cannot silently skip it.
       const query = validateSearchEgress(ownerGoal.slice(0, 240), ownerGoal);
       searches++; toolCalls++;
@@ -132,7 +149,8 @@ class LocalAgentRuntime {
       if (Date.now() - started > this.limits.timeoutMs) throw new Error("Local agent reached its overall time limit before finishing.");
       const audit = { runId, model, mode: "agent", iteration };
       this.tools.audit("agent_iteration", "local_model", "success", `iteration ${iteration}; model ${model}`, audit);
-      const payload = await this.chat(model, messages, definitions, runSignal);
+      await onProgress?.({ stage: iteration === 1 ? `Running ${model} on your PC` : "Checking evidence on your PC" });
+      const payload = await this.chat(model, messages, definitions, runSignal, onProgress && iteration === 1 ? text => onProgress({ stage: "Streaming from your PC", text }) : null);
       if (runSignal.aborted || await isCancelled?.()) throw abortError();
       inputTokens += Number(payload.prompt_eval_count || 0); outputTokens += Number(payload.eval_count || 0);
       thinkingCharacters += String(payload.message.thinking || "").length;

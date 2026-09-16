@@ -441,7 +441,7 @@ class ChatManager(
             var spokeReplyAloud = false
 
             var currentProvider = activeProvider
-            var attemptsLeft = 2 // primary + one health-aware fallback
+            var attemptsLeft = if (activeProvider.id == "local") 1 else 2
             var fatalError: String? = null
 
             while (attemptsLeft > 0) {
@@ -803,11 +803,16 @@ class ChatManager(
         val messageBlocks = _messages.value.map { msg ->
             val sendBytes = msg.imagePath != null && msg.id == newestImageId
             val encodedImage = if (sendBytes) msg.imagePath?.let { encodeImageForContext(it) } else null
+            // The PC agent extracts the latest user block as its search goal.
+            // Keep owner text separate from transport IDs and trust metadata.
+            val text = if (activeProvider.id == "local" && msg.provenance != Provenance.UNTRUSTED) {
+                msg.content
+            } else renderContextEnvelope(msg)
             val content = when {
-                sendBytes || msg.imagePath == null -> renderContextEnvelope(msg)
+                sendBytes || msg.imagePath == null -> text
                 // Fall back to a neutral marker rather than dropping the fact an
                 // image was there, which would make the history read wrongly.
-                else -> renderContextEnvelope(msg) +
+                else -> text +
                     "\n[Attached image: ${msg.imageSummary ?: "described earlier in this conversation"}]"
             }
             ContextBlock(

@@ -1,4 +1,9 @@
 "use strict";
+window.junction.onConversationsChanged(async () => {
+  if (activeRunId) return;
+  if (activeConversationId && await window.junction.conversation(activeConversationId)) await openConversation(activeConversationId);
+  else { activeConversationId = null; await loadThreads(true); if (!activeConversationId) document.getElementById("messages")?.replaceChildren(); }
+});
 const syncToggle=document.getElementById("sync"),syncCard=syncToggle.closest("article"),syncActions=document.createElement("div"),syncNow=document.createElement("button"),syncState=document.createElement("span");syncActions.className="sync-actions";syncNow.className="secondary";syncNow.textContent="Sync now";syncNow.disabled=true;syncState.className="sync-state";syncState.textContent="Local-first · sync on launch and changes";syncActions.append(syncNow,syncState);syncCard.append(syncActions);
 async function refreshSharedState(){const status=await window.junction.status(),last=await window.junction.sharedStatus();syncNow.disabled=!status.account||!status.device.syncEnabled;syncState.textContent=last?`Last sync ${new Date(last.at).toLocaleTimeString()} · ${last.uploaded||0} changes uploaded · ${last.pending||0} pending`:status.device.syncEnabled?"Ready · syncs on launch and local changes":"Local-first · sync off"}
 syncNow.onclick=()=>action(async()=>{syncNow.disabled=true;syncState.textContent="Syncing shared Junction state…";const result=await window.junction.syncShared();await loadThreads(true);await loadMemories();await loadSharedFeed();syncState.textContent=`Synced · ${result.uploaded||0} changes uploaded · ${result.pending||0} pending`;message("toast","Junction account state synced.")});syncToggle.addEventListener("change",()=>setTimeout(refreshSharedState,100));
