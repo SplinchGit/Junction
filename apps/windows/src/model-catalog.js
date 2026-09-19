@@ -13,5 +13,4 @@ function estimate(providerId,modelId,inputTokens=0,outputTokens=0){
 }
 function isSupportedLocalModel(model) { return providers.find(p => p.id === "local").models.some(m => m.id === model); }
 function normalizeLocalModel(model) { return isSupportedLocalModel(model) ? model : "qwen3.5:2b"; }
-function isRetiredLocalModel(model) { return /^qwen3\.5:4b(?:$|-)/i.test(String(model)); }
-module.exports={providers,estimate,normalizeLocalModel,isSupportedLocalModel,isRetiredLocalModel};
+module.exports={providers,estimate,normalizeLocalModel,isSupportedLocalModel};
