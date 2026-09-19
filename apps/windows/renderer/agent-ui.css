@@ -4,3 +4,8 @@
 .settings article button{max-width:220px;min-height:34px;height:auto}
 .settings article>div:last-child{display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end}
 @media(max-width:1100px){.chat-model{width:116px}.compose .research-toggle{min-width:48px;padding:0 7px}}
+
+.conversation{min-height:0}.messages{min-height:0}
+.generation-status{flex:0 0 28px;box-sizing:border-box;padding:4px 38px;color:var(--md-primary,#b9c5ff);font-size:12px;line-height:20px;visibility:hidden}
+.conversation[aria-busy="true"] .generation-status{visibility:visible}
+.message .bubble a{color:#b9c5ff;text-decoration:underline;text-underline-offset:3px}

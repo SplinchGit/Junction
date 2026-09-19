@@ -399,14 +399,7 @@ fun ChatScreen(
                     }
                 }
             }
-            turnActivity?.let { activity ->
-                Text(
-                    text = activity,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
-                )
-            }
+
         }
 
         val plan = activePlan
@@ -443,6 +436,13 @@ fun ChatScreen(
             }
         }
 
+        // Reserve a dedicated activity row so status never covers messages.
+        Box(Modifier.fillMaxWidth().heightIn(min = 28.dp).padding(horizontal = 8.dp, vertical = 4.dp)) {
+            turnActivity?.let { activity ->
+                Text(text = activity, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
         ChatInputRow(
             text = input,
             onTextChange = { input = it },
@@ -970,7 +970,7 @@ private fun MessageBubble(message: ChatMessage) {
                 // for both owner and Junction messages without adding noisy
                 // per-bubble controls.
                 SelectionContainer {
-                    Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+                    Text(text = remember(message.content) { citationText(message.content) }, style = MaterialTheme.typography.bodyMedium)
                 }
             }
             if (message.sender == Sender.ASSISTANT &&

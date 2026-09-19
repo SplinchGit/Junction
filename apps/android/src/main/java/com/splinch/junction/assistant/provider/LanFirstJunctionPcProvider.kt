@@ -12,11 +12,14 @@ import com.splinch.junction.data.sync.lan.LanProtocol
 import com.splinch.junction.data.sync.lan.LanTransport
 import com.splinch.junction.data.sync.lan.LanConversationSync
 import com.splinch.junction.data.sync.lan.LanConnectionMode
+import com.splinch.junction.data.sync.lan.LanFailure
+import com.splinch.junction.data.sync.lan.LanFailureKind
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.UUID
 import kotlin.coroutines.resume
@@ -53,52 +57,83 @@ class LanFirstJunctionPcProvider(
             return@callbackFlow
         }
         val transport = LanTransport(identity, scope)
+        try {
         var pairing = identity.loadPairing()
+        val damagedTrust = pairing == null && identity.hasPairingRecord()
         val legacy = LocalBrainPairingStore.load(appContext)
-        Log.i(TAG, "Wi-Fi relay trust: lan=${pairing != null}, legacy=${legacy != null}")
-        val discovered = runCatching {
-            withTimeout(DISCOVERY_TIMEOUT_MS) {
-                suspendCancellableCoroutine { continuation ->
-                    val discovery = LanDiscovery(appContext)
-                    discovery.discover({ endpoint ->
-                        val sameIdentity = endpoint.instanceId == pairing?.instanceId
-                        val matches = pairing == null || (sameIdentity && (legacy != null || endpoint.certificateFingerprint.equals(pairing?.certificateSha256, true)))
-                        if (matches && continuation.isActive) {
-                            discovery.stop(); continuation.resume(endpoint)
-                        }
-                    })
-                    continuation.invokeOnCancellation { discovery.stop() }
+        Log.i(TAG, "Wi-Fi relay trust: lan=${pairing != null}, legacy=${legacy != null}, damaged=$damagedTrust")
+        val discovered = mutableListOf<LanEndpoint>()
+        val discovery = LanDiscovery(appContext)
+        try {
+            runCatching { discovery.discover({ endpoint ->
+                synchronized(discovered) {
+                    if ((pairing == null || endpoint.instanceId == pairing?.instanceId) && discovered.size < 16) discovered.add(endpoint)
                 }
+            }, { error -> Log.w(TAG, "LAN stage=discovery kind=NOT_DISCOVERED cause=${error.javaClass.simpleName}") }) }
+                .onFailure { Log.w(TAG, "LAN stage=discovery kind=NOT_DISCOVERED cause=${it.javaClass.simpleName}") }
+            kotlinx.coroutines.delay(DISCOVERY_TIMEOUT_MS)
+        } finally { discovery.stop() }
+        val candidates = synchronized(discovered) { com.splinch.junction.data.sync.lan.lanCandidates(discovered.toList(), pairing) }
+        if (candidates.isEmpty() || (pairing == null && legacy == null)) {
+            val error = when {
+                damagedTrust -> "Saved PC trust could not be read. Verify the pairing in Settings."
+                legacy == null -> "Pair this phone with your Junction PC in Settings."
+                else -> "Your paired PC was not discovered on this Wi-Fi. Open Junction on the PC."
             }
-        }.getOrNull()
-        val trustChanged = discovered != null && pairing != null && !discovered.certificateFingerprint.equals(pairing.certificateSha256, true)
-        if ((pairing == null || trustChanged) && discovered != null && legacy != null) {
-            runCatching { withTimeout(CONNECT_TIMEOUT_MS) { transport.bootstrap(discovered, legacy).getOrThrow() } }
-                .onSuccess { Log.i(TAG, "Existing PC pairing migrated to LAN trust") }
-                .onFailure { Log.w(TAG, "LAN trust migration failed: ${it.javaClass.simpleName}") }
-            pairing = identity.loadPairing()
-        }
-        if (pairing == null) {
-            transport.close()
-            val error = if (legacy == null) "Pair this phone with your Junction PC in Settings." else if (discovered == null) "Your paired PC was not found on this Wi-Fi. Open Junction on the PC." else "Could not verify your paired PC's LAN identity. Your existing pairing is still saved."
+            Log.w(TAG, "LAN stage=discovery kind=${if (damagedTrust) "STALE_TRUST" else "NOT_DISCOVERED"}")
             trySend(LlmEvent.Error(error)); trySend(LlmEvent.Done); close(); return@callbackFlow
         }
-        val endpoint = discovered ?: LanEndpoint(pairing.host, pairing.port, pairing.instanceId, pairing.certificateSha256)
-        val connected = runCatching { withTimeout(CONNECT_TIMEOUT_MS) { transport.connect(endpoint).getOrThrow() } }
-            .onSuccess { Log.i(TAG, "Authenticated direct LAN connection") }
-            .onFailure { Log.w(TAG, "LAN authentication failed: ${it.javaClass.simpleName}") }.isSuccess
-        if (!connected) {
-            transport.close()
-            trySend(LlmEvent.Error("Your paired Junction PC was not reachable on this Wi-Fi network."))
-            trySend(LlmEvent.Done)
-            close()
-            return@callbackFlow
+        var connectionError: Throwable? = null
+        var authenticated = false
+        val deadline = android.os.SystemClock.elapsedRealtime() + TOTAL_CONNECT_TIMEOUT_MS
+        for (candidate in candidates) {
+            val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+            if (remaining <= 0) {
+                connectionError = LanFailure(LanFailureKind.TIMEOUT, "Connection deadline exceeded")
+                break
+            }
+            var stage = "connect"
+            val attempt = runCatching {
+                withTimeout(minOf(CONNECT_TIMEOUT_MS, remaining)) {
+                    val trustChanged = pairing != null && !candidate.certificateFingerprint.equals(pairing?.certificateSha256, true)
+                    if (pairing == null || trustChanged) {
+                        if (legacy == null) throw LanFailure(LanFailureKind.STALE_TRUST, "PC identity changed")
+                        stage = "bootstrap"
+                        transport.bootstrap(candidate, legacy).getOrThrow()
+                        pairing = identity.loadPairing()
+                    }
+                    stage = "connect"
+                    transport.connect(candidate).getOrThrow()
+                }
+            }
+            if (attempt.isSuccess) {
+                authenticated = true
+                Log.i(TAG, "LAN stage=connect kind=CONNECTED address=${candidate.host}:${candidate.port}")
+                break
+            }
+            val error = attempt.exceptionOrNull()!!
+            if (error is CancellationException && error !is TimeoutCancellationException) throw error
+            connectionError = error
+            val kind = (error as? LanFailure)?.kind?.name ?: if (error is TimeoutCancellationException) "TIMEOUT" else "UNREACHABLE"
+            Log.w(TAG, "LAN stage=$stage kind=$kind address=${candidate.host}:${candidate.port} cause=${error.cause?.javaClass?.simpleName ?: error.javaClass.simpleName}")
+            // Another NIC/address is useful only for network failure. Never retry rejected trust.
+            if (!com.splinch.junction.data.sync.lan.canTryAnotherLanAddress(error)) break
+        }
+        if (!authenticated) {
+            val error = connectionError ?: LanFailure(LanFailureKind.UNREACHABLE, "PC unreachable")
+            val missingDiscovery = synchronized(discovered) { discovered.isEmpty() }
+            val message = if (missingDiscovery && com.splinch.junction.data.sync.lan.canTryAnotherLanAddress(error))
+                "Your paired PC was not discovered on this Wi-Fi, and its saved address could not be reached. Open Junction on the PC."
+            else relayFailureMessage(error)
+            trySend(LlmEvent.Error(message)); trySend(LlmEvent.Done); close(); return@callbackFlow
         }
         conversationSync?.reconcile(transport)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
 
         val requestId = UUID.randomUUID().toString()
         val collector: Job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
+                if (event.requestId != requestId) return@collect
                 when (event.type) {
                     "chat.started" -> trySend(LlmEvent.Activity("Connected to Junction on this network"))
                     "chat.delta" -> event.payload["text"]?.toString()?.takeIf { it.isNotEmpty() }?.let { trySend(LlmEvent.TextDelta(it)) }
@@ -113,6 +148,14 @@ class LanFirstJunctionPcProvider(
                         trySend(LlmEvent.Done)
                         close()
                     }
+                }
+            }
+        }
+        val failureCollector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            transport.failure.collect { error ->
+                if (error != null) {
+                    trySend(LlmEvent.Error(relayFailureMessage(error)))
+                    trySend(LlmEvent.Done); close()
                 }
             }
         }
@@ -133,15 +176,26 @@ class LanFirstJunctionPcProvider(
         }
         awaitClose {
             collector.cancel()
-            if (transport.state.value.name == "CONNECTED") transport.cancel(requestId)
+            failureCollector.cancel()
+            if (transport.state.value.name == "CONNECTED") runCatching { transport.cancel(requestId) }
             transport.close()
         }
+        } finally { transport.close() }
     }
 
     override suspend fun readUntrusted(content: String, sourceHint: String): ReaderOutput? = null
 
     companion object {
-        const val CONNECT_TIMEOUT_MS = 5_000L
+        internal fun relayFailureMessage(error: Throwable): String = when {
+            error is TimeoutCancellationException || (error is LanFailure && error.kind == LanFailureKind.TIMEOUT) -> "The Junction PC connection timed out. Check that Junction is open on the same Wi-Fi."
+            error is LanFailure && error.kind == LanFailureKind.AUTHENTICATION -> "The PC rejected this phone's pairing. It may have expired or been revoked. Verify pairing in Settings."
+            error is LanFailure && error.kind == LanFailureKind.STALE_TRUST -> "The PC identity changed. Verify pairing in Settings before reconnecting."
+            error is LanFailure && error.kind == LanFailureKind.DISCONNECTED -> "The connection to Junction PC was lost. Send the message again after reconnecting."
+            error is SecurityException -> "Could not verify your paired PC's identity. Verify pairing in Settings."
+            else -> "Your paired Junction PC was not reachable on this Wi-Fi network. Open Junction on the PC."
+        }
+        const val CONNECT_TIMEOUT_MS = 3_000L
+        const val TOTAL_CONNECT_TIMEOUT_MS = 9_000L
         const val DISCOVERY_TIMEOUT_MS = 5_000L
         const val MAX_CONTEXT_BLOCKS = 16
         const val MAX_BLOCK_CHARS = 8_000

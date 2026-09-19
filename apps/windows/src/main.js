@@ -16,11 +16,13 @@ const { SharedStateClient } = require("./shared-state");
 const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
 const { LocalBrainRelay } = require("./local-brain-relay");
 const { WebResearchClient, researchContext, sourceAppendix } = require("./web-research");
-const { ResearchCoordinator } = require("./research-coordinator");
-const { LocalAgentRuntime } = require("./local-agent-runtime");
+const { ResearchCoordinator, renderCitations } = require("./research-coordinator");
+const { decideIntent, decisionAllowsDelegation } = require("./intent-router");
+const { canonicalHistory } = require("./assistant-context");
+const { LocalAgentRuntime, validateSearchEgress } = require("./local-agent-runtime");
 const { LocalAgentToolRegistry } = require("./local-agent-tools");
 const { PairedConversationSync } = require("./paired-conversation-sync");
-const { LanServer } = require("./lan-server");
+const { LanRelayLifecycle } = require("./lan-relay-lifecycle");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
@@ -88,6 +90,10 @@ async function showStartupFailure(error) {
     ? mainWindow
     : new BrowserWindow({ width: 760, height: 420, minWidth: 640, minHeight: 360, backgroundColor: "#090b10" });
   mainWindow = window;
+  window.webContents.setWindowOpenHandler(({url}) => {
+    try { const link = new URL(url); if (["https:","http:"].includes(link.protocol) && !link.username && !link.password) void shell.openExternal(link.href); } catch {}
+    return {action:"deny"};
+  });
   const detail = String(error?.message || error || "Unknown startup error").replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]);
   await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><title>Junction recovery</title><body style="margin:0;background:#090b10;color:#edf1f7;font:16px system-ui;padding:48px"><h1>Junction needs attention</h1><p>The app opened in recovery mode instead of silently failing.</p><pre style="white-space:pre-wrap;color:#ffb4ab">${detail}</pre><p>Close Junction and open it again. If this repeats, share the startup log from Junction's app-data <code>logs</code> folder with support.</p></body>`)}`);
 }
@@ -110,8 +116,9 @@ async function createWindowImpl() {
   localAgent = new LocalAgentRuntime({ toolRegistry });
   if (process.platform === "win32") {
     try {
-      const candidateLanServer = new LanServer({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
-        bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: Number(process.env.JUNCTION_LAN_PORT || 43111) });
+      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
+        onStatus: status => recordStartupIssue("LAN relay", JSON.stringify(status)),
+        bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: process.env.JUNCTION_LAN_PORT ? Number(process.env.JUNCTION_LAN_PORT) : undefined });
       await candidateLanServer.start();
       lanServer = candidateLanServer;
     } catch (error) { recordStartupIssue("LAN server unavailable", error); }
@@ -138,6 +145,10 @@ async function createWindowImpl() {
   companion = await startCompanion();
   const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow = window;
+  window.webContents.setWindowOpenHandler(({url}) => {
+    try { const link = new URL(url); if (["https:","http:"].includes(link.protocol) && !link.username && !link.password) void shell.openExternal(link.href); } catch {}
+    return {action:"deny"};
+  });
   // Only the Windows-login instance is intentionally headless. A normal
   // desktop launch must retain conventional close/open behaviour; otherwise a
   // hidden process can make Junction appear unable to open.
@@ -271,10 +282,20 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,model:config.model||"Default model",mode,toolsAvailable:nativeToolsAvailable,reason:nativeToolsAvailable?"Native tools supplied automatically":request.research?"Junction Search evidence requested before inference":"This provider does not use the local native-tool runtime"});
   if(nativeToolsAvailable)activeAgentRuns.set(runId,controller);
   let reply,research=null;
+  const complete = ({messages, instruction}) => config.id === "codex"
+    ? sendCodexChat({model:config.model,messages,memories:[],context:null,research:instruction,workingDirectory:app.getPath("userData")})
+    : sendChat({config,key:identityStore.getProviderKey(config.id),messages,memories:[],context:null,research:instruction});
+  const intent = !nativeToolsAvailable && config.id !== "anthropic"
+    ? await decideIntent({goal:content,history:conversation.messages.slice(0,-1),capabilities:["web_search","approval_gated_code_draft"],complete}) : null;
+  const needsResearch = request.research || intent?.action === "search";
   try {
-    if(request.research && !nativeToolsAvailable){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(content);appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
+    if(needsResearch && !nativeToolsAvailable){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(validateSearchEgress(intent?.query || content.slice(0,240), conversation.messages.filter(item=>item.role === "user").slice(-12).map(item=>item.content).join(" ")));appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
     const researchInstructions = research ? researchContext(research) : null;
-    reply=nativeToolsAvailable
+    if (intent && decisionAllowsDelegation(intent)) {
+      const project = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
+      await delegation.create({instruction:[...canonicalHistory(conversation.messages,content).slice(-4).map(item=>`${item.role}: ${item.content}`), `Owner request: ${content}`].join("\n"),projects:[{name:"Junction",repoPath:project}]});
+      reply = {content:"I've created a coding draft for review in Projects. Approval is required before work starts.",model:config.model};
+    } else reply=nativeToolsAvailable
       ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
@@ -283,7 +304,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     appendAudit({event:"model_run_completed",capability:"model",decision:"stopped",outcome:"failure",runId,model:config.model||"Default model",mode,toolCalls:0,toolsExecuted:0,toolNames:[],durationMs:Date.now()-started,reason:String(error.message||error).slice(0,500)});
     throw error;
   } finally { if(nativeToolsAvailable)activeAgentRuns.delete(runId); }
-  const contentWithSources = research ? `${reply.content.trim()}\n\n${sourceAppendix(research)}` : reply.content;
+  const contentWithSources = research ? renderCitations(reply.content, research) : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
   const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
   const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);

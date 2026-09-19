@@ -6,7 +6,7 @@ const path = require("node:path");
 const models = process.argv.slice(2);
 const selectedModels = models.length
   ? models
-  : ["qwen3:1.7b", "qwen3.5:2b", "qwen3.5:4b", "lfm2.5:2.6b"];
+  : ["qwen3:1.7b", "qwen3.5:2b", "lfm2.5:2.6b"];
 const endpoint = "http://127.0.0.1:11434";
 const weatherTool = {
   type: "function",

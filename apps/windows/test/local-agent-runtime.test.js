@@ -6,7 +6,7 @@ const { compactResearchContext } = require("../src/local-agent-tools");
 const { parseSearchHtml, evidencePassages } = require("../src/web-research");
 
 function response(message) { return { ok: true, json: async () => ({ message, prompt_eval_count: 2, eval_count: 1 }) }; }
-function harness(outputs, { execute } = {}) {
+function harness(outputs, { execute, decision = { intent: "question", action: "answer", authorization: "none" } } = {}) {
   const requests = [], executions = [], audits = [];
   const toolRegistry = {
     definitions: () => [{ type: "function", function: { name: "web_search", description: "test", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } }],
@@ -14,7 +14,7 @@ function harness(outputs, { execute } = {}) {
     execute: async (name, args) => { executions.push({ name, args }); return execute ? execute(name, args) : { content: JSON.stringify({ ok: true, evidence: "[S1.p1] Test evidence" }) }; }
   };
   let index = 0;
-  const runtime = new LocalAgentRuntime({ toolRegistry, limits: { iterations: outputs.length, toolCalls: 6, searches: 3, timeoutMs: 10_000 }, fetchImpl: async (_url, options) => { if (_url.endsWith('/api/ps')) return {ok:true,json:async()=>({models:[]})}; requests.push(JSON.parse(options.body)); return response(outputs[Math.min(index++, outputs.length - 1)]); } });
+  const runtime = new LocalAgentRuntime({ toolRegistry, limits: { iterations: outputs.length, toolCalls: 6, searches: 3, timeoutMs: 10_000 }, fetchImpl: async (_url, options) => { if (_url.endsWith('/api/ps')) return {ok:true,json:async()=>({models:[]})}; const body = JSON.parse(options.body); if (body.messages[0].content.startsWith("Classify the owner")) return response({role:"assistant",content:JSON.stringify(decision)}); requests.push(body); return response(outputs[Math.min(index++, outputs.length - 1)]); } });
   return { runtime, requests, executions, audits };
 }
 function call(query) { return { role: "assistant", content: "", tool_calls: [{ function: { name: "web_search", arguments: { query } } }] }; }
@@ -52,11 +52,11 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   unblock(); await first; await third;
   assert.deepEqual(order,['first','third']);
   const enforced = harness([{ role: "assistant", content: "Argentina [S1.p1]" }]);
-  const enforcedResult = await enforced.runtime.run({ goal: "Who won the 2022 football world cup?", model: "tiny" });
+  const enforcedResult = await enforced.runtime.run({ goal: "Who won the 2022 football world cup?", model: "tiny", forceSearch: true });
   assert.equal(enforcedResult.toolsExecuted, 1);
   assert.ok(enforced.requests[0].messages.some(message => message.role === "tool"), "host must search before inference");
   const unavailable = harness([], { execute: async () => { throw new Error("Search unavailable"); } });
-  await assert.rejects(() => unavailable.runtime.run({ goal: "Search today's news", model: "tiny" }), /Search unavailable/);
+  await assert.rejects(() => unavailable.runtime.run({ goal: "Search today's news", model: "tiny", forceSearch: true }), /Search unavailable/);
   assert.equal(unavailable.requests.length, 0, "failed required search must not become an invented answer");
   const multi = harness([call("London temperature"), call("Edinburgh temperature"), { role: "assistant", content: "London and Edinburgh compared [S1.p1]" }]);
   const result = await multi.runtime.run({ goal: "Compare London temperature and Edinburgh temperature", model: "selected-model", runId: "temperature-run" });

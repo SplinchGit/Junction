@@ -1,0 +1,15 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+const { providers, normalizeLocalModel } = require("../src/model-catalog");
+const { LocalDataStore } = require("../src/local-data");
+assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3.5:2b", "qwen3:1.7b", "lfm2.5:2.6b"]);
+const retired = "qwen3.5:" + "4b";
+assert.equal(normalizeLocalModel(retired), "qwen3.5:2b");
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), "junction-model-retirement-"));
+fs.writeFileSync(path.join(directory, "junction-local.json"), JSON.stringify({ provider: { id: "local", model: retired } }));
+const store = new LocalDataStore(directory);
+assert.equal(store.provider().model, "qwen3.5:2b");
+assert.equal(store.setProvider({id: "local", model: retired}).model, "qwen3.5:2b");
+assert.equal(store.setProvider({id: "local", model: "lfm2.5:2.6b"}).model, "lfm2.5:2.6b");
+console.log("Model retirement and persisted-selection migration passed");

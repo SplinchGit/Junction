@@ -9,24 +9,24 @@ import java.security.KeyStore
 import java.security.Signature
 
 /** Android identity. The private key is generated and used inside Android Keystore only. */
-class LanIdentityStore(context: Context) {
+class LanIdentityStore(context: Context) : LanIdentity {
     private val appContext = context.applicationContext
     private val keys = KeyStorage(appContext)
     private val keyAlias by lazy { if (keyStore().containsAlias("junction.lan.ed25519.v1")) "junction.lan.ed25519.v1" else "junction.lan.p256.v1" }
 
     /** Stable per-installation identifier held in the encrypted secret store. */
-    fun deviceId(): String {
+    override fun deviceId(): String {
         val existing = keys.getSecret(DEVICE_ID_SECRET)
         if (existing.matches(DEVICE_ID_PATTERN)) return existing
         return java.util.UUID.randomUUID().toString().also { keys.setSecret(DEVICE_ID_SECRET, it) }
     }
 
-    fun publicKeyBase64(): String {
+    override fun publicKeyBase64(): String {
         ensureKey()
         return Base64.encodeToString(keyStore().getCertificate(keyAlias).publicKey.encoded, Base64.NO_WRAP)
     }
 
-    fun sign(message: ByteArray): String {
+    override fun sign(message: ByteArray): String {
         ensureKey()
         val key = keyStore().getKey(keyAlias, null)
         val signature = Signature.getInstance(if (keyAlias.endsWith("p256.v1")) "SHA256withECDSA" else "Ed25519")
@@ -35,7 +35,7 @@ class LanIdentityStore(context: Context) {
         return Base64.encodeToString(signature.sign(), Base64.NO_WRAP)
     }
 
-    fun savePairing(pairing: LanProtocol.PairingCode) {
+    override fun savePairing(pairing: LanProtocol.PairingCode) {
         ensureKey()
         val trusted = LanProtocol.persistentTrust(pairing)
         keys.setSecret(PAIRING_SECRET, JSONObject().apply {
@@ -45,12 +45,19 @@ class LanIdentityStore(context: Context) {
         }.toString())
     }
 
-    fun loadPairing(): LanProtocol.PairingCode? = runCatching {
+    override fun loadPairing(): LanProtocol.PairingCode? = runCatching {
         val json = keys.getSecret(PAIRING_SECRET).takeIf { it.isNotBlank() }?.let(::JSONObject) ?: return null
-        LanProtocol.PairingCode(json.getString("instanceId"), json.getString("host"), json.getInt("port"), json.getString("certificateSha256"), "", Long.MAX_VALUE)
+        LanProtocol.PairingCode(json.getString("instanceId"), json.getString("host"), json.getInt("port"), json.getString("certificateSha256"), "", Long.MAX_VALUE).also {
+            require(it.instanceId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+            require(it.host.matches(Regex("[A-Za-z0-9_.:-]{1,253}")))
+            require(it.port in 1..65535 && it.certificateSha256.matches(Regex("[0-9a-fA-F]{64}")))
+        }
     }.getOrNull()
 
     fun clearPairing() = keys.clearSecret(PAIRING_SECRET)
+
+    /** Distinguishes damaged saved trust from a phone that has never paired. */
+    fun hasPairingRecord(): Boolean = keys.getSecret(PAIRING_SECRET).isNotBlank()
 
     private fun ensureKey() {
         val store = keyStore()

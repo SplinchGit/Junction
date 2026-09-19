@@ -18,6 +18,9 @@ function selectPrivateIPv4(bindAddress) {
   for (const interfaces of Object.values(os.networkInterfaces())) for (const entry of interfaces || []) if (entry.family === "IPv4" && !entry.internal && PRIVATE_IPV4(entry.address)) return entry.address;
   throw new Error("No private IPv4 LAN interface is available.");
 }
+function privateIPv4Addresses() {
+  return [...new Set(Object.values(os.networkInterfaces()).flatMap(entries => (entries || []).filter(entry => (entry.family === "IPv4" || entry.family === 4) && !entry.internal && PRIVATE_IPV4(entry.address)).map(entry => entry.address)))].sort();
+}
 function certificateFingerprint(certificate) {
   try {
     const publicKey = new crypto.X509Certificate(certificate).publicKey.export({ type: "spki", format: "der" });
@@ -44,10 +47,12 @@ class LanServer {
   constructor({ identityStore, localData = null, runtime = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
     if (!identityStore) throw new Error("LAN identity store is required.");
     this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
-    this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = bindAddress || selectPrivateIPv4(); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
+    this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = selectPrivateIPv4(bindAddress); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
+    if (!this.instance.instanceId) { this.instance = { ...this.instance, instanceId: this.instanceId }; identityStore.setInstanceMetadata?.(this.instance); }
   }
   connectionState(socket) { return this.connections.get(socket)?.state || "closed"; }
   info() { return { host: this.bindHost, port: this.port, instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint }; }
+  isHealthy() { return !!this.server?.listening && !this.listenerError && !this.discovery.advertiser?.lastError; }
   send(socket, type, requestId, payload = {}) { if (socket.readyState !== 1) return false; socket.send(serializeEnvelope(type, requestId, payload)); return true; }
   reject(socket, message) { try { this.send(socket, "chat.error", "error", { code: "LAN_AUTH_FAILED", message: redactedError(message) }); } catch {} try { socket.close(1008, "LAN authentication failed"); } catch {} }
   accept(socket) {
@@ -174,7 +179,7 @@ class LanServer {
     } catch (error) { if (!controller.signal.aborted) emit("chat.error", { code: error?.name === "AbortError" ? "LAN_CANCELLED" : "LAN_MODEL_FAILED", message: redactedError(error) }); }
     finally { clearInterval(run.authorizationTimer); run.authorizationTimer = null; this.runs.delete(replayKey); state.runs.delete(replayKey); if (events.at(-1)?.type === "chat.complete" || events.at(-1)?.type === "chat.error") { this.replayCache.set(replayKey, events.slice(-1)); while (this.replayCache.size > 256) this.replayCache.delete(this.replayCache.keys().next().value); } }
   }
-  cancel(socket, envelope) { const state = this.connections.get(socket), run = state && this.runs.get(this.runKey(state, envelope.payload.runId)); if (!run || run.socket !== socket) return this.send(socket, "chat.cancel", envelope.requestId, { cancelled: false }); run.controller.abort(); return this.send(socket, "chat.cancel", envelope.requestId, { cancelled: true, runId: envelope.payload.runId }); }
+  cancel(socket, envelope) { const state = this.connections.get(socket), runId = envelope.payload.runId || envelope.payload.requestId || envelope.requestId, run = state && this.runs.get(this.runKey(state, runId)); if (!run || run.socket !== socket) return this.send(socket, "chat.cancel", envelope.requestId, { cancelled: false }); run.controller.abort(); return this.send(socket, "chat.cancel", envelope.requestId, { cancelled: true, runId }); }
   disconnect(socket) { const state = this.connections.get(socket); if (!state) return; clearTimeout(state.authTimer); for (const id of state.runs) { const run = this.runs.get(id); if (run) { clearInterval(run.authorizationTimer); run.authorizationTimer = null; run.controller.abort(); } } this.connections.delete(socket); }
   async start() {
     const host = this.bindHost || selectPrivateIPv4(this.bindAddress), previousPort = this.port, previousMetadata = this.instance; let server = null, wss = null, metadataSet = false, discoveryStarted = false;
@@ -184,7 +189,9 @@ class LanServer {
         if (!request?.socket?.encrypted) socket.destroy?.();
       });
       wss.on("connection", socket => this.accept(socket));
-      await new Promise((resolve, reject) => { server.once("error", reject); server.listen(this.port, host, resolve); });
+      await new Promise((resolve, reject) => { const failed = error => reject(error); server.once("error", failed); server.listen(this.port, host, () => { server.removeListener("error", failed); resolve(); }); });
+      this.listenerError = null;
+      server.on("error", error => { this.listenerError = error.code || "LAN_LISTENER_FAILED"; });
       const port = server.address().port; this.identityStore.setInstanceMetadata?.({ ...this.instance, instanceId: this.instanceId, port }); metadataSet = true; discoveryStarted = true; this.discovery.start({ instanceId: this.instanceId, port, address: host, certificateFingerprint: this.certificateFingerprint });
       this.server = server; this.wss = wss; this.port = port; this.heartbeat = setInterval(() => { for (const [socket, state] of this.connections) { if (!state.alive) { try { socket.terminate?.(); } catch {} this.disconnect(socket); } else { state.alive = false; socket.ping?.(); } } }, this.heartbeatMs);
       return { host, port, instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint };
@@ -196,7 +203,17 @@ class LanServer {
       this.server = null; this.wss = null; this.port = previousPort; throw error;
     }
   }
-  async stop() { clearInterval(this.heartbeat); for (const socket of this.connections.keys()) { const state = this.connections.get(socket); for (const id of state.runs) { const run = this.runs.get(id); if (run) { clearInterval(run.authorizationTimer); run.authorizationTimer = null; run.controller.abort(); } } try { socket.close(1001, "LAN server shutting down"); } catch {} } this.discovery.stop(); await new Promise(resolve => this.wss?.close?.(() => resolve()) ?? resolve()); if (this.server) await new Promise(resolve => this.server.close(() => resolve())); this.connections.clear(); this.runs.clear(); }
+  async stop() {
+    clearInterval(this.heartbeat); this.heartbeat = null;
+    for (const socket of this.connections.keys()) {
+      this.disconnect(socket);
+      try { socket.terminate ? socket.terminate() : socket.close(1001, "LAN server shutting down"); } catch {}
+    }
+    this.discovery.stop();
+    await new Promise(resolve => this.wss?.close?.(() => resolve()) ?? resolve());
+    if (this.server) { this.server.closeAllConnections?.(); await new Promise(resolve => this.server.close(() => resolve())); }
+    this.server = null; this.wss = null; this.connections.clear(); this.runs.clear();
+  }
 }
 
-module.exports = { LanServer, authMessage, certificateFingerprint, selectPrivateIPv4, createTlsIdentity };
+module.exports = { LanServer, authMessage, certificateFingerprint, selectPrivateIPv4, privateIPv4Addresses, createTlsIdentity };

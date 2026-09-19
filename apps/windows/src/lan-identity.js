@@ -20,11 +20,24 @@ class LanIdentityStore {
     const target = path.resolve(this.file(name)).toLowerCase();
     const tokenFile = path.resolve(this.file("lan-tokens.bin")).toLowerCase();
     if (target === tokenFile) this.validateOneTimeTokens(value);
-    if (!this.safeStorage?.isEncryptionAvailable()) throw new Error("Windows credential encryption is unavailable.");
+    if (!this.safeStorage?.isEncryptionAvailable()) throw Object.assign(new Error("Windows credential encryption is unavailable."), { code: "LAN_ENCRYPTION_UNAVAILABLE" });
     fs.mkdirSync(this.directory, { recursive: true }); atomic(this.file(name), this.safeStorage.encryptString(JSON.stringify(value)).toString("base64"));
   }
   get(name, fallback = null) {
-    try { if (!this.safeStorage?.isEncryptionAvailable()) return fallback; return JSON.parse(this.safeStorage.decryptString(Buffer.from(fs.readFileSync(this.file(name), "utf8"), "base64"))); } catch { return fallback; }
+    let encrypted;
+    try { encrypted = fs.readFileSync(this.file(name), "utf8"); }
+    catch (error) {
+      if (error.code === "ENOENT") return fallback;
+      throw Object.assign(new Error("Stored LAN identity could not be read. Restore access to the existing identity; it has not been replaced."), { code: "LAN_IDENTITY_UNREADABLE" });
+    }
+    if (!this.safeStorage?.isEncryptionAvailable()) throw Object.assign(new Error("Windows credential encryption is unavailable. The stored LAN identity has not been replaced."), { code: "LAN_ENCRYPTION_UNAVAILABLE" });
+    try {
+      const value = JSON.parse(this.safeStorage.decryptString(Buffer.from(encrypted, "base64")));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid identity record");
+      if (name === "lan-tls.bin" && (!value.key || !value.certificate)) throw new Error("Invalid TLS identity");
+      if (name === "lan-instance.bin" && !value.instanceId) throw new Error("Invalid instance identity");
+      return value;
+    } catch { throw Object.assign(new Error("Stored LAN identity could not be decrypted or is corrupt. Restore the existing identity; it has not been replaced."), { code: "LAN_IDENTITY_UNREADABLE" }); }
   }
   setTlsIdentity(key, certificate) { if (!key || !certificate) throw new Error("TLS identity is required."); this.put("lan-tls.bin", { key, certificate }); }
   getTlsIdentity() { return this.get("lan-tls.bin"); }

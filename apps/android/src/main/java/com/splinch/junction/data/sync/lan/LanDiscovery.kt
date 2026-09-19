@@ -11,24 +11,28 @@ data class LanEndpoint(val host: String, val port: Int, val instanceId: String =
 class LanDiscovery(context: Context) {
     private val nsd = context.applicationContext.getSystemService(NsdManager::class.java)
     private var listener: NsdManager.DiscoveryListener? = null
+    private var generation = 0L
 
     fun discover(onEndpoint: (LanEndpoint) -> Unit, onError: (Throwable) -> Unit = {}) {
         stop()
+        val session = generation
         val discovery = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) { Log.i(TAG, "LAN discovery started") }
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                if (session != generation) return
                 Log.i(TAG, "LAN service found: ${serviceInfo.serviceName}")
                 if (serviceInfo.serviceType.trimEnd('.').lowercase() != LanProtocol.SERVICE_TYPE.trimEnd('.').lowercase()) return
                 val resolve = object : NsdManager.ResolveListener {
                     override fun onServiceResolved(info: NsdServiceInfo) {
+                        if (session != generation) return
                         val host = info.host?.hostAddress ?: return
                         Log.i(TAG, "LAN service resolved at $host:${info.port}")
                         onEndpoint(LanEndpoint(host, info.port, info.attributes.text("instanceId"), info.attributes.text(CERTIFICATE_FINGERPRINT_ATTRIBUTE)))
                     }
-                    override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) { Log.w(TAG, "LAN service resolve failed: $errorCode"); onError(IllegalStateException("LAN service resolve failed: $errorCode")) }
+                    override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) { Log.w(TAG, "LAN service resolve failed: $errorCode") }
                 }
                 runCatching { nsd.resolveService(serviceInfo, resolve) }
-                    .onFailure(onError)
+                    .onFailure { Log.w(TAG, "LAN resolve failed: ${it.javaClass.simpleName}") }
             }
             override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
             override fun onDiscoveryStopped(serviceType: String) = Unit
@@ -44,7 +48,7 @@ class LanDiscovery(context: Context) {
         return LanEndpoint(host.trim(), port)
     }
 
-    fun stop() { listener?.let { runCatching { nsd.stopServiceDiscovery(it) } }; listener = null }
+    fun stop() { generation++; val previous = listener; listener = null; previous?.let { runCatching { nsd.stopServiceDiscovery(it) } } }
 
     private fun Map<String, ByteArray>.text(key: String): String = get(key)?.toString(StandardCharsets.UTF_8).orEmpty()
 

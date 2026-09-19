@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "electron .",
-    "test": "node test/run.js && node test/lan-protocol.test.js && node test/lan-server.test.js && node test/local-agent-runtime.test.js && node test/mobile-relay.test.js",
+    "test": "node test/run.js && node test/lan-protocol.test.js && node test/lan-server.test.js && node test/local-agent-runtime.test.js && node test/mobile-relay.test.js && node test/lan-reliability.test.js && node test/model-retirement.test.js && node test/message-format.test.js && node test/assistant-orchestration.test.js",
     "pack": "electron-builder --dir --win",
     "pack:workspace": "node scripts/pack-workspace.js",
     "desktop": "node scripts/create-desktop-shortcut.js",
@@ -56,3 +56,4 @@
     }
   }
 }
+

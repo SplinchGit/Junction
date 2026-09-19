@@ -50,9 +50,29 @@ function mergeResearch(query, results) {
 }
 
 function citationAudit(answer, research) {
-  const valid = new Set((research.sources || []).flatMap(source => source.passages.map(passage => passage.id)));
+  const valid = new Set((research.sources || []).flatMap(source => (source.passages || []).map(passage => passage.id)));
   const used = [...String(answer || "").matchAll(/\[(S\d+\.p\d+)\]/g)].map(match => match[1]);
   return { citations: [...new Set(used)], invalid: [...new Set(used.filter(id => !valid.has(id)))], hasCitations: used.length > 0 };
+}
+
+function renderCitations(answer, research, limit = 3) {
+  const audit = citationAudit(answer, research || {sources:[]});
+  if (!audit.hasCitations || audit.invalid.length) return "I couldn't verify an answer from the retrieved evidence. Please try a more specific question.";
+  const ledger = new Map();
+  for (const source of research?.sources || []) {
+    let url; try { url = new URL(source.url); } catch { continue; }
+    if (!['https:', 'http:'].includes(url.protocol)) continue;
+    for (const passage of source.passages || []) ledger.set(passage.id, source);
+  }
+  if (audit.citations.some(id => !ledger.has(id))) return "I couldn't verify an answer from the retrieved evidence.";
+  const used = new Set();
+  const cleanAnswer = String(answer || '').replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/gi, '$1').replace(/https?:\/\/[^\s<>]+/gi, '');
+  return cleanAnswer.replace(/\[(S\d+\.p\d+)\]/g, (_, id) => {
+    const source = ledger.get(id); if (!source || (!used.has(source.url) && used.size >= limit)) return '';
+    used.add(source.url);
+    const label = String(source.title || new URL(source.url).hostname).replace(/[\[\]\r\n]/g, '').slice(0, 100);
+    return `[${label}](${source.url.replace(/\(/g,'%28').replace(/\)/g,'%29')})`;
+  }).replace(/ +([.,;!?])/g,'$1').trim();
 }
 
 class ResearchCoordinator {
@@ -93,4 +113,4 @@ class ResearchCoordinator {
   }
 }
 
-module.exports = { ResearchCoordinator, citationAudit, cleanQueries, mergeResearch };
+module.exports = { ResearchCoordinator, renderCitations, citationAudit, cleanQueries, mergeResearch };

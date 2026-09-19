@@ -43,6 +43,45 @@ async function authenticatedServer(runtime = {}) {
   return { fixture, server, socket };
 }
 
+test("Android requestId cancellation aborts only its authenticated connection's run", async () => {
+  let release, signal;
+  const { server, socket } = await authenticatedServer({ run: async options => { signal = options.signal; await new Promise(resolve => { release = resolve; }); return { content: "unused" }; } });
+  try {
+    socket.receive({ protocolVersion: 1, type: "chat.send", requestId: "android-run", payload: { content: "hello" } });
+    await new Promise(resolve => setImmediate(resolve));
+    socket.receive({ protocolVersion: 1, type: "chat.cancel", requestId: "cancel-command", payload: { requestId: "android-run" } });
+    assert.equal(socket.sent.at(-1).payload.cancelled, true);
+    assert.equal(signal.aborted, true);
+  } finally { release?.(); socket.close(); await server.stop(); }
+});
+
+test("rejects an explicit public or wildcard listener address", () => {
+  for (const bindAddress of ["0.0.0.0", "8.8.8.8", "127.0.0.1"]) {
+    assert.throws(() => new LanServer({ identityStore: identityFixture().store, bindAddress }), /private IPv4/);
+  }
+});
+
+test("interface advertisers use distinct service names for the same trusted instance", () => {
+  const { BonjourAdvertiser } = require("../src/lan-discovery");
+  const configs = [];
+  const advertiser = new BonjourAdvertiser({ bonjourFactory: () => ({ publish: config => { configs.push(config); return { records: () => [] }; } }) });
+  advertiser.publish({ instanceId: "pc-1", address: "192.168.1.2", port: 43111, txt: { instanceId: "pc-1" } });
+  advertiser.publish({ instanceId: "pc-1", address: "10.0.0.2", port: 43111, txt: { instanceId: "pc-1" } });
+  assert.notEqual(configs[0].name, configs[1].name);
+  assert.equal(configs[0].txt.instanceId, configs[1].txt.instanceId);
+});
+
+test("discovery teardown destroys its socket even when sending goodbye fails", () => {
+  const { BonjourAdvertiser } = require("../src/lan-discovery");
+  let destroyed = 0;
+  const advertiser = new BonjourAdvertiser();
+  advertiser.bonjour = { destroy() { destroyed++; } };
+  advertiser.service = { stop() { throw new Error("adapter removed"); } };
+  assert.doesNotThrow(() => advertiser.stop());
+  assert.equal(destroyed, 1);
+  advertiser.stop(); assert.equal(destroyed, 1);
+});
+
 test("authenticates a paired Ed25519 client with a pinned certificate fingerprint", async () => {
   const { server, socket } = await authenticatedServer();
   assert.equal(socket.sent.at(-1).type, "authenticated");
@@ -140,7 +179,7 @@ test("rolls back listener, websocket, discovery, and metadata when startup setup
 });
 
 test("publishes a LAN server only after startup completes", () => {
-  assert.match(mainSource, /const candidateLanServer = new LanServer/);
+  assert.match(mainSource, /const candidateLanServer = new LanRelayLifecycle/);
   assert.match(mainSource, /await candidateLanServer\.start\(\);\s*lanServer = candidateLanServer/);
   assert.doesNotMatch(mainSource, /catch \(error\) \{ recordStartupIssue\("LAN server unavailable", error\); lanServer = null; \}/);
 });

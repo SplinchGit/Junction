@@ -8,7 +8,7 @@ app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'junction-websearc
 const directory = path.join(__dirname, '../test-results');
 fs.mkdirSync(directory, {recursive:true});
 const output = path.join(directory, 'junction-websearch-2026.json');
-const models = process.argv.slice(2).length ? process.argv.slice(2) : ['qwen3:1.7b','qwen3.5:2b','qwen3.5:4b','lfm2.5:2.6b'];
+const models = process.argv.slice(2).length ? process.argv.slice(2) : ['qwen3:1.7b','qwen3.5:2b','lfm2.5:2.6b'];
 const goal = 'Who won the 2026 football World Cup?';
 const report = {generatedAt:new Date().toISOString(),goal,reference:{winner:'Spain',url:'https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/final-tournament-standings',note:'Independent test assertion; never supplied to the model.'},results:[]};
 let current, blockSearch = false;

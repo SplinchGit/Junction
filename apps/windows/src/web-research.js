@@ -11,7 +11,22 @@ const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_SOURCE_CHARS = 24_000;
 const MAX_EVIDENCE_CHARS = 60_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+const RETRY_DELAYS_MS = [500, 1_500, 3_000];
 const ALLOWED_CONTENT_TYPES = ["text/html", "text/plain", "application/xhtml+xml"];
+
+async function fetchWithRetry(fetchImpl, url, init, retries = RETRY_DELAYS_MS.length) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fetchImpl(url, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt] || 1_000));
+    }
+  }
+  throw lastError || new Error("Search request failed.");
+}
 
 function cleanText(value) {
   return decodeEntities(String(value || "")
@@ -177,7 +192,7 @@ async function pinnedHttpsFetch(url, lookup = dns.lookup) {
 async function safeFetchText(url, { fetchImpl = fetch, lookup = dns.lookup } = {}) {
   let current = await assertPublicHttps(url, lookup);
   const pinned = fetchImpl === fetch ? await pinnedHttpsFetch(current, lookup) : null;
-  const response = pinned || await fetchImpl(current, {
+  const response = pinned || await fetchWithRetry(fetchImpl, current, {
     redirect: "manual",
     headers: { accept: "text/html,text/plain;q=0.9", "user-agent": "JunctionResearch/1.0 (+local owner request)" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)

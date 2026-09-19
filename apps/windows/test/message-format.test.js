@@ -1,0 +1,10 @@
+"use strict";
+const assert = require("node:assert/strict");
+const { messageParts } = require("../renderer/message-format");
+assert.deepEqual(messageParts("Fact [GOV.UK](https://www.gov.uk/example)."), [{text:"Fact "},{text:"GOV.UK",url:"https://www.gov.uk/example"},{text:"."}]);
+assert.ok(messageParts("[bad](javascript:alert(1))").every(p => !p.url));
+assert.ok(messageParts("`[code](https://example.com)`").every(p => !p.url));
+assert.ok(messageParts("```js\n[x](https://example.com)\n```").every(p => !p.url));
+assert.ok(messageParts("[secret](https://user:pass@example.com)").every(p => !p.url));
+assert.deepEqual(messageParts("<script>hello</script>"), [{text:"<script>hello</script>"}]);
+console.log("Safe inline citation rendering passed");

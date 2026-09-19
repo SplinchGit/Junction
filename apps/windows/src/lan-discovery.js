@@ -39,13 +39,25 @@ class MulticastDnsAdvertiser {
 class BonjourAdvertiser {
   constructor({ bonjourFactory = (options, onError) => new Bonjour(options, onError) } = {}) { this.bonjourFactory = bonjourFactory; this.bonjour = null; this.service = null; this.lastError = null; }
   publish(record) {
+    this.lastError = null;
     this.bonjour = this.bonjourFactory({ interface: record.address }, error => { this.lastError = error; });
-    this.service = this.bonjour.publish({ name: record.instanceId, type: "junction", protocol: "tcp", port: record.port, host: `${record.instanceId}.local`, txt: record.txt, disableIPv6: true });
+    // Two adapters on the same LAN must not suppress each other's service
+    // through Bonjour's duplicate-name probe. Trust remains the TXT instanceId.
+    const serviceName = `${record.instanceId}-${String(record.address).replace(/\./g, "-")}`;
+    this.service = this.bonjour.publish({ name: serviceName, type: "junction", protocol: "tcp", port: record.port, host: `${record.instanceId}.local`, txt: record.txt, disableIPv6: true });
     const generateRecords = this.service.records.bind(this.service);
     this.service.records = () => generateRecords().filter(item => item.type !== "A" || item.data === record.address);
     return this;
   }
-  stop() { const bonjour = this.bonjour, service = this.service; this.service = null; this.bonjour = null; if (service?.stop) service.stop(() => bonjour?.destroy()); else bonjour?.destroy(); }
+  stop() {
+    const bonjour = this.bonjour, service = this.service; this.service = null; this.bonjour = null;
+    if (!bonjour) return;
+    let destroyed = false, timer;
+    const destroy = () => { if (destroyed) return; destroyed = true; clearTimeout(timer); try { bonjour.destroy(); } catch {} };
+    // A removed adapter may never acknowledge its goodbye datagram.
+    timer = setTimeout(destroy, 1000); timer.unref?.();
+    try { if (service?.stop) service.stop(destroy); else destroy(); } catch { destroy(); }
+  }
 }
 
 class LanDiscovery {
