@@ -1,12 +1,15 @@
 "use strict";
 
-const { isRetiredLocalModel } = require("./model-catalog");
 const { BASELINE, canonicalHistory, contextHistory, relevantMemory } = require("./assistant-context");
 const { ROUTING_SCHEMA, normalizeDecision, decisionAllowsDelegation, routingPrompt } = require("./intent-router");
 const { citationAudit, mergeResearch, renderCitations } = require("./research-coordinator");
 const { LocalAgentToolRegistry, compactResearchContext } = require("./local-agent-tools");
 
-const MAX_ITERATIONS = 7, MAX_TOOL_CALLS = 6, MAX_SEARCHES = 3, MAX_CODEX_DELEGATIONS = 1, MAX_DUPLICATE_CALLS = 1;
+// These are work budgets, not response-length limits. A normal research turn
+// can spend one turn routing, one searching, several turns using tools, and a
+// final citation/provenance correction before it can answer.
+const MAX_ITERATIONS = 12, MAX_TOOL_CALLS = 10, MAX_SEARCHES = 5, MAX_CODEX_DELEGATIONS = 1, MAX_DUPLICATE_CALLS = 1;
+const FINAL_SYNTHESIS_ITERATIONS = 2;
 const AGENT_TIMEOUT_MS = 6 * 60_000, OLLAMA_CALL_TIMEOUT_MS = 180_000, MAX_TOOL_RESULT_CHARS = 8_000;
 // Keep inference within the CPU host context budget.
 const DEFAULT_CONTEXT_TOKENS = 4_096;
@@ -49,7 +52,13 @@ class LocalAgentRuntime {
   constructor({ researchCoordinator, toolRegistry = null, createCodeDelegation = null, auditPath = "", fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", limits = {} } = {}) {
     this.fetch = fetchImpl; this.ollamaUrl = ollamaUrl.replace(/\/$/, "");
     this.tools = toolRegistry || new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
-    this.limits = { iterations: limits.iterations || MAX_ITERATIONS, toolCalls: limits.toolCalls || MAX_TOOL_CALLS, searches: limits.searches || MAX_SEARCHES, delegations: limits.delegations || MAX_CODEX_DELEGATIONS, timeoutMs: limits.timeoutMs || AGENT_TIMEOUT_MS };
+    this.limits = {
+      iterations: Number.isFinite(limits.iterations) && limits.iterations > 0 ? Math.floor(limits.iterations) : MAX_ITERATIONS,
+      toolCalls: Number.isFinite(limits.toolCalls) && limits.toolCalls > 0 ? Math.floor(limits.toolCalls) : MAX_TOOL_CALLS,
+      searches: Number.isFinite(limits.searches) && limits.searches > 0 ? Math.floor(limits.searches) : MAX_SEARCHES,
+      delegations: Number.isFinite(limits.delegations) && limits.delegations > 0 ? Math.floor(limits.delegations) : MAX_CODEX_DELEGATIONS,
+      timeoutMs: Number.isFinite(limits.timeoutMs) && limits.timeoutMs > 0 ? limits.timeoutMs : AGENT_TIMEOUT_MS
+    };
   }
   async chat(model, messages, tools, signal, onText = null, format = null) {
     const timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -104,7 +113,6 @@ class LocalAgentRuntime {
     }
   }
   async runNow({ goal, model, history = [], memories = [], context = null, signal = null, isCancelled = null, runId = null, forceSearch = false, onProgress = null }) {
-    if (isRetiredLocalModel(model)) throw new Error("This local model is no longer supported. Choose a supported model.");
     const ownerGoal = String(goal || "").trim().slice(0, 20_000);
     if (!ownerGoal) throw new Error("Local Agent request has no owner goal.");
     const deadlineSignal = AbortSignal.timeout(this.limits.timeoutMs);
@@ -216,7 +224,25 @@ class LocalAgentRuntime {
         messages.push({ role: "tool", tool_name: call.name, content: String(content).slice(0, MAX_TOOL_RESULT_CHARS) });
       }
     }
-    this.tools.audit("model_run_completed", "local_model", "failure", "iteration limit reached", { runId, model, mode: "agent", toolsAvailable: definitions.length > 0, iterations: this.limits.iterations, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started });
+    // Give the model a short, tool-free chance to synthesize after it has used
+    // its work budget. This prevents a repetitive tool call from turning a
+    // useful evidence set into a user-visible "iteration limit" error.
+    if (ledgers.length && FINAL_SYNTHESIS_ITERATIONS > 0) {
+      const synthesisMessages = messages.concat({
+        role: "user",
+        content: "Synthesize the best answer now from the evidence already returned. Do not call tools. Be concise, state uncertainty if needed, and cite only the exact passage IDs present in the evidence."
+      });
+      for (let attempt = 0; attempt < FINAL_SYNTHESIS_ITERATIONS; attempt++) {
+        const payload = await this.chat(model, synthesisMessages, [], runSignal, null);
+        inputTokens += Number(payload.prompt_eval_count || 0); outputTokens += Number(payload.eval_count || 0);
+        const answer = String(payload.message?.content || "").trim();
+        if (!answer) continue;
+        const combined = mergeResearch(ownerGoal, ledgers), visibleEvidence = compactResearchContext(combined), audit = citationAudit(answer, visibleEvidence);
+        if (!audit.hasCitations || audit.invalid.length) continue;
+        return { content: renderCitations(answer, visibleEvidence), intent: decision.intent, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: this.limits.iterations + attempt + 1, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started };
+      }
+    }
+    this.tools.audit("model_run_completed", "local_model", "failure", "work budget exhausted before a supported final answer", { runId, model, mode: "agent", toolsAvailable: definitions.length > 0, iterations: this.limits.iterations, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started });
     throw new Error(`Local agent reached its ${this.limits.iterations}-iteration limit without a final answer. Try a narrower request.`);
   }
 }

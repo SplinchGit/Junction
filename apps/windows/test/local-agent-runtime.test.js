@@ -105,6 +105,36 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   await failed.runtime.run({ goal: "London temperature", model: "tiny" });
   assert.match(failed.requests[1].messages.at(-1).content, /deterministic tool failure/);
 
+  // A bounded model can repeat a useful tool call until its work budget is
+  // exhausted. Once evidence exists, Junction must give it a tool-free
+  // synthesis turn instead of surfacing the iteration-limit error.
+  const budgetRequests = [], budgetAudits = [];
+  const budgetTools = {
+    definitions: () => [{ type: "function", function: { name: "web_search", description: "test", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } }],
+    audit: (...args) => budgetAudits.push(args),
+    execute: async (_name, _args, context) => {
+      context.ledgers.push({ sources: [{ id: "S1", title: "Example", url: "https://example.com/london", passages: [{ id: "S1.p1", text: "London is in England." }] }] });
+      return { content: JSON.stringify({ ok: true, evidence: "[S1.p1] London is in England." }) };
+    }
+  };
+  const budgetRuntime = new LocalAgentRuntime({
+    toolRegistry: budgetTools,
+    limits: { iterations: 2, toolCalls: 4, searches: 3, timeoutMs: 10_000 },
+    fetchImpl: async (_url, options) => {
+      if (_url.endsWith("/api/ps")) return { ok: true, json: async () => ({ models: [] }) };
+      const body = JSON.parse(options.body);
+      if (body.messages[0].content.startsWith("Classify the owner")) return response({ role: "assistant", content: JSON.stringify({ intent: "question", action: "answer", authorization: "none" }) });
+      budgetRequests.push(body);
+      if (!body.tools?.length) return response({ role: "assistant", content: "London is in England. [S1.p1]" });
+      return response(call("London temperature"));
+    }
+  });
+  const budgetResult = await budgetRuntime.run({ goal: "Where is London?", model: "tiny" });
+  assert.equal(budgetResult.toolsExecuted, 1);
+  assert.equal(budgetResult.iterations, 3);
+  assert.match(budgetResult.content, /London is in England/);
+  assert.ok(budgetAudits.some(entry => entry[0] === "agent_iteration"));
+
   const limited = harness([call("one"), call("two")]);
   limited.runtime.limits.iterations = 2;
   await assert.rejects(() => limited.runtime.run({ goal: "one two", model: "tiny" }), /iteration limit/);
