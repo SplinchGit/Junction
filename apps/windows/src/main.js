@@ -28,12 +28,20 @@ const { WorldHostRelay } = require("./world-host-relay");
 const { Foreman } = require("./foreman");
 const { ForemanExecutor } = require("./foreman-executor");
 const { ForemanApi } = require("./foreman-api");
+const { resolveOwnerWork } = require("./owner-work");
 let foreman, foremanApi;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
+async function handleOwnerWorkInstruction(content,conversationId,requestId){
+  const ownerWork=resolveOwnerWork({content,conversationId,projects:foreman.list(),roots:[app.getPath('documents')]});if(!ownerWork)return null;
+  if(ownerWork.action==='stop'){const project=foreman.get(ownerWork.projectId);await foreman.control(project.id,'stop',project.revision,`chat-stop-${requestId||crypto.randomUUID()}`);return `Stopped work on ${project.name}. Its queue, checkpoints, test results and handoff are preserved.`;}
+  if(ownerWork.action==='needs_scope')return 'Tell me the local file or folder path for this work once. I will keep that scope with this conversation and start immediately.';
+  const task=ownerWork.task.slice(0,240),project=await foreman.submit(ownerWork.projectId?{projectId:ownerWork.projectId,task,objective:content,conversationId}:{name:ownerWork.name,repoPath:ownerWork.scopePath,task,objective:content,conversationId});
+  return `Working on ${project.name} at ${project.repoPath}. I’ll keep coordinating, implementing and testing while Junction is open. Use Stop in Work Activity or tell me to stop at any time.`;
+}
 function hydrateFirebaseEnvironment() {
   if (process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID) return;
   // Deployment configuration is public Firebase client metadata, kept outside
@@ -146,13 +154,14 @@ async function createWindowImpl() {
   researchClient = new WebResearchClient();
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
-  const createCodeDelegation = async instruction => delegation.create({ instruction, projects: [{ name: "Junction", repoPath: junctionRepository }] });
+  const createCodeDelegation = async instruction => {const response=await handleOwnerWorkInstruction(instruction,null,crypto.randomUUID());if(!response||response.startsWith('Tell me'))throw new Error('Name the local file, folder or repository in the coding request.');return {id:crypto.randomUUID(),status:'running',response};};
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
   localAgent = new LocalAgentRuntime({ toolRegistry });
   if (process.platform === "win32") {
     try {
       const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
         worldAuditStore, worldControlStore, worldChatStore, foremanApi,
+        onOwnerWork: ({content,conversationId,requestId}) => handleOwnerWorkInstruction(content,conversationId,requestId),
         onWorldControl: () => worldHostRelay?.pollNow(), onWorldMessage: () => worldHostRelay?.pollNow(),
         getWorldStatus: async () => {
           const relay = worldHostRelay?.getStatus?.() || { state: "OFFLINE" };
@@ -328,6 +337,11 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   const content=String(request.content||"").trim(); if(!content) throw new Error("Message cannot be blank."); if(content.length>20000) throw new Error("Message is too long.");
   let conversation=localData.conversation(request.conversationId); if(!conversation) conversation=localData.createConversation();
   localData.addMessage(conversation.id,"user",content,"OWNER");scheduleSharedSync(); conversation=localData.conversation(conversation.id);
+  const response=await handleOwnerWorkInstruction(content,conversation.id,request.runId);
+  if(response){
+    const message=localData.addMessage(conversation.id,'assistant',response,'JUNCTION');appendAudit({event:'owner_work_instruction',capability:'persistent_work',decision:'executed',outcome:'success',runId:String(request.runId||''),reason:response.slice(0,500)});scheduleSharedSync();
+    return {conversationId:conversation.id,message,model:'Junction foreman'};
+  }
   const config=localData.provider();
   const runId=String(request.runId||crypto.randomUUID()).slice(0,100),controller=new AbortController();
   const nativeToolsAvailable=config.id==="local";
@@ -345,9 +359,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     if(needsResearch && !nativeToolsAvailable){appendAudit({event:"research_requested",capability:"junction_search",decision:"requested",outcome:"pending",runId,model:config.model||"Default model",mode,reason:"Owner enabled Research; this was not selected by the model"});research=await researchCoordinator.run(validateSearchEgress(intent?.query || content.slice(0,240), conversation.messages.filter(item=>item.role === "user").slice(-12).map(item=>item.content).join(" ")));appendAudit({event:"research_result",capability:"junction_search",decision:"executed",outcome:"success",runId,model:config.model||"Default model",mode,reason:`${research.sources?.length||0} source(s) supplied to the model`})}
     const researchInstructions = research ? researchContext(research) : null;
     if (intent && decisionAllowsDelegation(intent)) {
-      const project = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
-      await delegation.create({instruction:[...canonicalHistory(conversation.messages,content).slice(-4).map(item=>`${item.role}: ${item.content}`), `Owner request: ${content}`].join("\n"),projects:[{name:"Junction",repoPath:project}]});
-      reply = {content:"I've created a coding draft for review in Projects. Approval is required before work starts.",model:config.model};
+      reply = {content:"Name the local file, folder or repository for this work. Once the scope is clear, the instruction itself starts the persistent work.",model:config.model};
     } else reply=nativeToolsAvailable
       ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
       : config.id==="codex"

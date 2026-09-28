@@ -45,3 +45,12 @@ test('backup failure cannot prevent Pause from aborting active work',async()=>{
  now+=61000;fs.mkdirSync(path.join(dir,'foreman.backup.tmp'));await f.control(p.id,'pause',f.get(p.id).revision,'pause');await f.idle();
  assert.equal(aborted,true);assert.equal(f.get(p.id).status,'PAUSED');f.close();
 });
+test('an owner chat instruction starts new work immediately and later instructions queue in context',async()=>{
+ const dir=fixture();let finish;const e={...executor,run:()=>new Promise(resolve=>finish=resolve)};const f=new Foreman(dir,{executor:e});
+ const p=await f.submit({name:'Civlets',repoPath:'demo',objective:'Fix Civlets',conversationId:'chat',task:'Fix the build',acceptance:'The requested change is verified'});
+ assert.equal(f.get(p.id).status,'RUNNING');assert.ok(f.enabled.has(p.id));
+ await f.submit({projectId:p.id,task:'Then improve the scene',acceptance:'The follow-up is verified'});
+ assert.equal(f.get(p.id).tasks.length,2);
+ await f.control(p.id,'stop',f.get(p.id).revision,'stop-chat');finish({headSha:'late',tests:[{exitCode:0}],summary:'late'});await f.idle();
+ assert.equal(f.get(p.id).status,'STOPPED');f.close();
+});

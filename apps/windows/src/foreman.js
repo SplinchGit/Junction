@@ -45,9 +45,23 @@ class Foreman {
     if(!Array.isArray(input.tasks)||!input.tasks.length||input.tasks.length>50)throw new Error('Provide 1–50 concrete tasks');
     const tasks=input.tasks.map(t=>({id:crypto.randomUUID(),title:text(t.title,240,'task'),kind:t.kind==='verify'?'verify':'codex',acceptance:text(t.acceptance,4000,'acceptance criteria'),status:'QUEUED',attempts:[],files:Array.isArray(t.files)?t.files.slice(0,30):[]}));
     const inspected=await this.executor.inspect(input);
+    if(inspected.scopeFile)for(const task of tasks)if(!task.files.length)task.files=[inspected.scopeFile];
     if(this.closed)throw new Error('Junction is quitting');
-    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,verification:input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Start explicitly',retryAt:null,createdAt:this.now()};
+    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
+  }
+  async submit(input) {
+    if(this.closed)throw new Error('Junction is quitting');
+    if(input.projectId){
+      const p=this.get(input.projectId);const title=text(input.task,240,'task'),acceptance=text(input.acceptance||'Complete the owner request and pass the detected project checks',4000,'acceptance criteria');
+      if(p.tasks.length>=50)throw new Error('Work queue limit reached');
+      const queued={id:crypto.randomUUID(),title,kind:'codex',acceptance,status:'QUEUED',attempts:[],files:[]};
+      if(p.status==='DRAFT'&&p.tasks.every(task=>!task.attempts.length)){p.tasks=[queued];p.roadmap=[title];p.objective=input.objective||title;p.conversationId=input.conversationId||p.conversationId;}else{p.tasks.push(queued);p.roadmap.push(title);}p.nextAction='Execute the next owner-requested task';
+      if(!this.enabled.has(p.id)&&!this.jobs.has(p.id)){p.status='RUNNING';this.enabled.add(p.id);}
+      this.save(p,'OWNER_INSTRUCTION',title);this.kick(p.id);return this.get(p.id);
+    }
+    const created=await this.create({...input,objective:input.objective||input.task,tasks:[{title:input.task,kind:'codex',acceptance:input.acceptance||'Complete the owner request and pass the detected project checks'}]});
+    return this.control(created.id,'start',created.revision,`owner-${crypto.randomUUID()}`);
   }
   async control(id,action,revision,requestId) {
     if(this.operations.has(id))throw new Error('Project review/apply is finishing; retry after it completes');
@@ -92,8 +106,9 @@ class Foreman {
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);
       if(!Array.isArray(result.tests)||!result.tests.length||result.tests.some(t=>t.exitCode!==0))throw new Error('Verification failed; candidate retained for inspection');
-      t.status='COMPLETED';Object.assign(t.attempts.at(-1),result,{status:'COMPLETED',finishedAt:this.now()});
-      p.verifiedSha=result.headSha;p.handoff=result.summary||task.title;p.nextAction='Next approved task';this.save(p,'VERIFIED',p.handoff);
+      const promoted=await this.executor.promoteVerified?.(p,result);
+      t.status='COMPLETED';Object.assign(t.attempts.at(-1),result,{status:'COMPLETED',finishedAt:this.now(),promoted});
+      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction='Next owner instruction';this.save(p,'VERIFIED',p.handoff);
     }catch(error){
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});

@@ -1,6 +1,6 @@
 "use strict";
 const crypto=require('node:crypto');
-function summary(p){return {id:p.id,name:p.name,objective:p.objective.slice(0,1200),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,worktree:p.worktree||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
+function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',objective:p.objective.slice(0,1200),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman){this.foreman=foreman;}
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){

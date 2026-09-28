@@ -9,6 +9,13 @@ function validateVerification(value){
  if(!Array.isArray(value)||!value.length||value.length>12)throw new Error('Provide 1–12 owner-approved verification commands');
  return value.map(v=>{if(!relative(v.cwd||'.'))throw new Error('Invalid verification directory');if(!Array.isArray(v.command)||!v.command.length||v.command.length>30||v.command.some(a=>typeof a!=='string'||a.length>2000||a.includes('\0')))throw new Error('Invalid verification argv');const protectedPaths=Array.isArray(v.protectedPaths)?v.protectedPaths:[];if(protectedPaths.length>100||protectedPaths.some(item=>!relative(item)))throw new Error('Invalid protected verification path');return {command:v.command,cwd:v.cwd||'.',timeoutMs:Math.min(300000,Math.max(1000,Number(v.timeoutMs)||120000)),protectedPaths};});
 }
+function walkNames(root){const names=[];let total=0;function visit(folder){for(const entry of fs.readdirSync(folder,{withFileTypes:true})){if(['.git','.codex','node_modules','build','dist'].includes(entry.name))continue;const full=path.join(folder,entry.name),name=path.relative(root,full).replaceAll('\\','/');if(!relative(name)||forbidden.test(name))continue;if(entry.isSymbolicLink())throw new Error('Project contains an unsupported symlink');if(entry.isDirectory())visit(full);else if(entry.isFile()){const size=fs.statSync(full).size;total+=size;if(size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');names.push(name);}}}visit(root);return names.sort();}
+function detectedVerification(root){
+ if(fs.existsSync(path.join(root,'package.json'))){try{const p=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));if(p.scripts?.test)return [{command:[process.platform==='win32'?'npm.cmd':'npm','test'],cwd:'.',protectedPaths:['test','tests','__tests__','package.json','package-lock.json']}];}catch{}}
+ if(fs.existsSync(path.join(root,'project.godot')))return [{command:['godot','--headless','--path','.','--editor','--quit'],cwd:'.',protectedPaths:['tests','project.godot']}];
+ if(fs.readdirSync(root).some(name=>name.endsWith('.sln')))return [{command:['dotnet','test','--no-restore'],cwd:'.',protectedPaths:[]}];
+ return [{command:['git','diff','--check','junction/verified'],cwd:'.',protectedPaths:[]}];
+}
 function retryDeadline(value,now=Date.now()){
  const groups=value?.rateLimitsByLimitId?Object.values(value.rateLimitsByLimitId):value?.rateLimits?[value.rateLimits]:[];
  if(!groups.length)return now+300000;
@@ -27,20 +34,33 @@ class ForemanExecutor{
  constructor(directory,{server,runGit}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});this.runGit=runGit;}
  async git(cwd,args){if(this.runGit)return this.runGit(cwd,args);const r=await exec('git',['-c','core.hooksPath=NUL','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','protocol.file.allow=never','-C',cwd,...args],{windowsHide:true,shell:false,timeout:30000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}});return r.stdout;}
  async inspect(input){
-  const verification=validateVerification(input.verification);
-  const repoPath=fs.realpathSync(input.repoPath);const root=(await this.git(repoPath,['rev-parse','--show-toplevel'])).trim();
-  if(path.resolve(root).toLowerCase()!==repoPath.toLowerCase())throw new Error('Choose a Git repository root');
+  let requested=fs.realpathSync(input.repoPath),scopeFile=null;if(fs.statSync(requested).isFile()){scopeFile=path.basename(requested);requested=path.dirname(requested);}if(!fs.statSync(requested).isDirectory())throw new Error('Work scope must be a file or folder');
+  let root,scopeKind='folder';try{root=(await this.git(requested,['rev-parse','--show-toplevel'])).trim();if(path.resolve(root).toLowerCase()!==requested.toLowerCase())root=requested;else scopeKind='git';}catch{root=requested;}
+  const repoPath=fs.realpathSync(root);const verification=validateVerification(input.verification?.length?input.verification:detectedVerification(repoPath));
   for(const check of verification)if(check.command[0]==='godot'&&process.platform==='win32'){const folder=path.join(repoPath,'pc_godot');if(fs.existsSync(folder)){const found=fs.readdirSync(folder).find(n=>/^Godot_v[0-9.]+-stable_win64\.exe$/i.test(n));if(found)check.command[0]=path.join(folder,found);}}
   const verificationProtected=[...new Set(verification.flatMap(check=>check.protectedPaths.map(item=>path.join(check.cwd,item).replaceAll('\\','/').replace(/^\.\//,''))))];
-  return {repoPath,verification,verificationProtected,sourceHash:await this.sourceHash(repoPath),baseSha:(await this.git(repoPath,['rev-parse','HEAD'])).trim(),baseBranch:(await this.git(repoPath,['branch','--show-current'])).trim(),dirty:Boolean((await this.git(repoPath,['status','--porcelain'])).trim())};
+  let baseSha='local-folder',baseBranch='',dirty=false;if(scopeKind==='git'){baseSha=(await this.git(repoPath,['rev-parse','HEAD'])).trim();baseBranch=(await this.git(repoPath,['branch','--show-current'])).trim();dirty=Boolean((await this.git(repoPath,['status','--porcelain'])).trim());}
+  return {repoPath,scopeFile,scopeKind,verification,verificationProtected,sourceHash:await this.sourceHash(repoPath,false,scopeKind),baseSha,baseBranch,dirty};
  }
- async sourceHash(root,includeProtected=false){const names=(await this.git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(n=>n&&relative(n)&&(includeProtected||!forbidden.test(n))).sort();const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
+ async names(root,scopeKind){if(scopeKind==='folder')return walkNames(root);try{return (await this.git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(Boolean).sort();}catch{return walkNames(root);}}
+ async sourceHash(root,includeProtected=false,scopeKind=null){const names=(await this.names(root,scopeKind)).filter(n=>n&&relative(n)&&(includeProtected||!forbidden.test(n)));const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
  async review(p){
   if(!p.worktree||!p.verifiedSha)throw new Error('No verified candidate');
   if((await this.git(p.worktree,['status','--porcelain'])).trim())throw new Error('Candidate has unverified changes');
   const head=(await this.git(p.worktree,['rev-parse','HEAD'])).trim();if(head!==p.verifiedSha)throw new Error('Candidate moved since verification');
   const diff=await this.git(p.worktree,['diff','--binary','junction/verified',head]);
   return {headSha:head,sourceHash:p.sourceHash,diffHash:crypto.createHash('sha256').update(diff).digest('hex'),summary:await this.git(p.worktree,['diff','--stat','junction/verified',head]),patch:diff};
+ }
+ async promoteVerified(p,result){
+  const workspace=p.worktree||result.worktree,head=result.headSha,base=p.verifiedSha||'junction/verified';if(!workspace||!head)throw new Error('Verified candidate is incomplete');
+  if(await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sourceHash)throw new Error('The original work scope changed during verification; the verified candidate was preserved and nothing was overwritten');
+  const names=(await this.git(workspace,['diff','--name-only','-z',base,head])).split('\0').filter(Boolean);if(names.some(name=>!relative(name)||forbidden.test(name)))throw new Error('Verified candidate contains an unsafe path');if(p.scopeFile&&names.some(name=>name!==p.scopeFile))throw new Error('Verified candidate changed files outside the owner-named file scope');
+  const backup=path.join(this.directory,p.id,'backups',String(Date.now()));fs.mkdirSync(backup,{recursive:true});const changes=[];
+  for(const name of names){const source=path.join(workspace,name),target=path.join(p.repoPath,name),existed=fs.existsSync(target);if(existed){const saved=path.join(backup,name);fs.mkdirSync(path.dirname(saved),{recursive:true});fs.copyFileSync(target,saved);}changes.push({name,source,target,existed,deleted:!fs.existsSync(source)});}
+  try{for(const change of changes){if(change.deleted){if(fs.existsSync(change.target))fs.unlinkSync(change.target);continue;}const stat=fs.lstatSync(change.source);if(!stat.isFile()||stat.isSymbolicLink())throw new Error('Verified candidate contains an unsupported file');fs.mkdirSync(path.dirname(change.target),{recursive:true});const temp=`${change.target}.junction-${crypto.randomUUID()}.tmp`;fs.copyFileSync(change.source,temp);fs.renameSync(temp,change.target);}}
+  catch(error){for(const change of changes.reverse()){try{if(change.existed){fs.mkdirSync(path.dirname(change.target),{recursive:true});fs.copyFileSync(path.join(backup,change.name),change.target);}else if(fs.existsSync(change.target))fs.unlinkSync(change.target);}catch{}}throw error;}
+  fs.writeFileSync(path.join(backup,'manifest.json'),JSON.stringify({project:p.id,base,head,files:changes.map(({name,existed,deleted})=>({name,existed,deleted}))},null,2));
+  return {backup,sourceHash:await this.sourceHash(p.repoPath,false,p.scopeKind),files:names};
  }
  async applyReviewed(p){
   if(!p.reviewed)throw new Error('Review the exact candidate first');const review=await this.review(p);
@@ -64,10 +84,10 @@ class ForemanExecutor{
   const workspace=path.join(projectDir,'checkout');
   let hasBaseline=false;try{hasBaseline=Boolean((await this.git(workspace,['rev-parse','HEAD'])).trim());}catch{}
   if(!hasBaseline){
-   if(p.sourceHash&&await this.sourceHash(p.repoPath)!==p.sourceHash)throw new Error('Project changed since registration; register its current baseline again');
+   if(p.sourceHash&&await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sourceHash)throw new Error('Project changed since this work was requested; send the instruction again to use its current state');
    // Fresh independent repository: source hooks/config and its working index are never copied.
    fs.mkdirSync(workspace,{recursive:true});await this.git(workspace,['init','-b','junction/verified']);
-   const names=(await this.git(p.repoPath,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(Boolean);
+   const names=await this.names(p.repoPath,p.scopeKind);
    let size=0;
    for(const name of new Set(names)){if(signal.aborted)throw new Error('Paused');if(!relative(name)||forbidden.test(name))continue;const source=path.join(p.repoPath,name);if(!fs.existsSync(source))continue;const stat=fs.lstatSync(source);if(stat.isSymbolicLink()||!stat.isFile())throw new Error('Project contains unsupported symlink or special file');const real=fs.realpathSync(source);if(!real.startsWith(fs.realpathSync(p.repoPath)+path.sep))throw new Error('Project path escapes repository');size+=stat.size;if(stat.size>32*1024*1024||size>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');const target=path.join(workspace,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target);}
    await this.git(workspace,['add','--all']);await this.git(workspace,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','--allow-empty','-m','Owner project working-state checkpoint']);

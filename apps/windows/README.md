@@ -32,16 +32,17 @@ it is never exposed to the LAN.
   local Mafioso workspace during development.
 - Explicit manual same-owner sync for authoritative conversations, immutable
   provenance, owner memory, and a read-only shared Feed.
-- A local Projects command centre for up to three repositories. It refuses dirty
-  or non-Git inputs, creates isolated branches/worktrees only after plan approval,
-  preserves decision requests and progress, and binds merge approval to the exact
-  reviewed base/head/diff hash.
+- Persistent development work starts from an owner instruction in Chat. The owner
+  names a local file, folder, or Git repository; Junction keeps that scope with the
+  conversation, works from an isolated app-data checkpoint, verifies changes, and
+  promotes the exact verified files with a rollback backup. Work Activity shows the
+  live task, failures, tests, Codex waits, and an immediate Stop control.
 
-Delegation never starts through Firestore or another linked device. It is a local
-owner action, does not auto-merge or push, and cancellation preserves the branch
-and worktree for inspection. On this machine the current Junction and Mafioso
-trees are dirty and Civlets is not a Git repository, so they correctly appear as
-`needs setup` until the owner prepares them.
+The owner's paired Android chat can issue the same scoped instruction while the
+Windows app is connected. Closing Windows pauses work; opening it does not silently
+resume. Saying “continue” in the same conversation resumes it. Stop preserves the
+queue, checkpoint, results, and handoff. Junction never imports an owner project
+into the Junction source repository and never pushes unless the owner asks.
 
 ## Cloud and credential policy
 

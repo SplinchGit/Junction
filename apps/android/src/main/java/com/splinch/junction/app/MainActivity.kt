@@ -400,7 +400,7 @@ private fun JunctionApp(
         Scaffold(
             bottomBar = {
                 NavigationBar {
-                NavigationBarItem(selected = selectedTab == JunctionTab.PROJECTS, onClick = { selectedTab = JunctionTab.PROJECTS }, icon = { Text("⌘") }, label = { Text("Projects") })
+                NavigationBarItem(selected = selectedTab == JunctionTab.PROJECTS, onClick = { selectedTab = JunctionTab.PROJECTS }, icon = { Text("⌘") }, label = { Text("Work") })
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.CHAT,
                     onClick = {

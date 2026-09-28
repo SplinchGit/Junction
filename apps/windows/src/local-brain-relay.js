@@ -109,7 +109,7 @@ class LocalBrainRelay {
     await this.update(item.document, state.session, { status: "active" }, item.document.updateTime);
   }
   systemPrompt({ allowCodeDelegation = false } = {}) {
-    return ["You are Junction Local Brain, the small local assistant for Junction.", "You are running on the owner's paired Windows PC through an encrypted relay. You have no direct computer, network, scheduling, or source-code tools.", this.workspacePath ? `The Junction repository on this PC is: ${this.workspacePath}.` : "", "Answer ordinary questions directly and concisely. Never claim that you changed files, searched the web, scheduled work, created a draft, or ran a tool.", allowCodeDelegation ? "This is an explicitly approved coding-delegation request. State the requested task on the first line exactly as JUNCTION_CODE_TASK: followed by a concise task. The PC will create a reviewable Codex draft; it never modifies the main branch automatically." : "Do not propose coding drafts. Coding delegation is only available through Junction's separate, owner-approved Projects workflow."].filter(Boolean).join("\n\n");
+    return ["You are Junction Local Brain, the small local assistant for Junction.", "You are running on the owner's paired Windows PC through an encrypted relay. You have no direct computer, network, scheduling, or source-code tools.", "Answer ordinary questions directly and concisely. Never claim that you changed files, searched the web, scheduled work, or ran a tool.", allowCodeDelegation ? "This is an explicitly approved development request. State the full owner-named file, folder or repository and requested outcome on the first line exactly as JUNCTION_CODE_TASK:. The PC will start a durable scoped work session immediately." : "Development starts only from a clear owner instruction that names its local scope."].filter(Boolean).join("\n\n");
   }
   async markError(state, item, error) {
     const message = String(error?.message || error || "Local model request failed.").slice(0, 300);
@@ -186,8 +186,8 @@ class LocalBrainRelay {
       const task = answer.match(/^JUNCTION_CODE_TASK:\s*(.+)/im)?.[1]?.trim();
       if (task && allowCodeDelegation && this.createCodeDelegation) {
         const plan = await this.createCodeDelegation(task);
-        answer = `I created a Codex draft for this Junction change. Review and approve it in Junction on the PC before Codex starts.\n\n${answer.replace(/^JUNCTION_CODE_TASK:\s*.+\n?/im, "").trim()}`.trim();
-        if (plan?.id) answer += `\n\nDraft: ${plan.id.slice(0, 8)}`;
+        answer = `${plan.response || "Persistent work started on the named scope."}\n\n${answer.replace(/^JUNCTION_CODE_TASK:\s*.+\n?/im, "").trim()}`.trim();
+        if (plan?.id) answer += `\n\nWork session: ${plan.id.slice(0, 8)}`;
       }
       const response = crypt(state.key, `JBP1|${state.brainId}|${id}|response`, Buffer.from(answer.slice(0, MAX_RESPONSE_CHARS)), null, true);
       const thought = thinking.trim(), encryptedThinking = thought ? crypt(state.key, `JBP1|${state.brainId}|${id}|thinking`, Buffer.from(thought.slice(0, MAX_RESPONSE_CHARS)), null, true) : null;

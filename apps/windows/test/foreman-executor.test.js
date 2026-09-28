@@ -29,3 +29,17 @@ test('candidate cannot weaken an explicitly protected verification input',async(
  const task={id:'t',title:'Fix implementation',kind:'codex',acceptance:'Test passes without changing it',files:['answer.js'],attempts:[{id:'a'}]};
  await assert.rejects(executor.run(project,task,{signal:new AbortController().signal,checkpoint(){}}),/changed verification/i);
 });
+test('plain local folders are accepted without adding Git metadata to them',async()=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-'));fs.writeFileSync(path.join(folder,'scene.txt'),'home\n');
+ const executor=new ForemanExecutor(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-state-')),{server:{stop:async()=>{}}});
+ const inspected=await executor.inspect({repoPath:folder});assert.equal(inspected.scopeKind,'folder');assert.equal(inspected.baseSha,'local-folder');assert.ok(inspected.verification.length);
+ const workspace=await executor.prepare({id:'folder',repoPath:folder,...inspected},{id:'task'},()=>{},new AbortController().signal);
+ assert.equal(fs.existsSync(path.join(folder,'.git')),false);assert.equal(fs.readFileSync(path.join(workspace,'scene.txt'),'utf8'),'home\n');
+});
+test('a verified folder candidate is promoted with an external rollback backup',async()=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-promote-'));fs.writeFileSync(path.join(folder,'scene.txt'),'before\n');const state=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-promote-state-'));
+ const executor=new ForemanExecutor(state,{server:{stop:async()=>{}}}),inspected=await executor.inspect({repoPath:folder}),project={id:'p',repoPath:folder,...inspected};
+ const workspace=await executor.prepare(project,{id:'t'},value=>Object.assign(project,value),new AbortController().signal);fs.writeFileSync(path.join(workspace,'scene.txt'),'after\n');execFileSync('git',['add','--all'],{cwd:workspace});execFileSync('git',['-c','user.name=Test','-c','user.email=test@localhost','commit','-m','verified'],{cwd:workspace});
+ const promoted=await executor.promoteVerified(project,{worktree:workspace,headSha:execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8'}).trim()});
+ assert.equal(fs.readFileSync(path.join(folder,'scene.txt'),'utf8'),'after\n');assert.equal(fs.readFileSync(path.join(promoted.backup,'scene.txt'),'utf8'),'before\n');assert.equal(fs.existsSync(path.join(folder,'.git')),false);
+});
