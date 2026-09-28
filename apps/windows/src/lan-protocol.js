@@ -7,6 +7,7 @@ const MAX_REQUEST_ID_LENGTH = 160;
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const CONVERSATION_RECORD_KINDS = new Set(["created", "updated", "deleted", "message"]);
 const TYPES = new Set([
+  "project.list", "project.list.result", "project.get", "project.get.result", "task.control", "task.control.result", "task.enqueue", "task.enqueue.result",
   "hello", "challenge", "authenticate", "authenticated", "pair", "pair.bootstrap", "ping", "pong",
   "chat.send", "chat.started", "chat.delta", "chat.complete", "chat.error", "chat.cancel",
   "conversation.sync", "conversation.created", "conversation.updated", "conversation.deleted",

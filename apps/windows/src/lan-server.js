@@ -44,9 +44,9 @@ function createTlsIdentity(identityStore, advertisedHost = "junction.local", adv
 }
 
 class LanServer {
-  constructor({ identityStore, localData = null, runtime = null, worldAuditStore = null, worldControlStore = null, worldChatStore = null, onWorldControl = () => {}, onWorldMessage = () => {}, getWorldStatus = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
+  constructor({ identityStore, foremanApi = null, localData = null, runtime = null, worldAuditStore = null, worldControlStore = null, worldChatStore = null, onWorldControl = () => {}, onWorldMessage = () => {}, getWorldStatus = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
     if (!identityStore) throw new Error("LAN identity store is required.");
-    this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.worldAuditStore = worldAuditStore; this.worldControlStore = worldControlStore; this.worldChatStore = worldChatStore; this.onWorldControl = onWorldControl; this.onWorldMessage = onWorldMessage; this.getWorldStatus = getWorldStatus; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
+    this.foremanApi = foremanApi; this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.worldAuditStore = worldAuditStore; this.worldControlStore = worldControlStore; this.worldChatStore = worldChatStore; this.onWorldControl = onWorldControl; this.onWorldMessage = onWorldMessage; this.getWorldStatus = getWorldStatus; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
     this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = selectPrivateIPv4(bindAddress); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
     if (!this.instance.instanceId) { this.instance = { ...this.instance, instanceId: this.instanceId }; identityStore.setInstanceMetadata?.(this.instance); }
   }
@@ -68,6 +68,11 @@ class LanServer {
     try {
       if (state.state !== "authenticated") return envelope.type === "pair.bootstrap" ? this.bootstrapPair(socket, envelope) : envelope.type === "pair" ? this.pair(socket, envelope) : envelope.type === "hello" ? this.hello(socket, envelope) : envelope.type === "authenticate" ? this.authenticate(socket, envelope) : this.reject(socket, "Authentication required.");
       if (!this.authorized(socket)) return;
+      if (["project.list","project.get","task.control","task.enqueue"].includes(envelope.type)) {
+        if(!this.foremanApi) throw new Error("Project runtime is unavailable");
+        const result=await this.foremanApi.dispatch(envelope.type,envelope.payload,`${state.deviceId}:${envelope.requestId}`,"android");
+        return this.send(socket,`${envelope.type}.result`,envelope.requestId,result);
+      }
       if (envelope.type === "ping") return this.send(socket, "pong", envelope.requestId, {});
       if (envelope.type === "chat.send") return this.chat(socket, envelope);
       if (envelope.type === "chat.cancel") return this.cancel(socket, envelope);

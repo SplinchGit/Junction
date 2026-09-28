@@ -36,17 +36,18 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     this.appServer = options.appServer || new CodexAppServer({ onDiagnostic: value => this.audit("app_server_diagnostic", { value: value.slice(0, 500) }) });
     this.resumeTimers = new Map();
     for (const plan of this.plans) for (const project of plan.projects) {
-      if (project.status === "running" || project.status === "queued") {
-        project.status = WAITING;
-        project.resumeAt = Date.now();
-        project.summary = "Junction restarted; queued to resume its approved Codex task";
+      if (project.status === "running" || project.status === "queued" || project.status === WAITING) {
+        project.status = "needs_decision";
+        project.resumeAt = null;
+        project.decisionRequest = "Junction reopened. Resume this saved task explicitly?";
+        project.summary = "Paused after reopening; waiting for an explicit owner decision";
       }
-      if (project.status === WAITING) this.scheduleResume(plan, project);
     }
     this.save();
   }
 
   scheduleResume(plan, project) {
+    if(this.closed) return;
     const delay = Math.max(0, Math.min((project.resumeAt || Date.now()) - Date.now(), 0x7fffffff));
     clearTimeout(this.resumeTimers.get(project.id));
     this.resumeTimers.set(project.id, setTimeout(() => {
@@ -77,6 +78,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     this.save();
   }
   async runProject(plan, project, decision = "") {
+    if(this.closed) return;
     try {
       if (await this.waitForConfirmedCapacity(plan, project)) return;
     } catch (error) {
@@ -118,7 +120,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
       project.codexTurnId = result.turnId;
       const decisionMatch = (result.text || project.lastOutput || "").match(/JUNCTION_DECISION_REQUIRED:\s*(.+)/i);
       if (decisionMatch) { project.status = "needs_decision"; project.decisionRequest = decisionMatch[1].trim(); }
-      else await this.verify(project);
+      else if(!this.closed && project.status !== "cancelled") await this.verify(project);
     } catch (error) {
       const message = String(error.message || error);
       if (/rate.?limit|usage.?limit|quota|capacity/i.test(message)) {
@@ -146,6 +148,13 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     if (project.codexThreadId && project.codexTurnId) this.appServer.request("turn/interrupt", { threadId: project.codexThreadId, turnId: project.codexTurnId }).catch(() => {});
     project.status = "cancelled"; project.summary = "Stopped by owner; branch, worktree, and Codex thread are preserved";
     this.save(); this.audit("agent_cancelled", { planId, projectId, threadId: project.codexThreadId || null }); this.refresh(plan);
+  }
+  shutdown() {
+    this.closed=true;
+    for(const timer of this.resumeTimers.values())clearTimeout(timer);
+    this.resumeTimers.clear();
+    for(const plan of this.plans)for(const project of plan.projects)if(["running","queued",WAITING].includes(project.status)){project.status="needs_decision";project.decisionRequest="Resume saved work explicitly?";project.summary="Paused when Junction quit";}
+    this.save();this.appServer.stop();
   }
 }
 

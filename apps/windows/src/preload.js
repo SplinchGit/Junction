@@ -1,6 +1,7 @@
 "use strict";
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("junction", {
+  foreman: (type,payload={},requestId=crypto.randomUUID()) => ipcRenderer.invoke("junction:foreman",{type,payload,requestId}),
   onConversationsChanged: callback => { const listener = () => callback(); ipcRenderer.on("junction:conversations-changed", listener); return () => ipcRenderer.removeListener("junction:conversations-changed", listener); },
   status: () => ipcRenderer.invoke("junction:status"), signIn: () => ipcRenderer.invoke("junction:sign-in"), signOut: () => ipcRenderer.invoke("junction:sign-out"),
   setSync: enabled => ipcRenderer.invoke("junction:set-sync", enabled), inspect: () => ipcRenderer.invoke("junction:inspect"),

@@ -25,6 +25,10 @@ const { PairedConversationSync } = require("./paired-conversation-sync");
 const { LanRelayLifecycle } = require("./lan-relay-lifecycle");
 const { WorldBridge, WorldAuditStore, WorldControlStore, WorldChatStore, WORLD_MODEL, buildWorldInferencePayload } = require("./world-bridge");
 const { WorldHostRelay } = require("./world-host-relay");
+const { Foreman } = require("./foreman");
+const { ForemanExecutor } = require("./foreman-executor");
+const { ForemanApi } = require("./foreman-api");
+let foreman, foremanApi;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
@@ -109,6 +113,9 @@ async function createWindowImpl() {
   identity = identityStore.load();
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
+  const foremanDirectory = path.join(app.getPath("userData"), "foreman");
+  foreman = new Foreman(foremanDirectory, {executor:new ForemanExecutor(path.join(foremanDirectory,"projects")),audit:appendAudit});
+  foremanApi = new ForemanApi(foreman);
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   worldAuditStore = new WorldAuditStore(path.join(app.getPath("userData"), "junction-world"));
   worldControlStore = new WorldControlStore(path.join(app.getPath("userData"), "junction-world", "controls.json"));
@@ -145,7 +152,7 @@ async function createWindowImpl() {
   if (process.platform === "win32") {
     try {
       const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
-        worldAuditStore, worldControlStore, worldChatStore,
+        worldAuditStore, worldControlStore, worldChatStore, foremanApi,
         onWorldControl: () => worldHostRelay?.pollNow(), onWorldMessage: () => worldHostRelay?.pollNow(),
         getWorldStatus: async () => {
           const relay = worldHostRelay?.getStatus?.() || { state: "OFFLINE" };
@@ -200,9 +207,7 @@ async function createWindowImpl() {
   // Only the Windows-login instance is intentionally headless. A normal
   // desktop launch must retain conventional close/open behaviour; otherwise a
   // hidden process can make Junction appear unable to open.
-  window.on("close", event => {
-    if (launchInBackground && !isQuitting) { event.preventDefault(); window.hide(); }
-  });
+  window.on("close", event => { if (!isQuitting) { event.preventDefault(); app.quit(); } });
   window.on("closed", () => { mainWindow = null; });
   try {
     await window.loadFile(path.join(__dirname, "../renderer/index.html"));
@@ -376,6 +381,7 @@ ipcMain.handle("junction:research-jobs", () => researchCoordinator.list());
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
 ipcMain.handle("junction:delegations",()=>delegation.list());
+ipcMain.handle("junction:foreman",(_event,{type,payload,requestId})=>foremanApi.dispatch(type,payload,requestId));
 ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
 ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));
 ipcMain.handle("junction:review-delegation",(_event,value)=>delegation.review(value.planId,value.projectId));
@@ -400,6 +406,9 @@ app.on("before-quit", event => {
   if (isQuitting) return;
   event.preventDefault(); isQuitting = true;
   shutdownPromise = (async () => {
+    await foreman?.shutdown();
+    foreman?.close();
+    delegation?.shutdown?.();
     localBrainRelay?.stop();
     await worldHostRelay?.stop();
     await lanServer?.stop();

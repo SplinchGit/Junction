@@ -285,6 +285,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class JunctionTab {
+    PROJECTS,
     CHAT,
     AUDIT
 }
@@ -399,6 +400,7 @@ private fun JunctionApp(
         Scaffold(
             bottomBar = {
                 NavigationBar {
+                NavigationBarItem(selected = selectedTab == JunctionTab.PROJECTS, onClick = { selectedTab = JunctionTab.PROJECTS }, icon = { Text("⌘") }, label = { Text("Projects") })
                 NavigationBarItem(
                     selected = selectedTab == JunctionTab.CHAT,
                     onClick = {
@@ -450,6 +452,7 @@ private fun JunctionApp(
                         )
                     }
                 }
+                JunctionTab.PROJECTS -> com.splinch.junction.feature.projects.ProjectsScreen(Modifier.padding(padding))
                 JunctionTab.AUDIT -> AuditScreen(
                     actionLogDao = actionLogDao,
                     modelUsageDao = modelUsageDao,
