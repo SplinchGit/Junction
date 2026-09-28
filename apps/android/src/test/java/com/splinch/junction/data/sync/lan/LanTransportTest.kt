@@ -36,6 +36,10 @@ class LanTransportTest {
         server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 webSocket.send(LanProtocol.encode(LanProtocol.Envelope("chat.error", payload = mapOf("message" to "Device revoked"))))
+                // Production rejection sends the error frame and then closes the
+                // policy-violating socket. Mirror that lifecycle so MockWebServer
+                // never retains an open WebSocket worker during test teardown.
+                webSocket.close(1008, "Device revoked")
             }
         }))
         val result = withTimeout(2000) { transport.connect(endpoint) }
