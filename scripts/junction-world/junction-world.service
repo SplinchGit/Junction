@@ -1,0 +1,35 @@
+[Unit]
+Description=Junction World narrow host relay and runtime supervisor
+After=network-online.target nftables.service
+Wants=network-online.target
+Requires=nftables.service
+StartLimitIntervalSec=300s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/lib/junction-world/world-service.py
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/junction-world /run/junction-world
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=160M
+CPUQuota=25%
+TasksMax=32
+LimitNOFILE=128
+
+[Install]
+WantedBy=multi-user.target

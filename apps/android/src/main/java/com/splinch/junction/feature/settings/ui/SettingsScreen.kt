@@ -219,6 +219,7 @@ fun SettingsScreen(
     ) {
         item {
             Text(text = "Settings", style = MaterialTheme.typography.titleLarge)
+            com.splinch.junction.feature.migration.LegacyMusicExport()
         }
 
         item {

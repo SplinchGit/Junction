@@ -1,7 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { LocalAgentRuntime } = require("../src/local-agent-runtime");
+const { LocalAgentRuntime, validateSearchEgress } = require("../src/local-agent-runtime");
 const { compactResearchContext } = require("../src/local-agent-tools");
 const { parseSearchHtml, evidencePassages } = require("../src/web-research");
 
@@ -28,13 +28,17 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   assert.equal(compact.sources[0].passages[0].id, 'S1.p2');
   const ranked = evidencePassages({text:'Who won the 2026 football World Cup? Spain won the 2026 World Cup final.'}, 'Who won the 2026 football World Cup?', 'S1');
   assert.match([...ranked].sort((a,b)=>b.score-a.score)[0].text, /^Spain won/);
+  assert.equal(validateSearchEgress('prime minister of the United Kingdom', 'Who is PM of the UK?'), 'prime minister of the United Kingdom');
+  assert.equal(validateSearchEgress('how Anthropic was valued', 'How did Anthropic value itself?'), 'how Anthropic was valued');
+  assert.throws(() => validateSearchEgress('prime minister private surname', 'Who is PM of the UK?'), /not grounded/);
   const residency = [];
   const switching = new LocalAgentRuntime({ fetchImpl: async (url, options) => {
     residency.push({url,body:options.body && JSON.parse(options.body)});
     return {ok:true,json:async()=>url.endsWith('/api/ps') ? {models:[{name:'old-model'},{name:'selected'}]} : {}};
   } });
   await switching.prepareModel('selected');
-  assert.equal(residency.length, 2);
+  await switching.prepareModel('selected');
+  assert.equal(residency.length, 2, "a resident selected model should not be inspected/unloaded again");
   assert.deepEqual(residency[1].body, {model:'old-model',keep_alive:0});
   const queued = harness([]);
   queued.runtime.prepareModel = async () => {};
@@ -72,6 +76,54 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   const plain = harness([{ role: "assistant", content: "A stable answer from model knowledge." }]);
   assert.equal((await plain.runtime.run({ goal: "Say something", model: "tiny" })).content, "A stable answer from model knowledge.");
   assert.equal(plain.executions.length, 0, "natural-language tool claims must never execute a tool");
+
+  const ordinary = harness([{ role: "assistant", content: "Hello from the fast path." }]);
+  const ordinaryResult = await ordinary.runtime.run({ goal: "Hello, how are you?", model: "tiny" });
+  assert.equal(ordinaryResult.content, "Hello from the fast path.");
+  assert.equal(ordinary.requests.length, 1, "ordinary conversation must skip the routing inference");
+
+  const deterministic = harness([{ role: "assistant", content: "The evidence says today is sunny [S1.p1]." }]);
+  const deterministicResult = await deterministic.runtime.run({ goal: "What is the weather in London today?", model: "tiny" });
+  assert.equal(deterministicResult.toolsExecuted, 1, "current-fact requests must search even when routing is unavailable");
+  assert.equal(deterministic.requests.length, 1, "host-enforced search should not add a routing inference");
+  assert.ok(deterministic.requests[0].messages.some(message => message.role === "tool" && message.tool_name === "web_search"));
+
+  const deterministicUnavailable = harness([], { execute: async () => { throw new Error("Search unavailable"); } });
+  await assert.rejects(() => deterministicUnavailable.runtime.run({ goal: "What is the current price of gold?", model: "tiny" }), /Search unavailable/);
+  assert.equal(deterministicUnavailable.requests.length, 0, "a failed required search must not fall through to model memory");
+
+  const officeRequests = [], officeQueries = [];
+  const officeRuntime = new LocalAgentRuntime({
+    researchCoordinator: { run: async query => { officeQueries.push(query); return { query, sources: [{ id: 'S1', title: 'Official office', url: 'https://example.org/office', passages: [{ id: 'S1.p1', text: 'The current officeholder is Example Person.', score: 1 }] }] }; } },
+    fetchImpl: async (url, options) => {
+      if (url.endsWith('/api/ps')) return { ok: true, json: async () => ({ models: [] }) };
+      officeRequests.push(JSON.parse(options.body));
+      return response({ role: 'assistant', content: 'Example Person [S1.p1].' });
+    }
+  });
+  const officeAnswer = await officeRuntime.run({ goal: 'Who is PM of the UK?', model: 'tiny' });
+  assert.match(officeAnswer.content, /https:\/\/example\.org\/office/);
+  assert.deepEqual(officeQueries, ['Who is PM of the UK?']);
+  assert.equal(officeRequests.length, 1);
+  assert.ok(officeRequests[0].messages.some(message => message.tool_name === 'web_search'));
+
+  const gemmaRequests = [];
+  const gemmaRuntime = new LocalAgentRuntime({
+    fetchImpl: async (url, options) => {
+      if (url.endsWith('/api/ps')) return { ok: true, json: async () => ({ models: [] }) };
+      const body = JSON.parse(options.body); gemmaRequests.push(body);
+      if (body.tools?.length) return { ok: false, status: 400, json: async () => ({ error: 'does not support tools' }) };
+      return response({ role: 'assistant', content: 'Hello from Gemma.' });
+    }
+  });
+  assert.equal((await gemmaRuntime.run({ goal: 'Hello', model: 'gemma3:1b' })).content, 'Hello from Gemma.');
+  assert.equal(gemmaRequests.length, 1);
+  assert.ok(!gemmaRequests[0].tools?.length);
+  await assert.rejects(() => new LocalAgentRuntime({
+    fetchImpl: async url => url.endsWith('/api/ps')
+      ? { ok: true, json: async () => ({ models: [] }) }
+      : { ok: false, status: 404, json: async () => ({ error: 'model gemma3:1b not found' }) }
+  }).run({ goal: 'Hello', model: 'gemma3:1b' }), /ollama pull gemma3:1b/);
 
   const falseClaim = harness([
     { role: "assistant", content: "I accessed the internet via search and found the answer." },

@@ -44,9 +44,9 @@ function createTlsIdentity(identityStore, advertisedHost = "junction.local", adv
 }
 
 class LanServer {
-  constructor({ identityStore, localData = null, runtime = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
+  constructor({ identityStore, localData = null, runtime = null, worldAuditStore = null, worldControlStore = null, worldChatStore = null, onWorldControl = () => {}, onWorldMessage = () => {}, getWorldStatus = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
     if (!identityStore) throw new Error("LAN identity store is required.");
-    this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
+    this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.worldAuditStore = worldAuditStore; this.worldControlStore = worldControlStore; this.worldChatStore = worldChatStore; this.onWorldControl = onWorldControl; this.onWorldMessage = onWorldMessage; this.getWorldStatus = getWorldStatus; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
     this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = selectPrivateIPv4(bindAddress); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
     if (!this.instance.instanceId) { this.instance = { ...this.instance, instanceId: this.instanceId }; identityStore.setInstanceMetadata?.(this.instance); }
   }
@@ -74,7 +74,44 @@ class LanServer {
       if (envelope.type === "conversation.sync") return this.sync(socket, envelope);
       if (envelope.type === "conversation.deleted") return this.deleteConversation(socket, envelope);
       if (envelope.type === "model.status") return this.send(socket, "model.status", envelope.requestId, { instanceId: this.instanceId });
+      if (envelope.type === "world.status") return this.worldStatus(socket, envelope);
+      if (envelope.type === "world.audit") return this.worldAudit(socket, envelope);
+      if (envelope.type === "world.control") return this.worldControl(socket, envelope);
+      if (envelope.type === "world.message") return this.worldMessage(socket, envelope, state);
     } catch (error) { this.send(socket, "chat.error", envelope.requestId, { code: "LAN_REQUEST_FAILED", message: redactedError(error) }); }
+  }
+  async worldStatus(socket, envelope) {
+    const control = this.worldControlStore?.get?.() || { paused: true, heartbeatMinutes: 15, revision: 0 };
+    const status = this.getWorldStatus ? await this.getWorldStatus() : { state: "OFFLINE" };
+    return this.send(socket, "world.status.result", envelope.requestId, { ...status, paused: control.paused, heartbeatMinutes: control.heartbeatMinutes, controlRevision: control.revision });
+  }
+  worldAudit(socket, envelope) {
+    const since = Number.isSafeInteger(envelope.payload?.sinceSequence) && envelope.payload.sinceSequence >= 0 ? envelope.payload.sinceSequence : 0;
+    const events = this.worldAuditStore?.listSince?.(since, 100) || [];
+    return this.send(socket, "world.audit.result", envelope.requestId, { events, currentSequence: events.at(-1)?.sequence || since });
+  }
+  worldControl(socket, envelope) {
+    const payload = envelope.payload || {};
+    try {
+      if (!this.worldControlStore) throw new Error("Junction World controls are unavailable.");
+      if (Object.keys(payload).length !== 2 || !Object.prototype.hasOwnProperty.call(payload, "paused") || !Object.prototype.hasOwnProperty.call(payload, "heartbeatMinutes")) throw new Error("Invalid Junction World control request.");
+    } catch (error) {
+      this.worldAuditStore?.append?.({ id: crypto.randomUUID(), occurredAt: new Date(this.now()).toISOString(), category: "SECURITY_DENIAL", summary: "Rejected an invalid Junction World control request.", details: redactedError(error), actionStatus: "BLOCKED" });
+      throw error;
+    }
+    const state = this.worldControlStore.set(payload);
+    this.onWorldControl(state);
+    return this.send(socket, "world.control.result", envelope.requestId, state);
+  }
+  worldMessage(socket, envelope, state) {
+    const payload = envelope.payload || {};
+    if (!this.worldChatStore || Object.keys(payload).some(key => !["content", "conversationId", "messageId"].includes(key)) || typeof payload.content !== "string" || payload.content.length > 2_800 || typeof payload.conversationId !== "string" || typeof payload.messageId !== "string") {
+      this.worldAuditStore?.append?.({ id: crypto.randomUUID(), occurredAt: new Date(this.now()).toISOString(), category: "SECURITY_DENIAL", summary: "Rejected an invalid Android Junction World message.", actionStatus: "BLOCKED" });
+      throw new Error("Invalid or unavailable Junction World message request.");
+    }
+    const result = this.worldChatStore.enqueue({ deviceId: state.deviceId, content: payload.content, conversationId: payload.conversationId, messageId: payload.messageId });
+    this.onWorldMessage(result);
+    return this.send(socket, "world.message.result", envelope.requestId, result);
   }
   hello(socket, envelope) {
     const { deviceId, certificateFingerprint: fingerprint } = envelope.payload, paired = this.identityStore.getPairedAndroidKeys?.()[deviceId];

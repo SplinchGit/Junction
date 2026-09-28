@@ -1,68 +1,51 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
+// Legacy chat endpoint: preserve its response shape and authenticate access.
 const {setGlobalOptions} = require("firebase-functions/v2/options");
 const {onRequest} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
-
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
-setGlobalOptions({ maxInstances: 10 });
-
-// Create and deploy your first functions
-// https://firebase.google.com/docs/functions/get-started
-
-// exports.helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
-
-const fetch = require("node-fetch");
-
+const admin = require("firebase-admin");
+if (!admin.apps.length) admin.initializeApp();
+setGlobalOptions({maxInstances: 10});
 const openAiKeySecret = defineSecret("OPENAI_API_KEY");
 
-exports.chatJunction = onRequest({secrets: [openAiKeySecret]}, async (req, res) => {
+const handler = async (req, res) => {
+  if (req.method !== "POST") {
+    res.set("Allow", "POST");
+    return res.status(405).json({error: "Method not allowed"});
+  }
+  const match = (req.get("Authorization") || "").match(/^Bearer (.+)$/i);
+  if (!match) return res.status(401).json({error: "Authentication required"});
+  try {
+    await admin.auth().verifyIdToken(match[1], true);
+  } catch (_error) {
+    return res.status(401).json({error: "Unauthorized"});
+  }
+  const {message} = req.body || {};
+  if (typeof message !== "string" ||
+      !message.trim() || message.length > 16000) {
+    return res.status(400).json({error: "Message must be 1-16000 characters"});
+  }
   try {
     const apiKey = process.env.OPENAI_API_KEY || openAiKeySecret.value();
-    if (!apiKey) {
-      throw new Error("OPENAI_API_KEY not set");
-    }
-
-    const {message} = req.body || {};
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({error: "Missing message"});
-    }
-
-    const r = await fetch("https://api.openai.com/v1/responses", {
+    if (!apiKey) return res.status(503).json({error: "Chat is not configured"});
+    const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
+      signal: AbortSignal.timeout(30000),
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model: "gpt-4.1-mini",
         input: message,
+        max_output_tokens: 1024,
       }),
     });
-
-    const data = await r.json();
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (!response.ok) {
+      return res.status(502).json({error: "Chat provider request failed"});
+    }
+    return res.json(await response.json());
+  } catch (_error) {
+    return res.status(502).json({error: "Chat provider is unavailable"});
   }
-});
-
+};
+exports.chatJunction = onRequest({secrets: [openAiKeySecret]}, handler);

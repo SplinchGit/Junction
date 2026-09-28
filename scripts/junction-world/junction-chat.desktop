@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Junction
+Comment=Talk to Junction and follow its activity
+Exec=/usr/local/bin/junction-chat
+Icon=utilities-terminal
+Terminal=false
+StartupNotify=true
+Categories=Utility;Chat;

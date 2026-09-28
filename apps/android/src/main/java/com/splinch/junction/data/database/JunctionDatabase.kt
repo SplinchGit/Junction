@@ -9,6 +9,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.splinch.junction.data.database.audit.ActionLogDao
 import com.splinch.junction.data.database.audit.ActionLogEntity
+import com.splinch.junction.data.database.audit.WorldAuditDao
+import com.splinch.junction.data.database.audit.WorldAuditEntity
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
@@ -32,9 +34,10 @@ import com.splinch.junction.feature.feed.model.FeedItemEntity
         ModelUsageEntity::class,
         PlanEntity::class,
         StepEntity::class,
-        MemoryFactEntity::class
+        MemoryFactEntity::class,
+        WorldAuditEntity::class
     ],
-    version = 21,
+    version = 23,
     exportSchema = false
 )
 @TypeConverters(FeedConverters::class)
@@ -42,6 +45,7 @@ abstract class JunctionDatabase : RoomDatabase() {
     abstract fun chatDao(): ChatDao
     abstract fun feedDao(): FeedDao
     abstract fun actionLogDao(): ActionLogDao
+    abstract fun worldAuditDao(): WorldAuditDao
     abstract fun modelUsageDao(): ModelUsageDao
     abstract fun planDao(): PlanDao
     abstract fun memoryFactDao(): MemoryFactDao
@@ -56,7 +60,7 @@ abstract class JunctionDatabase : RoomDatabase() {
                     context.applicationContext,
                     JunctionDatabase::class.java,
                     "junction.db"
-                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
+                ).addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
                     .fallbackToDestructiveMigration(true)
                     .build()
                     .also { INSTANCE = it }
@@ -238,6 +242,20 @@ abstract class JunctionDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `model_usage` ADD COLUMN `approvalRequired` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `model_usage` ADD COLUMN `thinkingCharacters` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `model_usage` ADD COLUMN `thinkingReported` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `junction_world_audit` (`id` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `category` TEXT NOT NULL, `summary` TEXT NOT NULL, `details` TEXT, `goalId` TEXT, `actionId` TEXT, `actionStatus` TEXT, `durationMs` INTEGER, `workspaceFreeBytes` INTEGER, `memoryUsedBytes` INTEGER, `cpuPercent` REAL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_junction_world_audit_sequence` ON `junction_world_audit` (`sequence`)")
+            }
+        }
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `junction_world_audit` ADD COLUMN `communicationId` TEXT")
+                db.execSQL("ALTER TABLE `junction_world_audit` ADD COLUMN `conversationId` TEXT")
+                db.execSQL("ALTER TABLE `junction_world_audit` ADD COLUMN `communicationDirection` TEXT")
             }
         }
     }

@@ -61,7 +61,8 @@ object ModelCatalog {
             models = listOf(
                 ModelEntry("qwen3.5:2b", "Qwen3.5 2B", "Local", "Compact current Qwen with native tools.", 0.0, 0.0),
                 ModelEntry("qwen3:1.7b", "Qwen3 1.7B", "Local", "Existing compact local model.", 0.0, 0.0),
-                ModelEntry("lfm2.5:2.6b", "LFM2.5 2.6B", "Local", "Official Liquid AI GGUF imported into Ollama.", 0.0, 0.0)
+                ModelEntry("lfm2.5:2.6b", "LFM2.5 2.6B", "Local", "Official Liquid AI GGUF imported into Ollama.", 0.0, 0.0),
+                ModelEntry("gemma3:1b", "Gemma 3 1B", "Fast conversational", "Optional Ollama model for conversation; native tool calls are not supported. Install it on your PC before selecting it.", 0.0, 0.0)
             )
         ),
         ProviderDefinition(

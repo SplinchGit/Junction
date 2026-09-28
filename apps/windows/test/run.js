@@ -57,7 +57,8 @@ assert.match(renderer, /data-view="chat"/); assert.match(renderer, />Feed</); as
 assert.match(renderer, /data-view="projects"/); assert.match(renderer, /No automatic merges/); assert.doesNotMatch(renderer, /id="agent-toggle"/); assert.match(renderer, /Local-model tools are always available/); assert.match(renderer, /What the model actually did/); assert.match(renderer, /audit\.css/);
 assert.match(mainProcess, /nativeToolsAvailable=config\.id==="local"/); assert.doesNotMatch(mainProcess, /request\.agent/);
 assert.match(mainProcess, /event\.preventDefault\(\)/); assert.match(mainProcess, /await lanServer\?\.stop\(\)/);
-assert.match(renderer, /data-view="mafioso"/); assert.match(renderer, /id="open-mafioso"/);
+assert.doesNotMatch(renderer, /data-view="mafioso"/); assert.doesNotMatch(renderer, /id="open-mafioso"/);
+assert.match(mainProcess, /openAtLogin: false/); assert.doesNotMatch(mainProcess, /openAtLogin: true/);
 assert.match(renderer, /Codex on this PC/); assert.match(renderer, /does not continuously capture/i); assert.match(renderer, /include once/i); assert.match(renderer, /Content-Security-Policy/);
 const drawerScript = fs.readFileSync(path.join(__dirname, "../renderer/parity.js"), "utf8"); assert.match(drawerScript,/renameConversation/); assert.match(drawerScript,/deleteConversation/); assert.match(drawerScript,/Ctrl\+B/); assert.match(drawerScript,/ArrowDown/); assert.match(drawerScript,/F2/);
 const productScript = fs.readFileSync(path.join(__dirname, "../renderer/product-parity.js"), "utf8"); assert.match(productScript,/modelCatalog/); assert.match(productScript,/codexStatus/); assert.match(productScript,/researchStatus/); assert.match(productScript,/loadUsage/); assert.match(productScript,/loadFeed/); assert.match(productScript,/loadMetrics/); assert.match(productScript,/Used tools/); assert.match(renderer,/mobile-system.css/);

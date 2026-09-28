@@ -62,8 +62,6 @@ import com.splinch.junction.feature.chat.ui.ChatScreen
 import com.splinch.junction.feature.chat.ui.JunctionDrawerContent
 import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.calculator.ui.CalculatorScreen
-import com.splinch.junction.feature.music.ui.MusicEditorScreen
-import com.splinch.junction.feature.mafioso.ui.MafiosoScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
 import com.splinch.junction.feature.onboarding.ui.OnboardingScreen
 import com.splinch.junction.feature.settings.ui.SettingsScreen
@@ -230,6 +228,8 @@ class MainActivity : ComponentActivity() {
                     chatToken = chatToken,
                     actionLogDao = database.actionLogDao(),
                     modelUsageDao = database.modelUsageDao(),
+                    worldAuditDao = database.worldAuditDao(),
+                    junctionWorldClient = container.junctionWorldClient,
                     memoryFactDao = database.memoryFactDao()
                 )
             }
@@ -292,8 +292,6 @@ private enum class JunctionTab {
 private enum class JunctionWorkspace {
     CHAT,
     BUILD,
-    MUSIC,
-    MAFIOSO,
     SETTINGS
 }
 
@@ -318,6 +316,8 @@ private fun JunctionApp(
     chatToken: Int,
     actionLogDao: com.splinch.junction.data.database.audit.ActionLogDao,
     modelUsageDao: com.splinch.junction.data.database.usage.ModelUsageDao,
+    worldAuditDao: com.splinch.junction.data.database.audit.WorldAuditDao,
+    junctionWorldClient: com.splinch.junction.data.sync.lan.JunctionWorldClient,
     memoryFactDao: com.splinch.junction.data.database.memory.MemoryFactDao
 ) {
     val scope = rememberCoroutineScope()
@@ -391,14 +391,6 @@ private fun JunctionApp(
                     onOpenBuild = {
                         selectedWorkspace = JunctionWorkspace.BUILD
                         scope.launch { drawerState.close() }
-                    },
-                    onOpenMusic = {
-                        selectedWorkspace = JunctionWorkspace.MUSIC
-                        scope.launch { drawerState.close() }
-                    },
-                    onOpenMafioso = {
-                        selectedWorkspace = JunctionWorkspace.MAFIOSO
-                        scope.launch { drawerState.close() }
                     }
                 )
             }
@@ -441,22 +433,6 @@ private fun JunctionApp(
                     ) { contentModifier ->
                         CalculatorScreen(client = calculatorClient, modifier = contentModifier)
                     }
-                    JunctionWorkspace.MUSIC -> WorkspaceScreen(
-                        title = "Music",
-                        onOpenNavigation = { scope.launch { drawerState.open() } },
-                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
-                        modifier = Modifier.padding(padding)
-                    ) { contentModifier ->
-                        MusicEditorScreen(modifier = contentModifier)
-                    }
-                    JunctionWorkspace.MAFIOSO -> WorkspaceScreen(
-                        title = "Mafioso",
-                        onOpenNavigation = { scope.launch { drawerState.open() } },
-                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
-                        modifier = Modifier.padding(padding)
-                    ) { contentModifier ->
-                        MafiosoScreen(url = BuildConfig.JUNCTION_MAFIOSO_URL, modifier = contentModifier)
-                    }
                     JunctionWorkspace.SETTINGS -> WorkspaceScreen(
                         title = "Settings",
                         onOpenNavigation = { scope.launch { drawerState.open() } },
@@ -477,6 +453,8 @@ private fun JunctionApp(
                 JunctionTab.AUDIT -> AuditScreen(
                     actionLogDao = actionLogDao,
                     modelUsageDao = modelUsageDao,
+                    worldAuditDao = worldAuditDao,
+                    junctionWorldClient = junctionWorldClient,
                     modifier = Modifier.padding(padding)
                 )
             }

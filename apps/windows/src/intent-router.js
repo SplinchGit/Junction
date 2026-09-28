@@ -2,6 +2,22 @@
 const INTENTS=['conversation','question','research','code_discussion','inspect','modify','planning','troubleshoot','tool'];
 const ROUTING_SCHEMA={type:"object",additionalProperties:false,required:["intent","action","authorization","query"],properties:{intent:{type:"string",enum:INTENTS},action:{type:"string",enum:["answer","search","delegate"]},authorization:{type:"string",enum:["none","explicit","unclear"]},query:{type:"string"}}};
 const FALLBACK=Object.freeze({intent:'conversation',action:'answer',authorization:'none',query:''});
+const SEARCH_PATTERNS=Object.freeze([
+  /\b(?:current|currently|latest|today(?:'s)?|now|right\s+now|recent|recently|breaking)\b/i,
+  /\b(?:news|weather|forecast|price|prices|cost|schedule|schedules|score|scores|winner|winners|won|release\s+dates?|released)\b/i,
+  /\b(?:online\s+lookup|look\s+up|browse|browsing|web\s+search|search\s+(?:for|online|the\s+web)|find\s+(?:online|on\s+the\s+web)|sources?|verify|verification|according\s+to)\b/i,
+  /\bwho\s+(?:is|are)\s+(?:the\s+)?(?:pm|prime\s+minister|president|chancellor|ceo|leader|head\s+of\s+state)\b/i
+]);
+const ROUTING_PATTERNS=Object.freeze([/\b(?:code|coding|repository|repo|fix|implement|change|modify|edit|build|create|delegate|draft)\b/i,/\b(?:inspect|troubleshoot|debug|diagnose|diagnosis|investigate|why\s+does)\b/i,/\b(?:plan|planning|project|app|application)\b/i]);
+function detectSearchRequirement(value) {
+  const goal=String(value||'').replace(/\s+/g,' ').trim();
+  const matched=SEARCH_PATTERNS.filter(pattern=>pattern.test(goal)).map(pattern=>pattern.source);
+  return {required:matched.length>0,query:goal.slice(0,240),reasons:matched};
+}
+function shouldRunRouting(goal, context=null) {
+  if (context?.window || context?.elements) return true;
+  return ROUTING_PATTERNS.some(pattern=>pattern.test(String(goal||'')));
+}
 function normalizeDecision(value) {
   try { if(typeof value==='string') value=JSON.parse(value); } catch { return {...FALLBACK}; }
   if(!value || !INTENTS.includes(value.intent) || !['answer','search','delegate'].includes(value.action) || !['none','explicit','unclear'].includes(value.authorization)) return {...FALLBACK};
@@ -20,5 +36,5 @@ async function decideIntent({ goal, history = [], capabilities = [], complete })
     return normalizeDecision(typeof result === "string" ? result : result?.content);
   } catch { return {...FALLBACK}; }
 }
-module.exports={ROUTING_SCHEMA,normalizeDecision,decisionAllowsDelegation,routingPrompt,decideIntent};
+module.exports={ROUTING_SCHEMA,normalizeDecision,decisionAllowsDelegation,routingPrompt,decideIntent,detectSearchRequirement,shouldRunRouting};
 

@@ -16,6 +16,7 @@ import com.splinch.junction.data.sync.firebase.RemoteCommandSyncManager
 import com.splinch.junction.data.sync.firebase.SharedStateSyncManager
 import com.splinch.junction.data.sync.lan.LanConversationSync
 import com.splinch.junction.data.sync.lan.LanConversationCommands
+import com.splinch.junction.data.sync.lan.JunctionWorldClient
 import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.feed.FeedRepository
 import com.splinch.junction.feature.update.UpdateInfo
@@ -50,6 +51,7 @@ class AppContainer(context: Context) {
     private val lanConversationCommands = LanConversationCommands(appContext)
     private val conversationStore = SyncingConversationStore(roomStore, chatSyncManager, lanConversationCommands::delete)
     private val lanConversationSync = LanConversationSync(database.chatDao(), com.splinch.junction.data.secret.KeyStorage(appContext))
+    val junctionWorldClient = JunctionWorldClient(com.splinch.junction.data.sync.lan.LanIdentityStore(appContext), database.worldAuditDao(), com.splinch.junction.data.secret.KeyStorage(appContext))
     val feedRepository = FeedRepository(database.feedDao(), feedSyncManager)
     val updateState = MutableStateFlow<UpdateInfo?>(null)
     val providerRegistry = ProviderRegistry(appContext, prefs, conversationSync = lanConversationSync)

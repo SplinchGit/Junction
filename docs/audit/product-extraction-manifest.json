@@ -1,0 +1,132 @@
+[
+  {
+    "source": "gradlew",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\gradlew",
+    "sha256": "d2f351cc4d1d088f1ca59c12df28ec27dacc43a97607c056b0c0d549eda44a13"
+  },
+  {
+    "source": "gradlew.bat",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\gradlew.bat",
+    "sha256": "57931b17dd228e5c24dac90e815d0bf82477e831a4618dfab4136f5446b42a9f"
+  },
+  {
+    "source": "gradle\\wrapper\\gradle-wrapper.jar",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\gradle\\wrapper\\gradle-wrapper.jar",
+    "sha256": "9687bf4e8beb2c293cfd1393cbf2854ef68f921757302116033f476289abf7b0"
+  },
+  {
+    "source": "gradle\\wrapper\\gradle-wrapper.properties",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\gradle\\wrapper\\gradle-wrapper.properties",
+    "sha256": "b95471c8591ae296d838cdb9ff489ce65daa037e56e5b8d7e44b53867384547f"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\edit\\MusicEditAction.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\edit\\MusicEditAction.kt",
+    "sha256": "859bde8c7711ab93f64734657280354a91c5119a7416b8bd5b08132a0f6c3610"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\model\\MusicProject.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\model\\MusicProject.kt",
+    "sha256": "1b3bf59e7f97b530e1578f9ef66bab0c5ba2ba7d7c930bd5dd53c6c77fc0ce5b"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\MusicEditorController.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\MusicEditorController.kt",
+    "sha256": "84dfb98e5de7573df5f5bb77d80b64f7f2ce97801d73005fe5c067649554728e"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicAssetStore.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicAssetStore.kt",
+    "sha256": "36d6731c55209ecba086ba9964e8f7a8265e572c0c1aa7f45b89e090298c77b3"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicProjectCodec.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicProjectCodec.kt",
+    "sha256": "42493d3bcb1a5397acb869f166c5ae0a03de63e7f21eb25d0d21577974ad4ab9"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicProjectStore.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\persistence\\MusicProjectStore.kt",
+    "sha256": "07381fb41ae916a1fcd9589efecaaf3239ee3dcd0b3913f92da74b60d2c51ab8"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\playback\\MusicPlaybackEngine.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\playback\\MusicPlaybackEngine.kt",
+    "sha256": "4d0571fdcd9e367e42f862280f4c4828ad6346049002b24651223a0ef1a479ed"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\ui\\MusicEditorScreen.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\music\\ui\\MusicEditorScreen.kt",
+    "sha256": "6f2cbdb0d8b53163bc31981f3db2c4bc88e25c985037a23bba866ee4811dca30"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\AndroidAudioRecorder.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\AndroidAudioRecorder.kt",
+    "sha256": "b608632bf12635543291bef8602ce2f5ba71b489f10500f667df4f4e31e14032"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\AndroidSynthPlaybackEngine.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\AndroidSynthPlaybackEngine.kt",
+    "sha256": "0d582169ba8f98afbf1402913b2fb18f59ff99380b2ea26665829d75d081ea3b"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\MusicProjectRenderer.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\MusicProjectRenderer.kt",
+    "sha256": "d38407e162a77c7d066aca467d23f6e02b4118805cc151d9986e930503fe4358"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\WavCodec.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\platform\\audio\\WavCodec.kt",
+    "sha256": "356ebf8fe300791544b93d2f902ff6d91635802201c03425aa71ce08b84df449"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\migration\\MusicArchive.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\migration\\MusicArchive.kt",
+    "sha256": "029031838c52a052809879684600b095704edd6ffd9d25027ba8ae3af8f005f0"
+  },
+  {
+    "source": "apps\\android\\src\\test\\java\\com\\splinch\\junction\\feature\\music\\MusicProjectTest.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\test\\java\\com\\splinch\\junction\\feature\\music\\MusicProjectTest.kt",
+    "sha256": "dcbf330c40fa1745bef208558d713dfca084bad630f05579d8cf33d3016aaae4"
+  },
+  {
+    "source": "apps\\android\\src\\test\\java\\com\\splinch\\junction\\feature\\music\\MusicRendererTest.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\test\\java\\com\\splinch\\junction\\feature\\music\\MusicRendererTest.kt",
+    "sha256": "a6f470f1a16098873ebb52a6583994b32e789ab26f41e5dec1caa17d2c8d0c09"
+  },
+  {
+    "source": "apps\\android\\src\\test\\java\\com\\splinch\\junction\\feature\\migration\\MusicArchiveTest.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\Junction-DAW\\app\\src\\test\\java\\com\\splinch\\junction\\feature\\migration\\MusicArchiveTest.kt",
+    "sha256": "ac860168a50cffa94aedcca8aade84411b11175802f8f9c1d49ca482d4055010"
+  },
+  {
+    "source": "gradlew",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\gradlew",
+    "sha256": "d2f351cc4d1d088f1ca59c12df28ec27dacc43a97607c056b0c0d549eda44a13"
+  },
+  {
+    "source": "gradlew.bat",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\gradlew.bat",
+    "sha256": "57931b17dd228e5c24dac90e815d0bf82477e831a4618dfab4136f5446b42a9f"
+  },
+  {
+    "source": "gradle\\wrapper\\gradle-wrapper.jar",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\gradle\\wrapper\\gradle-wrapper.jar",
+    "sha256": "9687bf4e8beb2c293cfd1393cbf2854ef68f921757302116033f476289abf7b0"
+  },
+  {
+    "source": "gradle\\wrapper\\gradle-wrapper.properties",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\gradle\\wrapper\\gradle-wrapper.properties",
+    "sha256": "b95471c8591ae296d838cdb9ff489ce65daa037e56e5b8d7e44b53867384547f"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\mafioso\\billing\\MafiosoBillingBridge.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\mafioso\\billing\\MafiosoBillingBridge.kt",
+    "sha256": "22b47cd3e5cfd90086ee91ae232dd723dda6501545baa3a9591e15d723cfde33"
+  },
+  {
+    "source": "apps\\android\\src\\main\\java\\com\\splinch\\junction\\feature\\mafioso\\ui\\MafiosoScreen.kt",
+    "destination": "C:\\Users\\jf358\\Documents\\0Mafioso\\Mafioso\\apps\\android\\app\\src\\main\\java\\com\\splinch\\junction\\feature\\mafioso\\ui\\MafiosoScreen.kt",
+    "sha256": "2bd51fd41a30eb56e3afff64f27eb9d823a8268da9a08d5a41576bc09140813b"
+  }
+]

@@ -11,6 +11,7 @@ const TYPES = new Set([
   "chat.send", "chat.started", "chat.delta", "chat.complete", "chat.error", "chat.cancel",
   "conversation.sync", "conversation.created", "conversation.updated", "conversation.deleted",
   "model.list", "model.status",
+  "world.status", "world.audit", "world.control", "world.message", "world.status.result", "world.audit.result", "world.control.result", "world.message.result",
 ]);
 
 function bytes(value) { return Buffer.byteLength(typeof value === "string" ? value : JSON.stringify(value)); }

@@ -8,6 +8,16 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
+    fun `local model picker includes optional Gemma without changing the default`() {
+        val local = ModelCatalog.providerById("local")!!
+        assertEquals("qwen3.5:2b", local.defaultModelId)
+        val gemma = ModelCatalog.modelById("local", "gemma3:1b")!!
+        assertEquals("Gemma 3 1B", gemma.displayName)
+        assertTrue(gemma.blurb.contains("conversation", ignoreCase = true))
+        assertTrue(gemma.blurb.contains("tool", ignoreCase = true))
+    }
+
+    @Test
     fun `OpenAI catalog uses the current GPT family for every role`() {
         val openAi = ModelCatalog.providerById("openai")!!
 

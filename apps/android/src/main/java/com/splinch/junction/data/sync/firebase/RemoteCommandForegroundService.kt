@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * Keeps [RemoteCommandSyncManager] listening while Junction is off screen.
@@ -85,6 +86,7 @@ class RemoteCommandForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         super.onDestroy()
         runCatching { (application as JunctionApplication).container.remoteCommandSyncManager.stop() }
     }
@@ -99,7 +101,11 @@ class RemoteCommandForegroundService : Service() {
                 // but it must stay visible, since a background channel the owner can't see
                 // is a background channel they can't turn off either.
                 NotificationManager.IMPORTANCE_LOW
-            ).apply { setShowBadge(false) }
+            ).apply {
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
             manager?.createNotificationChannel(channel)
         }
 
@@ -116,6 +122,9 @@ class RemoteCommandForegroundService : Service() {
             .setContentTitle("Junction is available for remote commands")
             .setContentText("Commands from your PC companion can run on this phone. Tap to open, disable in Settings.")
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
             .setOngoing(true)
             .setContentIntent(open)
             .build()

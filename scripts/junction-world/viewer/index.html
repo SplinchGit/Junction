@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Junction World</title>
+  <link rel="stylesheet" href="/ui.css">
+  <script src="/ui.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">J</div>
+      <div class="brand-copy">
+        <p class="eyebrow">ISOLATED DEBIAN ENVIRONMENT</p>
+        <h1>Junction World</h1>
+      </div>
+      <div class="status" id="connection-state" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="connection-label">Connecting…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="overview" aria-label="Junction World status">
+        <div>
+          <p class="eyebrow">LIVE VIEW</p>
+          <h2 id="world-state">Waiting for guest status</h2>
+          <p class="muted" id="world-description">Checking the local Junction service…</p>
+          <dl class="runtime-facts">
+            <div><dt>Uptime</dt><dd id="runtime-uptime">—</dd></div>
+            <div><dt>Model</dt><dd id="runtime-model">—</dd></div>
+            <div><dt>Next wake</dt><dd id="runtime-next-wake">—</dd></div>
+          </dl>
+          <p class="muted" id="runtime-activity">—</p>
+        </div>
+        <div class="refresh-card">
+          <span class="refresh-icon" aria-hidden="true">◷</span>
+          <div>
+            <span class="refresh-title">Last refreshed</span>
+            <time id="last-updated">—</time>
+          </div>
+        </div>
+      </section>
+
+      <div class="columns">
+        <section class="panel conversation-panel" aria-labelledby="conversation-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">OWNER ↔ JUNCTION</p>
+              <h2 id="conversation-title">Conversation</h2>
+            </div>
+            <span class="count" id="conversation-count">0 messages</span>
+          </div>
+          <ol class="conversation-list" id="conversation-list" tabindex="0" aria-label="Recent conversation messages" aria-live="polite" aria-relevant="additions text">
+            <li class="empty-state" id="conversation-empty">Waiting for a message from Android Audit or Debian chat.</li>
+          </ol>
+          <form class="chat-form" id="chat-form">
+            <label class="visually-hidden" for="chat-input">Message Junction</label>
+            <input id="chat-input" name="content" maxlength="2800" autocomplete="off" placeholder="Talk to Junction…" required>
+            <button id="chat-send" type="submit">Send</button>
+          </form>
+          <p class="chat-feedback" id="chat-feedback" role="status" aria-live="polite"></p>
+          <p class="history-note" id="history-note">Recent conversation is kept in the VM’s bounded history.</p>
+        </section>
+
+        <section class="panel activity-panel" aria-labelledby="activity-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">WHAT JUNCTION IS DOING</p>
+              <h2 id="activity-title">Activity</h2>
+            </div>
+            <span class="activity-pulse" aria-hidden="true"></span>
+          </div>
+          <ol class="activity-list" id="activity-list" tabindex="0" aria-label="Recent Junction activity">
+            <li class="empty-state" id="activity-empty">Activity will appear here as Junction wakes.</li>
+          </ol>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span class="read-only-mark" aria-hidden="true">◈</span>
+      <p>This local window and Android Audit share Junction’s conversation. Host pause and stop controls remain in Android Audit.</p>
+    </footer>
+  </div>
+</body>
+</html>

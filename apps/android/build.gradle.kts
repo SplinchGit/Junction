@@ -169,18 +169,6 @@ configure<ApplicationExtension> {
             "\"$webClientId\""
         )
 
-        val mafiosoUrl =
-            findProperty("JUNCTION_MAFIOSO_URL")?.toString()
-                ?: localProps.getProperty("JUNCTION_MAFIOSO_URL")
-                ?: System.getenv("JUNCTION_MAFIOSO_URL")
-                ?: "https://d2t8pi3n8wgmgj.cloudfront.net"
-
-        buildConfigField(
-            "String",
-            "JUNCTION_MAFIOSO_URL",
-            "\"$mafiosoUrl\""
-        )
-
         val realtimeEndpoint =
             findProperty("JUNCTION_REALTIME_ENDPOINT")?.toString()
                 ?: localProps.getProperty("JUNCTION_REALTIME_ENDPOINT")
@@ -299,7 +287,6 @@ dependencies {
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     implementation("androidx.security:security-crypto:1.1.0-alpha07")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    implementation("com.android.billingclient:billing-ktx:8.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

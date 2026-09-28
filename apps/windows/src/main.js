@@ -23,8 +23,10 @@ const { LocalAgentRuntime, validateSearchEgress } = require("./local-agent-runti
 const { LocalAgentToolRegistry } = require("./local-agent-tools");
 const { PairedConversationSync } = require("./paired-conversation-sync");
 const { LanRelayLifecycle } = require("./lan-relay-lifecycle");
+const { WorldBridge, WorldAuditStore, WorldControlStore, WorldChatStore, WORLD_MODEL, buildWorldInferencePayload } = require("./world-bridge");
+const { WorldHostRelay } = require("./world-host-relay");
 
-let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
+let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
@@ -108,6 +110,32 @@ async function createWindowImpl() {
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
+  worldAuditStore = new WorldAuditStore(path.join(app.getPath("userData"), "junction-world"));
+  worldControlStore = new WorldControlStore(path.join(app.getPath("userData"), "junction-world", "controls.json"));
+  worldChatStore = new WorldChatStore(path.join(app.getPath("userData"), "junction-world", "android-message-queue.json"), { auditStore: worldAuditStore });
+  try {
+    worldBridge = new WorldBridge({
+      token: WorldBridge.token(identityStore), auditStore: worldAuditStore,
+      getControlState: async () => worldControlStore.get(),
+      infer: async (messages, maxOutputTokens, { signal }) => {
+        const started = Date.now();
+        const response = await fetch("http://127.0.0.1:11434/api/chat", {
+          method: "POST", signal, headers: { "content-type": "application/json" },
+          body: JSON.stringify(buildWorldInferencePayload(messages, maxOutputTokens))
+        });
+        if (!response.ok) throw new Error("Local Qwen service unavailable.");
+        const bytes = await response.arrayBuffer();
+        if (bytes.byteLength > 256 * 1024) throw new Error("Local Qwen response exceeded its limit.");
+        const payload = JSON.parse(Buffer.from(bytes).toString("utf8"));
+        if (payload.model !== WORLD_MODEL || typeof payload.message?.content !== "string") throw new Error("Local Qwen response did not match the configured model.");
+        return { content: payload.message.content, durationMs: Date.now() - started };
+      }
+    });
+    worldHostRelay = new WorldHostRelay({ bridge: worldBridge, auditStore: worldAuditStore, controlStore: worldControlStore, chatStore: worldChatStore });
+    // This relay initiates requests only to the fixed loopback NAT-forwarded
+    // guest service. It never listens on Windows and exposes no host API.
+    worldHostRelay.start();
+  } catch (error) { worldBridge = null; recordStartupIssue("Junction World bridge unavailable (autonomy remains unavailable)", error); }
   researchClient = new WebResearchClient();
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
@@ -117,6 +145,26 @@ async function createWindowImpl() {
   if (process.platform === "win32") {
     try {
       const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
+        worldAuditStore, worldControlStore, worldChatStore,
+        onWorldControl: () => worldHostRelay?.pollNow(), onWorldMessage: () => worldHostRelay?.pollNow(),
+        getWorldStatus: async () => {
+          const relay = worldHostRelay?.getStatus?.() || { state: "OFFLINE" };
+          if (relay.state !== "ONLINE") return { state: relay.state, lastContactAt: relay.lastSuccessAt || null, relayError: relay.lastError || null };
+          const events = worldAuditStore.records;
+          const latest = events.at(-1);
+          const lastWake = [...events].reverse().find(event => event.category === "WAKE");
+          if (!latest) return { state: "OFFLINE" };
+          return {
+            state: latest.category === "SLEEP" ? "SLEEPING" : latest.category === "ERROR" ? "ERROR" : "WORKING",
+            lastEventAt: latest.occurredAt, lastWakeAt: lastWake?.occurredAt || null,
+            uptimeSeconds: lastWake ? Math.max(0, Math.floor((Date.now() - Date.parse(lastWake.occurredAt)) / 1000)) : null,
+            currentGoal: latest.goalId || null, activity: latest.summary,
+            workspaceFreeBytes: latest.resources?.workspaceFreeBytes ?? null,
+            memoryUsedBytes: latest.resources?.memoryUsedBytes ?? null,
+            cpuPercent: latest.resources?.cpuPercent ?? null,
+            lastContactAt: relay.lastSuccessAt,
+          };
+        },
         onStatus: status => recordStartupIssue("LAN relay", JSON.stringify(status)),
         bindAddress: process.env.JUNCTION_LAN_BIND_ADDRESS || null, port: process.env.JUNCTION_LAN_PORT ? Number(process.env.JUNCTION_LAN_PORT) : undefined });
       await candidateLanServer.start();
@@ -327,20 +375,6 @@ ipcMain.handle("junction:research-status", () => researchClient.status());
 ipcMain.handle("junction:research-jobs", () => researchCoordinator.list());
 ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
-ipcMain.handle("junction:open-mafioso", async () => {
-  const configuredUrl = String(
-    process.env.JUNCTION_MAFIOSO_URL || "https://d2t8pi3n8wgmgj.cloudfront.net"
-  ).trim();
-  if (configuredUrl) {
-    if (!/^https?:\/\//i.test(configuredUrl)) throw new Error("JUNCTION_MAFIOSO_URL must use http or https.");
-    await shell.openExternal(configuredUrl);
-    return { kind: "url", target: configuredUrl };
-  }
-  const projectPath = path.join(app.getPath("documents"), "0Mafioso", "Mafioso");
-  const openError = await shell.openPath(projectPath);
-  if (openError) throw new Error(openError);
-  return { kind: "folder", target: projectPath };
-});
 ipcMain.handle("junction:delegations",()=>delegation.list());
 ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
 ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));
@@ -354,11 +388,9 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", () => { createWindow().catch(() => {}); });
   app.whenReady().then(() => {
-    // A paired phone cannot wake a powered-off Windows process securely over
-    // the relay. Starting at sign-in and retaining the background process is
-    // the reliable recovery path while keeping all inference local to this PC.
+    // Launch is owner-controlled. Do not silently opt the PC into login startup.
     if (app.isPackaged && process.platform === "win32") {
-      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ["--background"] });
+      app.setLoginItemSettings({ openAtLogin: false, args: ["--background"] });
     }
     return createWindow();
   });
@@ -369,6 +401,7 @@ app.on("before-quit", event => {
   event.preventDefault(); isQuitting = true;
   shutdownPromise = (async () => {
     localBrainRelay?.stop();
+    await worldHostRelay?.stop();
     await lanServer?.stop();
     companion?.server.close();
     app.quit();

@@ -88,6 +88,21 @@ test("authenticates a paired Ed25519 client with a pinned certificate fingerprin
   assert.equal(server.connectionState(socket), "authenticated");
 });
 
+test("authenticated Android World messages enter only the bounded World chat queue", async () => {
+  const fixture = identityFixture(); let received = null;
+  const server = new LanServer({ identityStore: fixture.store, worldChatStore: { enqueue: value => { received = value; return { id: "550e8400-e29b-41d4-a716-446655440000", status: "QUEUED" }; } } });
+  const socket = new FakeSocket(); server.accept(socket);
+  socket.receive({ protocolVersion: 1, type: "hello", requestId: "h", payload: { deviceId: "phone-1", certificateFingerprint: server.certificateFingerprint } });
+  const challenge = socket.sent.at(-1).payload;
+  socket.receive({ protocolVersion: 1, type: "authenticate", requestId: "a", payload: { deviceId: "phone-1", signature: crypto.sign(null, Buffer.from(authMessage(challenge.nonce, "pc-1", "phone-1")), fixture.keyPair.privateKey).toString("base64url") } });
+  socket.receive({ protocolVersion: 1, type: "world.message", requestId: "m", payload: { content: "hello world", messageId: "550e8400-e29b-41d4-a716-446655440001", conversationId: "550e8400-e29b-41d4-a716-446655440002" } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(received, { deviceId: "phone-1", content: "hello world", messageId: "550e8400-e29b-41d4-a716-446655440001", conversationId: "550e8400-e29b-41d4-a716-446655440002" });
+  assert.equal(socket.sent.at(-1).type, "world.message.result");
+  assert.equal(socket.sent.at(-1).payload.status, "QUEUED");
+  await server.stop();
+});
+
 test("bootstraps LAN trust from an existing local-brain pairing and rejects a bad proof", async () => {
   const phone = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" }), publicKey = phone.publicKey.export({ type: "spki", format: "der" }).toString("base64");
   const sharedKey = crypto.randomBytes(32), brainId = crypto.randomBytes(32).toString("base64url"), paired = {};

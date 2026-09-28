@@ -1,3 +1,7 @@
+> Historical spec notes. For the current implementation and checks actually run, see
+> [27 September 2026 feature review](audit/2026-09-27-feature-review.md).
+> Statements below about missing LAN/GitHub work and completed device testing are outdated.
+
 # Known limitations against the v2 build spec
 
 This tracks the specific spec items that could not be completed by autonomous coding in this

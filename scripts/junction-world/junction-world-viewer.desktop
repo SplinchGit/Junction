@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Junction World
+Comment=View Junction World conversation and activity
+Exec=/usr/local/bin/junction-world-viewer
+Icon=web-browser
+Terminal=false
+StartupNotify=true
+Categories=Utility;
