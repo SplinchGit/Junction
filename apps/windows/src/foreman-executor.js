@@ -7,7 +7,7 @@ const forbidden=/(^|[\\/])(\.git|\.codex|\.env(?:\..*)?|credentials?|secrets?)([
 function relative(value){return typeof value==='string'&&value.length<500&&!path.isAbsolute(value)&&!value.split(/[\\/]/).includes('..')&&!value.includes(':');}
 function validateVerification(value){
  if(!Array.isArray(value)||!value.length||value.length>12)throw new Error('Provide 1–12 owner-approved verification commands');
- return value.map(v=>{if(!relative(v.cwd||'.'))throw new Error('Invalid verification directory');if(!Array.isArray(v.command)||!v.command.length||v.command.length>30||v.command.some(a=>typeof a!=='string'||a.length>2000||a.includes('\0')))throw new Error('Invalid verification argv');return {command:v.command,cwd:v.cwd||'.',timeoutMs:Math.min(300000,Math.max(1000,Number(v.timeoutMs)||120000))};});
+ return value.map(v=>{if(!relative(v.cwd||'.'))throw new Error('Invalid verification directory');if(!Array.isArray(v.command)||!v.command.length||v.command.length>30||v.command.some(a=>typeof a!=='string'||a.length>2000||a.includes('\0')))throw new Error('Invalid verification argv');const protectedPaths=Array.isArray(v.protectedPaths)?v.protectedPaths:[];if(protectedPaths.length>100||protectedPaths.some(item=>!relative(item)))throw new Error('Invalid protected verification path');return {command:v.command,cwd:v.cwd||'.',timeoutMs:Math.min(300000,Math.max(1000,Number(v.timeoutMs)||120000)),protectedPaths};});
 }
 function retryDeadline(value,now=Date.now()){
  const groups=value?.rateLimitsByLimitId?Object.values(value.rateLimitsByLimitId):value?.rateLimits?[value.rateLimits]:[];
@@ -31,7 +31,8 @@ class ForemanExecutor{
   const repoPath=fs.realpathSync(input.repoPath);const root=(await this.git(repoPath,['rev-parse','--show-toplevel'])).trim();
   if(path.resolve(root).toLowerCase()!==repoPath.toLowerCase())throw new Error('Choose a Git repository root');
   for(const check of verification)if(check.command[0]==='godot'&&process.platform==='win32'){const folder=path.join(repoPath,'pc_godot');if(fs.existsSync(folder)){const found=fs.readdirSync(folder).find(n=>/^Godot_v[0-9.]+-stable_win64\.exe$/i.test(n));if(found)check.command[0]=path.join(folder,found);}}
-  return {repoPath,verification,sourceHash:await this.sourceHash(repoPath),baseSha:(await this.git(repoPath,['rev-parse','HEAD'])).trim(),baseBranch:(await this.git(repoPath,['branch','--show-current'])).trim(),dirty:Boolean((await this.git(repoPath,['status','--porcelain'])).trim())};
+  const verificationProtected=[...new Set(verification.flatMap(check=>check.protectedPaths.map(item=>path.join(check.cwd,item).replaceAll('\\','/').replace(/^\.\//,''))))];
+  return {repoPath,verification,verificationProtected,sourceHash:await this.sourceHash(repoPath),baseSha:(await this.git(repoPath,['rev-parse','HEAD'])).trim(),baseBranch:(await this.git(repoPath,['branch','--show-current'])).trim(),dirty:Boolean((await this.git(repoPath,['status','--porcelain'])).trim())};
  }
  async sourceHash(root,includeProtected=false){const names=(await this.git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(n=>n&&relative(n)&&(includeProtected||!forbidden.test(n))).sort();const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
  async review(p){
@@ -102,7 +103,8 @@ class ForemanExecutor{
    if([...changed,...added].some(f=>forbidden.test(f)))throw new Error('Candidate touched a protected path');
    for(const name of [...changed,...added]){const file=path.join(cwd,name);if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw new Error('Candidate contains a symlink');}
    const verificationPaths=checks.flatMap(check=>check.command.filter(arg=>!arg.startsWith('-')).map(arg=>path.relative(cwd,path.resolve(cwd,check.cwd,arg.replace(/^res:\/\//,''))).replaceAll('\\','/')));
-   const protectedChecks=changed.filter(f=>verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f));
+   const declared=p.verificationProtected||[];const explicitlyProtected=f=>declared.some(item=>f===item||f.startsWith(`${item}/`));
+   const protectedChecks=changed.filter(f=>explicitlyProtected(f)||verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f));
    if(protectedChecks.length)throw new Error(`Owner review required: candidate changed verification or dependency definitions: ${protectedChecks.join(', ')}`);
    const beforeTests=await this.sourceHash(cwd,true);
    const tests=[];
