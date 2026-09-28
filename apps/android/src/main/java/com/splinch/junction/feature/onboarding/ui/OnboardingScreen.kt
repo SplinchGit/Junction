@@ -325,7 +325,7 @@ private fun ApiKeyStep(
         JunctionTextField(
             value = apiKeyInput,
             onValueChange = onApiKeyChange,
-            label = "API key",
+            label = if (provider.id == "openrouter") "OpenRouter API key" else "API key",
             isPassword = true
         )
         if (provider.requiresBaseUrl) {

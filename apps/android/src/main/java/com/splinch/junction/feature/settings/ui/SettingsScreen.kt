@@ -300,7 +300,7 @@ fun SettingsScreen(
                 JunctionTextField(
                     value = providerApiKeyInput,
                     onValueChange = { providerApiKeyInput = it },
-                    label = "API key",
+                    label = if (providerIdInput == "openrouter") "OpenRouter API key" else "API key",
                     isPassword = true
                 )
             } else {

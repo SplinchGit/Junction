@@ -22,7 +22,7 @@ class ProviderRouter(
         // A Local LLM is an explicit, cost/privacy-sensitive owner choice. If
         // its private Junction gateway is unavailable, report that condition;
         // never silently send the same turn to a paid cloud provider.
-        return if (allowFallback && providerId != "local") registry.getFallbackProvider(providerId) else null
+        return if (allowFallback && allowsAutomaticFallback(providerId)) registry.getFallbackProvider(providerId) else null
     }
 
     fun consumeFrontierRequest(explicitlyRequested: Boolean): Boolean {
@@ -61,3 +61,5 @@ class ProviderRouter(
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: raw
     }
 }
+
+internal fun allowsAutomaticFallback(providerId: String): Boolean = providerId !in setOf("local", "openrouter")

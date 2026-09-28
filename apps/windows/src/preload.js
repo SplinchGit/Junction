@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("junction", {
   foreman: (type,payload={},requestId=crypto.randomUUID()) => ipcRenderer.invoke("junction:foreman",{type,payload,requestId}),
   onConversationsChanged: callback => { const listener = () => callback(); ipcRenderer.on("junction:conversations-changed", listener); return () => ipcRenderer.removeListener("junction:conversations-changed", listener); },
+  onChatStream: callback => { const listener = (_event, value) => callback(value); ipcRenderer.on("junction:chat-stream", listener); return () => ipcRenderer.removeListener("junction:chat-stream", listener); },
   status: () => ipcRenderer.invoke("junction:status"), signIn: () => ipcRenderer.invoke("junction:sign-in"), signOut: () => ipcRenderer.invoke("junction:sign-out"),
   setSync: enabled => ipcRenderer.invoke("junction:set-sync", enabled), inspect: () => ipcRenderer.invoke("junction:inspect"),
   audit: () => ipcRenderer.invoke("junction:audit"), conversations: () => ipcRenderer.invoke("junction:conversations"),

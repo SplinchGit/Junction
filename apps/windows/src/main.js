@@ -324,7 +324,7 @@ ipcMain.handle("junction:audit", () => {
   try {
     return fs.readFileSync(auditPath, "utf8").trim().split(/\r?\n/).filter(Boolean).slice(-50).reverse().map(line => {
       const row = JSON.parse(line);
-      return { id: row.id, timestamp: row.timestamp, event: row.event, capability: row.capability, decision: row.decision, outcome: row.outcome, reason: row.reason, runId: row.runId, model: row.model, mode: row.mode, iteration: row.iteration, iterations: row.iterations, toolCalls: row.toolCalls, toolsExecuted: row.toolsExecuted, toolNames: row.toolNames, inputTokens: row.inputTokens, outputTokens: row.outputTokens, thinkingCharacters: row.thinkingCharacters, thinkingState: row.thinkingState, reasoningTokens: row.reasoningTokens, durationMs: row.durationMs };
+      return { id: row.id, timestamp: row.timestamp, event: row.event, capability: row.capability, decision: row.decision, outcome: row.outcome, reason: row.reason, runId: row.runId, provider: row.provider, model: row.model, mode: row.mode, iteration: row.iteration, iterations: row.iterations, toolCalls: row.toolCalls, toolsExecuted: row.toolsExecuted, toolNames: row.toolNames, inputTokens: row.inputTokens, outputTokens: row.outputTokens, thinkingCharacters: row.thinkingCharacters, thinkingState: row.thinkingState, reasoningTokens: row.reasoningTokens, durationMs: row.durationMs };
     });
   } catch { return []; }
 });
@@ -345,14 +345,15 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   const config=localData.provider();
   const runId=String(request.runId||crypto.randomUUID()).slice(0,100),controller=new AbortController();
   const nativeToolsAvailable=config.id==="local";
-  const mode=nativeToolsAvailable?"agent":request.research?"research":"chat",started=Date.now();
-  appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,model:config.model||"Default model",mode,toolsAvailable:nativeToolsAvailable,reason:nativeToolsAvailable?"Native tools supplied automatically":request.research?"Junction Search evidence requested before inference":"This provider does not use the local native-tool runtime"});
-  if(nativeToolsAvailable)activeAgentRuns.set(runId,controller);
+  const cloudToolsAvailable=config.id==="openrouter",toolsAvailable=nativeToolsAvailable||cloudToolsAvailable;
+  const mode=toolsAvailable?"agent":request.research?"research":"chat",started=Date.now();
+  appendAudit({event:"model_run_started",capability:"model",decision:"started",outcome:"pending",runId,provider:config.id,model:config.model||"Default model",mode,toolsAvailable,reason:nativeToolsAvailable?"Native tools supplied automatically":cloudToolsAvailable?"OpenRouter function tools supplied":"This provider does not use the local native-tool runtime"});
+  if(toolsAvailable)activeAgentRuns.set(runId,controller);
   let reply,research=null;
   const complete = ({messages, instruction}) => config.id === "codex"
     ? sendCodexChat({model:config.model,messages,memories:[],context:null,research:instruction,workingDirectory:app.getPath("userData")})
     : sendChat({config,key:identityStore.getProviderKey(config.id),messages,memories:[],context:null,research:instruction});
-  const intent = !nativeToolsAvailable && config.id !== "anthropic"
+  const intent = !nativeToolsAvailable && config.id !== "anthropic" && config.id !== "openrouter"
     ? await decideIntent({goal:content,history:conversation.messages.slice(0,-1),capabilities:["web_search","approval_gated_code_draft"],complete}) : null;
   const needsResearch = request.research || intent?.action === "search";
   try {
@@ -364,11 +365,17 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
       ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
-        : await sendChat({config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions});
+        : await sendChat({
+            config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions,
+            signal:cloudToolsAvailable?controller.signal:null,
+            onChunk:cloudToolsAvailable?text=>_event.sender.send("junction:chat-stream",{runId,provider:"openrouter",model:config.model,text}):null,
+            tools:cloudToolsAvailable?localAgent.tools.definitions({allowCodeDelegation:false}):[],
+            executeTool:cloudToolsAvailable?async(name,args)=>localAgent.tools.execute(name,args,{goal:content,ledgers:[],searches:1,allowCodeDelegation:false,audit:{runId,provider:"openrouter",model:config.model,mode:"agent"},validateSearch:query=>validateSearchEgress(query,conversation.messages.filter(item=>item.role==="user").slice(-12).map(item=>item.content).join(" "))}):null
+          });
   } catch(error) {
-    appendAudit({event:"model_run_completed",capability:"model",decision:"stopped",outcome:"failure",runId,model:config.model||"Default model",mode,toolCalls:0,toolsExecuted:0,toolNames:[],durationMs:Date.now()-started,reason:String(error.message||error).slice(0,500)});
+    appendAudit({event:"model_run_completed",capability:"model",decision:"stopped",outcome:"failure",runId,provider:config.id,model:config.model||"Default model",mode,toolCalls:0,toolsExecuted:0,toolNames:[],durationMs:Date.now()-started,reason:String(error.message||error).slice(0,500)});
     throw error;
-  } finally { if(nativeToolsAvailable)activeAgentRuns.delete(runId); }
+  } finally { if(toolsAvailable)activeAgentRuns.delete(runId); }
   const contentWithSources = research ? renderCitations(reply.content, research) : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
   const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
@@ -377,9 +384,9 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   const thinkingState=reply.thinkingState||(reasoningTokens?"reported":config.id==="local"?"off":"not_reported");
   const telemetry={mode,runId,toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],iterations:Number(reply.iterations||1),thinkingCharacters:Number(reply.thinkingCharacters||0),thinkingState,reasoningTokens,durationMs:Number(reply.durationMs||Date.now()-started)};
   localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens),...telemetry});
-  if(!nativeToolsAvailable)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,model:reply.model||config.model||"Default model",mode,toolsAvailable:false,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:0,thinkingState,durationMs:telemetry.durationMs,iterations:1,toolCalls:0,toolsExecuted:0,toolNames:[],reason:request.research?"Answered from owner-requested Junction Search evidence; model selected no native tools":"Answered without the local native-tool runtime"});
+  if(!nativeToolsAvailable)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,provider:config.id,model:reply.model||config.model||"Default model",mode,toolsAvailable:cloudToolsAvailable,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:Number(reply.reasoningCharacters||0),thinkingState,durationMs:telemetry.durationMs,iterations:Number(reply.iterations||1),toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],reason:reply.toolCalls?`Answered after ${reply.toolCalls} OpenRouter function call(s)`:request.research?"Answered from owner-requested Junction Search evidence":"Answered without a tool call"});
   scheduleSharedSync();
-  return {conversationId:conversation.id,message,usage:reply.usage,model:reply.model};
+  return {conversationId:conversation.id,message,usage:reply.usage,provider:config.id,model:reply.model};
 });
 ipcMain.handle("junction:cancel-agent", (_event, runId) => { const controller=activeAgentRuns.get(String(runId||"")); if(!controller)return {cancelled:false};controller.abort();return {cancelled:true}; });
 ipcMain.handle("junction:memories", () => localData.memories());

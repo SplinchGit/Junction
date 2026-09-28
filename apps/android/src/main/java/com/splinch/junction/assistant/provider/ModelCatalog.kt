@@ -96,6 +96,25 @@ object ModelCatalog {
             )
         ),
         ProviderDefinition(
+            id = "openrouter",
+            displayName = "OpenRouter",
+            recommendationTag = "FREE",
+            recommendationDetail = "NVIDIA Nemotron 3 Ultra through OpenRouter's free endpoint. No paid fallback.",
+            apiKeyUrl = "https://openrouter.ai/keys",
+            baseUrl = "https://openrouter.ai/api/v1",
+            defaultModelId = "nvidia/nemotron-3-ultra-550b-a55b:free",
+            models = listOf(
+                ModelEntry(
+                    "nvidia/nemotron-3-ultra-550b-a55b:free",
+                    "Nemotron 3 Ultra (FREE)",
+                    "FREE",
+                    "NVIDIA's reasoning and orchestration model via OpenRouter's free endpoint.",
+                    0.0,
+                    0.0
+                )
+            )
+        ),
+        ProviderDefinition(
             id = "custom",
             displayName = "Custom",
             recommendationTag = "Advanced",
@@ -106,9 +125,9 @@ object ModelCatalog {
         )
     )
 
-    /** The everyday chat surface stays focused on the supported lanes: Local, GPT, and Claude. */
+    /** The everyday chat surface stays focused on the supported first-party and explicit cloud lanes. */
     val primaryProviders: List<ProviderDefinition>
-        get() = providers.filter { it.id in setOf("local", "openai", "anthropic") }
+        get() = providers.filter { it.id in setOf("local", "openai", "anthropic", "openrouter") }
 
     fun providerById(id: String): ProviderDefinition? = providers.find { it.id == id }
 
