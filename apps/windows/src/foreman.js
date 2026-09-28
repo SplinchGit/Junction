@@ -11,7 +11,9 @@ class Foreman {
   constructor(directory, { executor, now = Date.now, audit = () => {} } = {}) {
     this.directory = directory; this.executor = executor; this.now = now; this.audit = audit;
     this.enabled = new Set(); this.jobs = new Map(); this.timers = new Map(); this.closed = false;
+    this.operations = new Map();
     fs.mkdirSync(directory, {recursive:true});
+    this.lastBackup=0;
     this.db = new DatabaseSync(path.join(directory,'foreman.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;');
     if (this.db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok') throw new Error('Foreman database is damaged; restore a backup.');
@@ -32,19 +34,23 @@ class Foreman {
       this.db.exec('COMMIT');
     } catch(e){this.db.exec('ROLLBACK');this.enabled.delete(p.id);this.jobs.get(p.id)?.controller.abort();throw e;}
     try{this.audit({event:'foreman',projectId:p.id,kind,detail:String(detail).slice(0,500)});}catch{}
+    try{if(this.now()-this.lastBackup>60000){this.db.exec('PRAGMA wal_checkpoint(FULL)');const temp=path.join(this.directory,'foreman.backup.tmp');fs.copyFileSync(path.join(this.directory,'foreman.sqlite'),temp);const fd=fs.openSync(temp,'r+');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(temp,path.join(this.directory,'foreman.backup.sqlite'));this.lastBackup=this.now();}}catch(error){try{this.audit({event:'foreman_backup_failed',detail:error.message});}catch{}}
     return structuredClone(p);
   }
   events(id,after=0) { return this.db.prepare('SELECT * FROM events WHERE project=? AND seq>? ORDER BY seq LIMIT 50').all(id,after); }
   async create(input) {
+    if(this.closed)throw new Error('Junction is quitting');
     if(this.list().length>=50)throw new Error('Project limit reached');
     const name=text(input.name,80,'project name'),objective=text(input.objective,12000,'objective');
     if(!Array.isArray(input.tasks)||!input.tasks.length||input.tasks.length>50)throw new Error('Provide 1–50 concrete tasks');
     const tasks=input.tasks.map(t=>({id:crypto.randomUUID(),title:text(t.title,240,'task'),kind:t.kind==='verify'?'verify':'codex',acceptance:text(t.acceptance,4000,'acceptance criteria'),status:'QUEUED',attempts:[],files:Array.isArray(t.files)?t.files.slice(0,30):[]}));
     const inspected=await this.executor.inspect(input);
+    if(this.closed)throw new Error('Junction is quitting');
     const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,verification:input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Start explicitly',retryAt:null,createdAt:this.now()};
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
   }
   async control(id,action,revision,requestId) {
+    if(this.operations.has(id))throw new Error('Project review/apply is finishing; retry after it completes');
     text(requestId,160,'request ID');
     const binding=JSON.stringify([id,action,revision]);
     const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
@@ -63,8 +69,7 @@ class Foreman {
       this.enabled.delete(id);clearTimeout(this.timers.get(id));this.timers.delete(id);
       const interrupted=p.tasks.find(t=>t.status==='RUNNING');if(interrupted){interrupted.status='QUEUED';if(interrupted.attempts.length)interrupted.attempts.at(-1).status='INTERRUPTED';}
       p.status=action==='stop'?'STOPPED':'PAUSED';p.nextAction='Resume explicitly';
-      this.save(p,action.toUpperCase(),'Preserving progress and interrupting current work',{id:requestId,binding});
-      this.jobs.get(id)?.controller.abort();
+      try{this.save(p,action.toUpperCase(),'Preserving progress and interrupting current work',{id:requestId,binding});}finally{this.jobs.get(id)?.controller.abort();}
     }
     return this.get(id);
   }
@@ -99,7 +104,7 @@ class Foreman {
   }
   schedule(id,at){clearTimeout(this.timers.get(id));const timer=setTimeout(()=>{this.timers.delete(id);this.kick(id);},Math.min(2147483647,Math.max(1,at-this.now())));timer.unref?.();this.timers.set(id,timer);}
   async idle(){await Promise.all([...this.jobs.values()].map(j=>j.promise));if(this.jobs.size)return this.idle();}
-  async shutdown(){this.closed=true;for(const id of [...this.enabled]){const p=this.get(id);await this.control(id,'pause',p.revision,crypto.randomUUID());}await this.executor.stop?.();await this.idle();}
+  async shutdown(){this.closed=true;for(const id of [...this.enabled]){const p=this.get(id);await this.control(id,'pause',p.revision,crypto.randomUUID());}await this.executor.stop?.();await this.idle();await Promise.allSettled([...this.operations.values()]);}
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
 module.exports={Foreman};

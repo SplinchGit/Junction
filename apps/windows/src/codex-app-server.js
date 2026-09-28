@@ -69,6 +69,7 @@ class CodexAppServer {
   }
 
   async run({ threadId, cwd, prompt, model, onProgress = () => {}, onTurnStarted = () => {}, signal }) {
+    if (signal?.aborted) throw new Error("Paused");
     await this.start();
     if (signal?.aborted) throw new Error("Paused");
     // The installed CLI's advertised default may differ from a newer desktop
@@ -76,6 +77,7 @@ class CodexAppServer {
     if (!model) { const catalog=await this.request("model/list",{}); model=catalog?.data?.find(item=>item.isDefault)?.model; }
     if (threadId) await this.request("thread/resume", { threadId });
     else threadId = (await this.request("thread/start", { cwd, ...(model ? {model} : {}), approvalPolicy: "never", sandbox: "workspace-write" })).thread.id;
+    onTurnStarted({ threadId, dispatchPending: true });
     let turnId = null, finalText = "";
     let off, abort, timer;
     const completed = new Promise((resolve, reject) => {
@@ -105,10 +107,10 @@ class CodexAppServer {
       approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }, ...(model ? {model} : {})
     });
     turnId = started.turn.id;
-    onTurnStarted({ threadId, turnId });
+    onTurnStarted({ threadId, turnId, dispatchPending: false });
     if(signal?.aborted) abort();
     return await completed;
-    } finally { clearTimeout(timer); off?.(); signal?.removeEventListener("abort",abort); }
+    } catch(error) { await this.stop(); throw error; } finally { clearTimeout(timer); off?.(); signal?.removeEventListener("abort",abort); }
   }
   stop() {
     const child=this.process; this.process=null;

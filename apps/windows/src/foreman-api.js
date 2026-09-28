@@ -15,22 +15,27 @@ class ForemanApi{
    if(Buffer.byteLength(JSON.stringify(result))>55000)throw new Error('Project detail exceeds transport limit; inspect on Windows');
    return result;
   }
+  if(f.closed)throw new Error('Junction is quitting');
   if(type==='project.register') {if(source!=='desktop')throw new Error('Register project paths on Windows');return {project:summary(await f.create(payload))};}
   if(type==='task.control'){
    if(Object.keys(payload).some(k=>!['id','action','revision'].includes(k)))throw new Error('Invalid control fields');
    const p=await f.control(payload.id,payload.action,payload.revision,requestId);return {id:p.id,status:p.status,revision:p.revision};
   }
   if(type==='task.enqueue'){
-   const p=f.get(payload.id);if(p.revision!==payload.revision)throw new Error('Stale task revision');if(f.enabled.has(p.id)||f.jobs.has(p.id))throw new Error('Pause before changing the queue');
+   const binding=JSON.stringify([type,payload]);const prior=f.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);if(prior){if(prior.binding!==binding)throw new Error('Request ID reused');return {id:payload.id};}
+   const p=f.get(payload.id);if(p.revision!==payload.revision)throw new Error('Stale task revision');if(f.enabled.has(p.id)||f.jobs.has(p.id)||f.operations.has(p.id))throw new Error('Pause before changing the queue; wait for review/apply to finish');
    if(p.tasks.length>=50||typeof payload.title!=='string'||!payload.title.trim()||payload.title.length>240||typeof payload.acceptance!=='string'||!payload.acceptance.trim()||payload.acceptance.length>4000)throw new Error('Invalid task');
-   p.tasks.push({id:crypto.randomUUID(),title:payload.title.trim(),acceptance:payload.acceptance.trim(),kind:payload.kind==='verify'?'verify':'codex',files:[],status:'QUEUED',attempts:[]});p.roadmap.push(payload.title);p.status='PAUSED';p.nextAction='Resume explicitly';return {project:summary(f.save(p,'TASK_ADDED',payload.title))};
+   p.tasks.push({id:crypto.randomUUID(),title:payload.title.trim(),acceptance:payload.acceptance.trim(),kind:payload.kind==='verify'?'verify':'codex',files:[],status:'QUEUED',attempts:[]});p.roadmap.push(payload.title);p.status='PAUSED';p.nextAction='Resume explicitly';f.save(p,'TASK_ADDED',payload.title,{id:requestId,binding});return {id:p.id,status:p.status,revision:p.revision};
   }
   if(type==='task.review'||type==='task.apply'){
    if(source!=='desktop')throw new Error('Review and apply original-checkout changes on Windows');
-   const p=f.get(payload.id);if(f.enabled.has(p.id)||f.jobs.has(p.id))throw new Error('Pause before reviewing changes');
+   const p=f.get(payload.id);if(f.enabled.has(p.id)||f.jobs.has(p.id)||f.operations.has(p.id))throw new Error('Pause before reviewing changes');
    if(p.revision!==payload.revision)throw new Error('Stale task revision');
-   if(type==='task.review'){const r=await f.executor.review(p);p.reviewed={headSha:r.headSha,diffHash:r.diffHash,sourceHash:r.sourceHash};f.save(p,'REVIEWED',r.summary);return {...p.reviewed,summary:r.summary,patch:r.patch.slice(0,200000)};}
-   const r=await f.executor.applyReviewed(p);f.save(p,'APPLIED',r.summary);return r;
+   let release;f.operations.set(p.id,new Promise(resolve=>release=resolve));
+   try {
+    if(type==='task.review'){const r=await f.executor.review(p);if(r.patch.length>200000)throw new Error('Diff is too large for in-app approval; review manually');p.reviewed={headSha:r.headSha,diffHash:r.diffHash,sourceHash:r.sourceHash};f.save(p,'REVIEWED',r.summary);return {...p.reviewed,summary:r.summary,patch:r.patch};}
+    const r=await f.executor.applyReviewed(p);f.save(p,'APPLIED',r.summary);return r;
+   }finally{f.operations.delete(p.id);release();}
   }
   throw new Error('Unsupported project operation');
  }

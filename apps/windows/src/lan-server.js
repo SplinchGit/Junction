@@ -70,7 +70,8 @@ class LanServer {
       if (!this.authorized(socket)) return;
       if (["project.list","project.get","task.control","task.enqueue"].includes(envelope.type)) {
         if(!this.foremanApi) throw new Error("Project runtime is unavailable");
-        const result=await this.foremanApi.dispatch(envelope.type,envelope.payload,`${state.deviceId}:${envelope.requestId}`,"android");
+        const controlId=crypto.createHash('sha256').update(`${state.deviceId}:${envelope.requestId}`).digest('hex');
+        const result=await this.foremanApi.dispatch(envelope.type,envelope.payload,controlId,"android");
         return this.send(socket,`${envelope.type}.result`,envelope.requestId,result);
       }
       if (envelope.type === "ping") return this.send(socket, "pong", envelope.requestId, {});

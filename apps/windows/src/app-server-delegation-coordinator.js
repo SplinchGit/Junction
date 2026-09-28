@@ -35,6 +35,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     super(directory, options);
     this.appServer = options.appServer || new CodexAppServer({ onDiagnostic: value => this.audit("app_server_diagnostic", { value: value.slice(0, 500) }) });
     this.resumeTimers = new Map();
+    this.activeRuns = new Map();
     for (const plan of this.plans) for (const project of plan.projects) {
       if (project.status === "running" || project.status === "queued" || project.status === WAITING) {
         project.status = "needs_decision";
@@ -61,6 +62,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
   }
   async waitForConfirmedCapacity(plan, project) {
     const availability = capacityWindow(await this.appServer.readRateLimits());
+    if(this.closed || project.status === "cancelled") return true;
     if (!availability) return false;
     project.status = WAITING;
     project.resumeAt = availability.resumesAt;
@@ -77,7 +79,13 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     project.summary = String(error.message || error).slice(0, 180);
     this.save();
   }
-  async runProject(plan, project, decision = "") {
+  runProject(plan, project, decision = "") {
+    if(this.closed || this.activeRuns.has(project.id)) return Promise.resolve();
+    const controller=new AbortController();
+    const promise=this.runProjectImpl(plan,project,decision,controller.signal).finally(()=>this.activeRuns.delete(project.id));
+    this.activeRuns.set(project.id,{controller,promise});return promise;
+  }
+  async runProjectImpl(plan, project, decision, signal) {
     if(this.closed) return;
     try {
       if (await this.waitForConfirmedCapacity(plan, project)) return;
@@ -87,6 +95,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
       // endpoint is temporarily unavailable.
       this.audit("rate_limit_status_unavailable", { planId: plan.id, projectId: project.id, message: String(error.message || error).slice(0, 300) });
     }
+    if(this.closed || signal.aborted || project.status === "cancelled") return;
     const slug = project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
     const run = plan.id.slice(0, 8);
     project.branch = project.branch || `junction/delegation/${run}/${slug}`;
@@ -95,6 +104,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
       fs.mkdirSync(path.dirname(project.worktree), { recursive: true });
       await this.exec("git", ["-C", project.repoPath, "worktree", "add", "-b", project.branch, project.worktree, project.baseSha], { windowsHide: true });
     }
+    if(this.closed || signal.aborted || project.status === "cancelled") return;
     project.status = "running";
     project.resumeAt = null;
     project.summary = decision ? "Codex resumed with your decision" : "Codex is working in its isolated worktree";
@@ -110,6 +120,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     ].filter(Boolean).join("\n\n");
     try {
       const result = await this.appServer.run({
+        signal,
         threadId: project.codexThreadId || null,
         cwd: project.worktree,
         prompt,
@@ -122,6 +133,7 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
       if (decisionMatch) { project.status = "needs_decision"; project.decisionRequest = decisionMatch[1].trim(); }
       else if(!this.closed && project.status !== "cancelled") await this.verify(project);
     } catch (error) {
+      if(this.closed || signal.aborted || project.status === "cancelled") return;
       const message = String(error.message || error);
       if (/rate.?limit|usage.?limit|quota|capacity/i.test(message)) {
         try {
@@ -144,17 +156,19 @@ class AppServerDelegationCoordinator extends DelegationCoordinator {
     const plan = this.get(planId), project = plan?.projects.find(item => item.id === projectId);
     if (!project || (project.status !== "running" && project.status !== WAITING)) throw new Error("This agent is not running or waiting.");
     clearTimeout(this.resumeTimers.get(project.id));
+    this.activeRuns.get(project.id)?.controller.abort();
     this.resumeTimers.delete(project.id);
     if (project.codexThreadId && project.codexTurnId) this.appServer.request("turn/interrupt", { threadId: project.codexThreadId, turnId: project.codexTurnId }).catch(() => {});
     project.status = "cancelled"; project.summary = "Stopped by owner; branch, worktree, and Codex thread are preserved";
     this.save(); this.audit("agent_cancelled", { planId, projectId, threadId: project.codexThreadId || null }); this.refresh(plan);
   }
-  shutdown() {
+  async shutdown() {
     this.closed=true;
+    for(const run of this.activeRuns.values())run.controller.abort();
     for(const timer of this.resumeTimers.values())clearTimeout(timer);
     this.resumeTimers.clear();
     for(const plan of this.plans)for(const project of plan.projects)if(["running","queued",WAITING].includes(project.status)){project.status="needs_decision";project.decisionRequest="Resume saved work explicitly?";project.summary="Paused when Junction quit";}
-    this.save();this.appServer.stop();
+    this.save();await this.appServer.stop();await Promise.allSettled([...this.activeRuns.values()].map(r=>r.promise));
   }
 }
 

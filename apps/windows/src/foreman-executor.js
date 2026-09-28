@@ -27,12 +27,13 @@ class ForemanExecutor{
  constructor(directory,{server,runGit}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});this.runGit=runGit;}
  async git(cwd,args){if(this.runGit)return this.runGit(cwd,args);const r=await exec('git',['-c','core.hooksPath=NUL','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','protocol.file.allow=never','-C',cwd,...args],{windowsHide:true,shell:false,timeout:30000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}});return r.stdout;}
  async inspect(input){
-  validateVerification(input.verification);
+  const verification=validateVerification(input.verification);
   const repoPath=fs.realpathSync(input.repoPath);const root=(await this.git(repoPath,['rev-parse','--show-toplevel'])).trim();
   if(path.resolve(root).toLowerCase()!==repoPath.toLowerCase())throw new Error('Choose a Git repository root');
-  return {repoPath,sourceHash:await this.sourceHash(repoPath),baseSha:(await this.git(repoPath,['rev-parse','HEAD'])).trim(),baseBranch:(await this.git(repoPath,['branch','--show-current'])).trim(),dirty:Boolean((await this.git(repoPath,['status','--porcelain'])).trim())};
+  for(const check of verification)if(check.command[0]==='godot'&&process.platform==='win32'){const folder=path.join(repoPath,'pc_godot');if(fs.existsSync(folder)){const found=fs.readdirSync(folder).find(n=>/^Godot_v[0-9.]+-stable_win64\.exe$/i.test(n));if(found)check.command[0]=path.join(folder,found);}}
+  return {repoPath,verification,sourceHash:await this.sourceHash(repoPath),baseSha:(await this.git(repoPath,['rev-parse','HEAD'])).trim(),baseBranch:(await this.git(repoPath,['branch','--show-current'])).trim(),dirty:Boolean((await this.git(repoPath,['status','--porcelain'])).trim())};
  }
- async sourceHash(root){const names=(await this.git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(n=>n&&relative(n)&&!forbidden.test(n)).sort();const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
+ async sourceHash(root,includeProtected=false){const names=(await this.git(root,['ls-files','-z','--cached','--others','--exclude-standard'])).split('\0').filter(n=>n&&relative(n)&&(includeProtected||!forbidden.test(n))).sort();const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
  async review(p){
   if(!p.worktree||!p.verifiedSha)throw new Error('No verified candidate');
   if((await this.git(p.worktree,['status','--porcelain'])).trim())throw new Error('Candidate has unverified changes');
@@ -84,28 +85,32 @@ class ForemanExecutor{
  async runTask(p,t,{signal,checkpoint}){
   const checks=validateVerification(p.verification);
   const cwd=await this.prepare(p,t,checkpoint,signal);
+  if(signal.aborted)throw new Error('Paused');
   try{
    if(t.kind!=='verify'){
     let capacity;try{capacity=retryDeadline(await this.server.readRateLimits());}catch{capacity=Date.now()+300000;}
+    if(signal.aborted)throw new Error('Paused');
     if(capacity)throw Object.assign(new Error('Waiting for confirmed Codex capacity'),{retryAt:capacity});
     const previous=t.attempts.slice(0,-1).reverse().find(a=>a.threadId);
-    if(previous?.turnId){const state=await this.server.request('thread/read',{threadId:previous.threadId,includeTurns:true});const turn=state.thread?.turns?.find(x=>x.id===previous.turnId);if(turn?.status==='inProgress')throw new Error('Previous Codex turn is still active; reconcile before resuming');}
+    if(previous?.threadId){const state=await this.server.request('thread/read',{threadId:previous.threadId,includeTurns:true});const active=state.thread?.turns?.some(x=>x.status==='inProgress');if(active)throw new Error('Previous Codex turn is still active; reconcile before resuming');}
     const result=await this.server.run({cwd,prompt:engineeringPacket(p,t),signal,onTurnStarted:ids=>checkpoint(ids)});
     checkpoint({summary:result.text.slice(-2000)});
     if(result.text.includes('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.text.slice(result.text.indexOf('JUNCTION_DECISION_REQUIRED:')).slice(0,2000));
    }
-   const changed=(await this.git(cwd,['diff','--name-only','HEAD'])).split(/\r?\n/).filter(Boolean);
+   const changed=(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
    const added=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
    if([...changed,...added].some(f=>forbidden.test(f)))throw new Error('Candidate touched a protected path');
    for(const name of [...changed,...added]){const file=path.join(cwd,name);if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw new Error('Candidate contains a symlink');}
-   const protectedChecks=changed.filter(f=>/(^|\/)(tests?|\.github)\//i.test(f)||/(^|\/)(package\.json|.*lock.*)$/.test(f));
+   const verificationPaths=checks.flatMap(check=>check.command.filter(arg=>!arg.startsWith('-')).map(arg=>path.relative(cwd,path.resolve(cwd,check.cwd,arg.replace(/^res:\/\//,''))).replaceAll('\\','/')));
+   const protectedChecks=changed.filter(f=>verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f));
    if(protectedChecks.length)throw new Error(`Owner review required: candidate changed verification or dependency definitions: ${protectedChecks.join(', ')}`);
-   const beforeTests=(await this.git(cwd,['diff','--binary','HEAD']));
+   const beforeTests=await this.sourceHash(cwd,true);
    const tests=[];
    for(const profile of checks){if(signal.aborted)throw new Error('Paused');const target=fs.realpathSync(path.join(cwd,profile.cwd));if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');const r=await this.command(target,profile.command,signal,profile.timeoutMs);const evidence={command:profile.command,exitCode:r.exitCode,output:(r.stdout+'\n'+r.stderr).slice(-12000)};tests.push(evidence);checkpoint({tests,summary:`Verification ${tests.length}/${checks.length}: exit ${r.exitCode}`});if(r.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);}
    if(signal.aborted)throw new Error('Paused');
-   const afterTests=await this.git(cwd,['diff','--binary','HEAD']);
-   if(beforeTests!==afterTests)throw new Error('Verification changed tracked source; inspect candidate before retrying');
+   const afterTests=await this.sourceHash(cwd,true);
+   if(beforeTests!==afterTests)throw new Error('Verification changed project source or created untracked files; inspect candidate before retrying');
+   const finalNames=[...(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/),...(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/)].filter(Boolean);if(finalNames.some(f=>forbidden.test(f)))throw new Error('Verification created a protected file');
    await this.git(cwd,['add','--all']);
    if((await this.git(cwd,['diff','--cached','--name-only'])).trim())await this.git(cwd,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','-m',`Verified task ${t.id}: ${t.title}`]);
    const headSha=(await this.git(cwd,['rev-parse','HEAD'])).trim();

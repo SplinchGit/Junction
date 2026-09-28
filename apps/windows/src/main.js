@@ -408,7 +408,7 @@ app.on("before-quit", event => {
   shutdownPromise = (async () => {
     await foreman?.shutdown();
     foreman?.close();
-    delegation?.shutdown?.();
+    await delegation?.shutdown?.();
     localBrainRelay?.stop();
     await worldHostRelay?.stop();
     await lanServer?.stop();
