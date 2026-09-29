@@ -10,6 +10,9 @@ import com.splinch.junction.assistant.trust.*
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -85,8 +88,16 @@ class OpenAiCompatibleProvider(
         }
         val request = requestBuilder.build()
 
+        val call = client.newCall(request)
+        @OptIn(InternalCoroutinesApi::class)
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion(
+            onCancelling = true,
+            invokeImmediately = true
+        ) { cause ->
+            if (cause is CancellationException) call.cancel()
+        }
         try {
-            val response = withContext(Dispatchers.IO) { client.newCall(request).execute() }
+            val response = withContext(Dispatchers.IO) { call.execute() }
             if (!response.isSuccessful) {
                 val body = withContext(Dispatchers.IO) { response.body?.string() }.orEmpty()
                 emit(LlmEvent.Error(openAiCompatibleError(id, response.code, body, apiKey)))
@@ -179,6 +190,8 @@ class OpenAiCompatibleProvider(
         } catch (ex: Exception) {
             emit(LlmEvent.Error(openAiCompatibleError(id, null, ex.message.orEmpty(), apiKey)))
             emit(LlmEvent.Done)
+        } finally {
+            cancellationHandle?.dispose()
         }
     }.flowOn(Dispatchers.IO)
 

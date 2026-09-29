@@ -54,7 +54,7 @@ fs.rmSync(directory, { recursive: true, force: true });
 const renderer = fs.readFileSync(path.join(__dirname, "../renderer/index.html"), "utf8");
 const mainProcess = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
 assert.match(renderer, /data-view="chat"/); assert.match(renderer, />Feed</); assert.match(renderer, />Audit</); assert.match(renderer, /Context &amp; devices/); assert.match(renderer, />Settings</);
-assert.match(renderer, /data-view="projects"/); assert.match(renderer, /No automatic merges/); assert.doesNotMatch(renderer, /id="agent-toggle"/); assert.match(renderer, /Local-model tools are always available/); assert.match(renderer, /What the model actually did/); assert.match(renderer, /audit\.css/);
+assert.doesNotMatch(renderer, /data-view="projects"/); assert.doesNotMatch(renderer, /id="view-projects"/); assert.doesNotMatch(renderer, /id="agent-toggle"/); assert.match(renderer, /Local-model tools are always available/); assert.match(renderer, /What the model actually did/); assert.match(renderer, /audit\.css/);
 assert.match(mainProcess, /nativeToolsAvailable=config\.id==="local"/); assert.doesNotMatch(mainProcess, /request\.agent/);
 assert.match(mainProcess, /event\.preventDefault\(\)/); assert.match(mainProcess, /await lanServer\?\.stop\(\)/);
 assert.doesNotMatch(renderer, /data-view="mafioso"/); assert.doesNotMatch(renderer, /id="open-mafioso"/);

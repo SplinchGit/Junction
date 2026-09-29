@@ -36,6 +36,9 @@ import com.splinch.junction.data.sync.firebase.AuthManager
 import com.splinch.junction.feature.update.UpdateInfo
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +49,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -141,7 +146,9 @@ class ChatManager(
     // Tool calls proposed by the realtime (voice) path accumulate here across
     // a single model response and are turned into one plan at onResponseDone.
     private val pendingRealtimeCalls = mutableListOf<PendingToolCall>()
-    private var activeTextTurnJob: Job? = null
+    private val activeTextTurnJob = AtomicReference<Job?>(null)
+    private val turnEpoch = TurnEpoch()
+    private val turnAdmissionMutex = Mutex()
     private val untrustedOutputTools = setOf("read_screen", "read_notifications", "get_calendar_agenda", "gmail_triage_inbox")
 
     // §1.1 two-lane escalation: set when the *previous* turn signalled the
@@ -310,6 +317,14 @@ class ChatManager(
             return
         }
 
+        turnAdmissionMutex.lock()
+        try {
+            val turnId = turnEpoch.begin()
+            activeTextTurnJob.get()?.cancelAndJoin()
+            activeTextTurnJob.set(null)
+            _streamingAssistant.value = null
+            _turnActivity.value = null
+
         val userMessage = ChatMessage(
             sender = Sender.USER,
             content = processed.content,
@@ -367,8 +382,8 @@ class ChatManager(
         // one should use the frontier lane (plan complexity / parse failure).
         val useFrontier = providerRouter.consumeFrontierRequest(explicitFrontier)
 
-        val turnJob = scope.launch(Dispatchers.IO) {
-            val contextBlocks = buildContextBlocks(activeProvider)
+        val turnCompletion = TurnCompletion(onTurnComplete)
+        val turnJob = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             val tools = when {
                 activeProvider.id == "local" -> listOf(
                     ToolDefinition(
@@ -379,6 +394,7 @@ class ChatManager(
                 )
                 else -> ToolRegistry.allDefinitions()
             }
+            val contextBlocks = buildContextBlocks(activeProvider, tools)
             var itemId = UUID.randomUUID().toString()
             var accumulatedText = ""
             var accumulatedThinking: String? = null
@@ -405,6 +421,7 @@ class ChatManager(
                 try {
                     val frontierRequested = useFrontier && currentProvider.frontierModel != null
                     currentProvider.act(contextBlocks, tools, frontierRequested, session.sessionId).collect { event ->
+                        if (!turnEpoch.isCurrent(turnId)) return@collect
                         when (event) {
                             is LlmEvent.Activity -> _turnActivity.value = event.label.takeIf { it.isNotBlank() }
                             is LlmEvent.TextDelta -> {
@@ -489,8 +506,17 @@ class ChatManager(
                             }
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     laneError = e.message ?: "Unknown error"
+                }
+
+                if (!turnEpoch.isCurrent(turnId)) {
+                    turnCompletion.report(
+                        TurnOutcome(null, 0, false, false, "Response superseded by a newer message.")
+                    )
+                    return@launch
                 }
 
                 if (laneError == null) {
@@ -524,7 +550,7 @@ class ChatManager(
                 // On a call this is the whole turn. Saying it out loud is the difference
                 // between "Junction couldn't do that" and Junction having gone silent.
                 endVoiceTurn("provider_error", "Sorry, that didn't work: ${providerRouter.cleanError(fatalError)}")
-                onTurnComplete?.invoke(
+                turnCompletion.report(
                     TurnOutcome(null, 0, false, false, providerRouter.cleanError(fatalError))
                 )
                 return@launch
@@ -590,7 +616,7 @@ class ChatManager(
                     thinkingReported = thinkingReported
                 )
             )
-            onTurnComplete?.invoke(
+            turnCompletion.report(
                 TurnOutcome(
                     assistantText = lastAssistantText,
                     toolsRequested = requestedCalls.size,
@@ -600,19 +626,33 @@ class ChatManager(
                 )
             )
         }
-        activeTextTurnJob = turnJob
+        activeTextTurnJob.set(turnJob)
 
         // However this turn ended -- a reply, tool calls and no reply, an empty reply, a
         // plan waiting on approval, an exception nobody predicted -- the line goes back to
         // the owner. Re-arming used to hang off a spoken reply alone, so every one of
         // those other endings left the mic dead with the chip still reading "Mic on".
         // Ignored when a reply is already being spoken; that turn ends when the audio does.
-        turnJob.invokeOnCompletion {
-            if (activeTextTurnJob === turnJob) activeTextTurnJob = null
+        turnJob.invokeOnCompletion { cause ->
+            activeTextTurnJob.compareAndSet(turnJob, null)
+            if (cause != null) {
+                val error = if (cause is CancellationException) {
+                    "Response cancelled or superseded by a newer message."
+                } else {
+                    cause.message ?: "Turn failed unexpectedly."
+                }
+                turnCompletion.report(TurnOutcome(null, 0, false, false, error))
+            }
             // Explicitly dispatched rather than immediate: this completes on the IO lane,
             // and the reply, if there is one, was handed to the voice session from there
             // moments earlier. Queueing keeps them in that order.
-            scope.launch(Dispatchers.Main) { endVoiceTurn("turn_complete") }
+            scope.launch(Dispatchers.Main) {
+                if (turnEpoch.isCurrent(turnId)) endVoiceTurn("turn_complete")
+            }
+        }
+        turnJob.start()
+        } finally {
+            turnAdmissionMutex.unlock()
         }
     }
 
@@ -722,7 +762,8 @@ class ChatManager(
     }
 
     private suspend fun buildContextBlocks(
-        activeProvider: com.splinch.junction.assistant.provider.LlmProvider
+        activeProvider: com.splinch.junction.assistant.provider.LlmProvider,
+        exposedTools: List<ToolDefinition>
     ): List<ContextBlock> {
         val systemBlock = ContextBlock(
             role = "system",
@@ -737,9 +778,9 @@ class ChatManager(
                     "\n\nRight now the owner is talking to you by voice and your reply will be read " +
                         "aloud. Answer in one or two spoken sentences. Use no markdown, no lists, and " +
                         "no URLs. If the full answer is long, give the headline and offer to go deeper."
-                } else {
-                    "\n\nThe owner is typing to you and reading your reply on screen."
-                },
+                 } else {
+                     "\n\nThe owner is typing to you and reading your reply on screen."
+                 } + "\n\n" + AssistantPrompt.androidCapabilityContext(exposedTools.map { it.name }),
             provenance = Provenance.JUNCTION,
             sourceRef = "junction:actor-policy"
         )
@@ -1092,8 +1133,7 @@ class ChatManager(
     }
 
     suspend fun stopResponse() {
-        activeTextTurnJob?.cancel()
-        activeTextTurnJob = null
+        activeTextTurnJob.getAndSet(null)?.cancel()
         _streamingAssistant.value = null
         voiceCoordinator.stopResponse()
     }

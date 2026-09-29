@@ -12,4 +12,20 @@ object AssistantPrompt {
     } else {
         "\nOnly the supplied tool schemas define available capabilities. Use them for requested actions, not merely because a tool is mentioned. Read screen/repository evidence before describing or acting on it. Provider/model/key changes require Settings."
     }
+
+    fun androidCapabilityContext(exposedToolNames: Collection<String>): String {
+        val names = exposedToolNames.distinct().sorted()
+        val exposed = names.joinToString(", ").ifBlank { "none" }
+        val codexControlExposed = names.any { it == "schedule_codex" || it == "delegate_to_codex" }
+        val codexAvailability = if (codexControlExposed) {
+            "Codex integration and persistent foreman infrastructure exist in Junction. Use Codex controls only through the explicitly listed tools."
+        } else {
+            "Codex integration and persistent foreman infrastructure exist elsewhere in the Junction product, but Codex scheduling and usage-limit management are not exposed in this chat. Do not claim those integrations do not exist; say they are not exposed in this chat."
+        }
+        return """
+            Junction capability context: $codexAvailability
+            Tools exposed to this turn: $exposed.
+            Do not claim that an unlisted tool is available, including web search. Distinguish the wider Junction product from capabilities exposed to this conversation.
+        """.trimIndent()
+    }
 }

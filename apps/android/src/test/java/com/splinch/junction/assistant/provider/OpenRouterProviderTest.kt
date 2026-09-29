@@ -4,6 +4,9 @@ import com.splinch.junction.assistant.context.ContextBlock
 import com.splinch.junction.assistant.context.Provenance
 import com.splinch.junction.assistant.tools.ToolDefinition
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -12,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.TimeUnit
 
 class OpenRouterProviderTest {
     private val model = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -89,5 +93,34 @@ class OpenRouterProviderTest {
         assertFalse(allowsAutomaticFallback("openrouter"))
         assertFalse(allowsAutomaticFallback("local"))
         assertTrue(allowsAutomaticFallback("openai"))
+    }
+
+    @Test
+    fun `cancelling Nemotron stream promptly cancels blocked network read`() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/event-stream")
+                    .setBody("data: [DONE]\n\n")
+                    .setBodyDelay(3, TimeUnit.SECONDS)
+            )
+            val provider = OpenAiCompatibleProvider(
+                id = "openrouter",
+                apiKey = "test-key-never-log",
+                workhorseModel = model,
+                baseUrl = server.url("/api/v1").toString().removeSuffix("/")
+            )
+            val job = launch(Dispatchers.Default) {
+                provider.act(listOf(ContextBlock("user", "Hi", Provenance.OWNER)), emptyList(), false).toList()
+            }
+            assertTrue(server.takeRequest(2, TimeUnit.SECONDS) != null)
+            val started = System.nanoTime()
+
+            job.cancelAndJoin()
+
+            val cancellationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+            assertTrue("Cancellation took ${cancellationMs}ms", cancellationMs < 1_500)
+        }
     }
 }
