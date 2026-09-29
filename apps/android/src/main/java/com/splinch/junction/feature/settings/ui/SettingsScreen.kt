@@ -48,6 +48,7 @@ import com.splinch.junction.BuildConfig
 import com.splinch.junction.platform.accessibility.JunctionAccessibilityService
 import com.splinch.junction.assistant.runtime.ChatManager
 import com.splinch.junction.assistant.provider.ModelCatalog
+import com.splinch.junction.assistant.provider.ProviderSettingsDraft
 import com.splinch.junction.app.config.AppConfig
 import com.splinch.junction.feature.feed.FeedRepository
 import com.splinch.junction.feature.scheduler.Scheduler
@@ -188,7 +189,10 @@ fun SettingsScreen(
         providerModelIdInput = ModelCatalog.normalizeModelId(providerConfig.providerId, providerConfig.modelId)
         providerFrontierInput = providerConfig.frontierModel
         providerBaseUrlInput = providerConfig.baseUrl
-        providerApiKeyInput = keyStorage.getApiKey(providerConfig.providerId)
+        providerApiKeyInput = ModelCatalog.providerById(providerConfig.providerId)
+            ?.credentialProviderId
+            ?.let(keyStorage::getApiKey)
+            .orEmpty()
     }
 
     LaunchedEffect(chatModel) { chatModelInput = chatModel }
@@ -275,10 +279,20 @@ fun SettingsScreen(
                             ProviderCard(
                                 provider = provider,
                                 selected = provider.id == providerIdInput,
-                                onClick = {
-                                    providerIdInput = provider.id
-                                    providerModelIdInput = provider.defaultModelId
-                                }
+                            onClick = {
+                                val draft = ProviderSettingsDraft(
+                                    providerIdInput,
+                                    providerModelIdInput,
+                                    providerFrontierInput,
+                                    providerApiKeyInput,
+                                    providerBaseUrlInput
+                                ).selectProvider(provider.id)
+                                providerIdInput = draft.providerId
+                                providerModelIdInput = draft.modelId
+                                providerFrontierInput = draft.frontierModel
+                                providerApiKeyInput = draft.apiKey
+                                providerBaseUrlInput = draft.baseUrl
+                            }
                             )
                         }
                     }

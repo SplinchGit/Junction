@@ -54,6 +54,13 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun `frontier override stays within selected provider and blank means selected model`() {
+        assertEquals("gpt-5.6-sol", ModelCatalog.normalizeFrontierModelId("openai", "gpt-5.6-sol", ""))
+        assertEquals("gpt-5.6-sol", ModelCatalog.normalizeFrontierModelId("openai", "gpt-5.6-sol", "claude-sonnet-5"))
+        assertEquals("gpt-5.6-terra", ModelCatalog.normalizeFrontierModelId("openai", "gpt-5.6-sol", "gpt-5.6-terra"))
+    }
+
+    @Test
     fun `OpenAI catalog uses the current GPT family for every role`() {
         val openAi = ModelCatalog.providerById("openai")!!
 

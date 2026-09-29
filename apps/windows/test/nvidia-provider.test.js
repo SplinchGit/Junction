@@ -5,7 +5,7 @@ const { sendChat } = require("../src/provider-client");
 (async () => {
   let request;
   const result = await sendChat({
-    config: {id:"nvidia",model:"nvidia/nemotron-3-ultra-550b-a55b"},
+    config: {id:"nvidia",model:"nvidia/nemotron-3-ultra-550b-a55b",baseUrl:"https://custom.example/v1"},
     key: "nvidia-device-key",
     messages: [{role:"user",content:"Hello"}],
     fetchImpl: async (url, options) => {
@@ -17,5 +17,14 @@ const { sendChat } = require("../src/provider-client");
   assert.equal(request.options.headers.authorization,"Bearer nvidia-device-key");
   assert.equal(request.body.model,"nvidia/nemotron-3-ultra-550b-a55b");
   assert.equal(result.content,"Hi");
+  const secret = "nvapi-test-secret";
+  await assert.rejects(
+    () => sendChat({
+      config:{id:"nvidia",model:"nvidia/nemotron-3-ultra-550b-a55b"},key:secret,
+      messages:[{role:"user",content:"Hello"}],
+      fetchImpl:async()=>({ok:false,status:400,json:async()=>({error:{message:`bad key ${secret}`}})})
+    }),
+    error => !String(error.message).includes(secret) && /redacted/.test(error.message)
+  );
   console.log("NVIDIA first-party endpoint, key, and selected model routing passed");
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -10,9 +10,16 @@
       .filter(group => group.options.length);
   }
   function selectionFor(providers, providerId, modelId) {
-    const provider = providers.find(item => item.id === providerId) || providers[0];
-    const model = provider.models.find(item => item.id === modelId) || provider.models[0] || null;
+    const provider = providers.find(item => item.id === providerId) || null;
+    if (!provider) return {provider:null, model:null};
+    const model = provider.models.find(item => item.id === modelId)
+      || provider.models.find(item => item.id === provider.defaultModel)
+      || provider.models[0]
+      || null;
     return {provider, model};
   }
-  return {groupedProviderOptions, selectionFor};
+  function modelValueFor(providerId, selectedModel, customModel) {
+    return providerId === "custom" ? String(customModel || "").trim() : selectedModel;
+  }
+  return {groupedProviderOptions, selectionFor, modelValueFor};
 });

@@ -62,4 +62,4 @@ class ProviderRouter(
     }
 }
 
-internal fun allowsAutomaticFallback(providerId: String): Boolean = providerId !in setOf("local", "openrouter")
+internal fun allowsAutomaticFallback(providerId: String): Boolean = false

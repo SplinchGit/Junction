@@ -92,7 +92,8 @@ class OpenRouterProviderTest {
     fun `Nemotron never automatically falls back to another provider`() {
         assertFalse(allowsAutomaticFallback("openrouter"))
         assertFalse(allowsAutomaticFallback("local"))
-        assertTrue(allowsAutomaticFallback("openai"))
+        assertFalse(allowsAutomaticFallback("openai"))
+        assertFalse(allowsAutomaticFallback("nvidia"))
     }
 
     @Test

@@ -106,7 +106,7 @@ class ProviderRegistry(
         // entry, move that saved selection to the provider's new default instead of
         // silently continuing to call an obsolete model that the UI no longer shows.
         val modelId = ModelCatalog.normalizeModelId(config.providerId, configuredModelId)
-        val frontierId = config.frontierModel.ifBlank { null }
+        val frontierId = ModelCatalog.normalizeFrontierModelId(config.providerId, modelId, config.frontierModel)
 
         if (config.providerId == "local") return LanFirstJunctionPcProvider(context, modelId.ifBlank { "qwen3.5:2b" }, conversationSync = conversationSync)
 
@@ -114,7 +114,7 @@ class ProviderRegistry(
             return AnthropicProvider(
                 apiKey = apiKey,
                 workhorseModel = modelId.ifBlank { "claude-haiku-4-5-20251001" },
-                frontierModel = frontierId ?: "claude-sonnet-4-6"
+                frontierModel = frontierId
             )
         }
 

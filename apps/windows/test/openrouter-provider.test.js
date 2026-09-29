@@ -38,8 +38,8 @@ try {
 (async () => {
   const requests = [];
   const chunks = [];
-  const fetchImpl = async (_url, options) => {
-    requests.push({ ...options, body: JSON.parse(options.body) });
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, ...options, body: JSON.parse(options.body) });
     if (requests.length === 1) {
       return sse([
         { model: MODEL_ID, choices: [{ delta: { reasoning: "private", tool_calls: [{ index: 0, id: "call-1", type: "function", function: { name: "web_search", arguments: '{"query":"current fact"}' } }] } }] },
@@ -52,7 +52,7 @@ try {
   };
 
   const result = await sendChat({
-    config: { id: "openrouter", model: MODEL_ID },
+    config: { id: "openrouter", model: MODEL_ID, baseUrl: "https://custom.example/v1" },
     key: "test-key-never-log",
     messages: [{ role: "user", content: "Use the tool" }],
     memories: [{ category: "preference", content: "Use concise answers" }],
@@ -70,6 +70,7 @@ try {
   });
 
   assert.equal(requests[0].body.model, MODEL_ID);
+  assert.equal(requests[0].url, "https://openrouter.ai/api/v1/chat/completions");
   assert.equal(requests[0].body.stream, true);
   assert.equal(requests[0].body.reasoning.effort, "high");
   assert.equal(requests[0].body.tools[0].function.name, "web_search");

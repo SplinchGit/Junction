@@ -175,6 +175,12 @@ object ModelCatalog {
         return provider.models.find { it.id == modelId }?.id ?: provider.defaultModelId
     }
 
+    fun normalizeFrontierModelId(providerId: String, selectedModelId: String, frontierModelId: String): String {
+        val selected = normalizeModelId(providerId, selectedModelId)
+        if (providerId == "custom") return frontierModelId.ifBlank { selected }
+        return providerById(providerId)?.models?.find { it.id == frontierModelId }?.id ?: selected
+    }
+
     fun routeFor(providerId: String, modelId: String): ProviderRoute? {
         val provider = providerById(providerId) ?: return null
         return ProviderRoute(provider.id, provider.credentialProviderId, provider.baseUrl, normalizeModelId(providerId, modelId))

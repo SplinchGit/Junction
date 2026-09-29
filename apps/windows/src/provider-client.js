@@ -117,7 +117,7 @@ async function sendOpenRouterChat({base,model,key,prompt,fetchImpl,signal,onChun
 }
 async function sendChat({config,key,messages,memories,context,research,fetchImpl=fetch,signal=null,onChunk=null,tools=[],executeTool=null}){
   const definition=PROVIDERS[config.id]; if(!definition) throw new Error("Configure an AI provider first."); if(!definition.keyless&&!key) throw new Error("This PC does not have an API key for the selected provider.");
-  const base=(config.baseUrl||definition.baseUrl).replace(/\/$/,"" ); const model=config.model||definition.model; if(!base||!model) throw new Error("Provider base URL and model are required.");
+  const base=((config.id==="custom"?config.baseUrl:"")||definition.baseUrl).replace(/\/$/,"" ); const model=config.model||definition.model; if(!base||!model) throw new Error("Provider base URL and model are required.");
   const parsed=new URL(base); if(parsed.protocol!=="https:"&&!['127.0.0.1','localhost','::1'].includes(parsed.hostname)) throw new Error("Custom providers must use HTTPS or loopback.");
   const prompt=boundedMessages(messages,memories,context,research);
   if(definition.kind==="anthropic"){
@@ -128,6 +128,6 @@ async function sendChat({config,key,messages,memories,context,research,fetchImpl
     return sendOpenRouterChat({base,model,key,prompt,fetchImpl,signal,onChunk,tools,executeTool});
   }
   const headers={"content-type":"application/json"};if(!definition.keyless)headers.authorization=`Bearer ${key}`;
-  let response; try { response=await fetchImpl(`${base}/chat/completions`,{method:"POST",headers,signal:requestSignal(signal,60_000),body:JSON.stringify({model,messages:prompt,max_tokens:1200,stream:false})}); } catch(error) { throw friendlyNetworkError(error,"Provider",signal); } const data=await response.json(); if(!response.ok) throw new Error(classifyProviderError(response.status,data,"Provider")); return {content:data.choices?.[0]?.message?.content||"",usage:data.usage||null,model:data.model||model};
+  let response; try { response=await fetchImpl(`${base}/chat/completions`,{method:"POST",headers,signal:requestSignal(signal,60_000),body:JSON.stringify({model,messages:prompt,max_tokens:1200,stream:false})}); } catch(error) { throw friendlyNetworkError(error,"Provider",signal); } const data=await response.json(); if(!response.ok) throw new Error(redactSecret(classifyProviderError(response.status,data,"Provider"),key)); return {content:data.choices?.[0]?.message?.content||"",usage:data.usage||null,model:data.model||model};
 }
 module.exports={PROVIDERS,sendChat,compactContext,readSseStream,classifyProviderError};
