@@ -22,5 +22,8 @@
     return providerId === "custom" ? String(customModel || "").trim() : selectedModel;
   }
   function credentialDraftAfterReload() { return ""; }
-  return {groupedProviderOptions, selectionFor, modelValueFor, credentialDraftAfterReload};
+  function credentialDraftForSave(providerId, draftOwnerId, draft) {
+    return providerId && providerId === draftOwnerId ? String(draft || "").trim() : "";
+  }
+  return {groupedProviderOptions, selectionFor, modelValueFor, credentialDraftAfterReload, credentialDraftForSave};
 });
