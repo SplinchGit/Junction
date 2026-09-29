@@ -15,6 +15,30 @@ class ModelCatalogTest {
         assertEquals("Gemma 3 1B", gemma.displayName)
         assertTrue(gemma.blurb.contains("conversation", ignoreCase = true))
         assertTrue(gemma.blurb.contains("tool", ignoreCase = true))
+        assertNull(ModelCatalog.modelById("local", "lfm2.5:2.6b"))
+        assertEquals("qwen3.5:2b", ModelCatalog.normalizeModelId("local", "lfm2.5:2.6b"))
+    }
+
+    @Test
+    fun `providers expose platform group source and credential ownership`() {
+        assertEquals(
+            listOf("anthropic", "openai", "nvidia"),
+            ModelCatalog.providers.filter { it.platformGroup == "First Party" }.map { it.id }
+        )
+        val openRouter = ModelCatalog.providerById("openrouter")!!
+        assertEquals("OpenRouter", openRouter.platformGroup)
+        assertEquals("NVIDIA via OpenRouter", openRouter.sourceLabel)
+        assertEquals("openrouter", openRouter.credentialProviderId)
+        assertEquals("nvidia", ModelCatalog.providerById("nvidia")!!.credentialProviderId)
+    }
+
+    @Test
+    fun `model normalization never carries a model across providers`() {
+        assertEquals(
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            ModelCatalog.normalizeModelId("openrouter", "gpt-5.6-sol")
+        )
+        assertEquals("anything", ModelCatalog.normalizeModelId("custom", "anything"))
     }
 
     @Test

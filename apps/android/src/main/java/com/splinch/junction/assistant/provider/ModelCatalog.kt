@@ -36,6 +36,9 @@ data class ModelEntry(
 data class ProviderDefinition(
     val id: String,
     val displayName: String,
+    val platformGroup: String,
+    val sourceLabel: String,
+    val credentialProviderId: String? = id,
     val recommendationTag: String,
     val recommendationDetail: String,
     val apiKeyUrl: String?,
@@ -51,7 +54,10 @@ object ModelCatalog {
     val providers: List<ProviderDefinition> = listOf(
         ProviderDefinition(
             id = "local",
-            displayName = "Local LLM",
+            displayName = "Qwen on your PC",
+            platformGroup = "Local",
+            sourceLabel = "Qwen · local",
+            credentialProviderId = null,
             recommendationTag = "Your PC",
             recommendationDetail = "Your signed-in Junction PC runs this model. No API key, VPN, or endpoint setup is required.",
             apiKeyUrl = null,
@@ -61,13 +67,14 @@ object ModelCatalog {
             models = listOf(
                 ModelEntry("qwen3.5:2b", "Qwen3.5 2B", "Local", "Compact current Qwen with native tools.", 0.0, 0.0),
                 ModelEntry("qwen3:1.7b", "Qwen3 1.7B", "Local", "Existing compact local model.", 0.0, 0.0),
-                ModelEntry("lfm2.5:2.6b", "LFM2.5 2.6B", "Local", "Official Liquid AI GGUF imported into Ollama.", 0.0, 0.0),
                 ModelEntry("gemma3:1b", "Gemma 3 1B", "Fast conversational", "Optional Ollama model for conversation; native tool calls are not supported. Install it on your PC before selecting it.", 0.0, 0.0)
             )
         ),
         ProviderDefinition(
             id = "anthropic",
-            displayName = "Claude",
+            displayName = "Anthropic",
+            platformGroup = "First Party",
+            sourceLabel = "Anthropic · first party",
             recommendationTag = "Low priority",
             recommendationDetail = "Best balance of quality and cost for everyday use.",
             apiKeyUrl = "https://console.anthropic.com/settings/keys",
@@ -83,7 +90,9 @@ object ModelCatalog {
         ),
         ProviderDefinition(
             id = "openai",
-            displayName = "GPT",
+            displayName = "OpenAI",
+            platformGroup = "First Party",
+            sourceLabel = "OpenAI · first party",
             recommendationTag = "Most capable",
             recommendationDetail = "Widest tool support and strong reasoning for complex tasks.",
             apiKeyUrl = "https://platform.openai.com/api-keys",
@@ -96,8 +105,25 @@ object ModelCatalog {
             )
         ),
         ProviderDefinition(
+            id = "nvidia",
+            displayName = "NVIDIA",
+            platformGroup = "First Party",
+            sourceLabel = "NVIDIA · first party",
+            recommendationTag = "API key",
+            recommendationDetail = "Direct NVIDIA API using the key encrypted on this device.",
+            apiKeyUrl = "https://build.nvidia.com/",
+            baseUrl = "https://integrate.api.nvidia.com/v1",
+            defaultModelId = "nvidia/nemotron-3-ultra-550b-a55b",
+            models = listOf(
+                ModelEntry("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", "NVIDIA API", "Direct from NVIDIA.", 0.0, 0.0)
+            )
+        ),
+        ProviderDefinition(
             id = "openrouter",
-            displayName = "OpenRouter",
+            displayName = "NVIDIA",
+            platformGroup = "OpenRouter",
+            sourceLabel = "NVIDIA via OpenRouter",
+            credentialProviderId = "openrouter",
             recommendationTag = "FREE",
             recommendationDetail = "NVIDIA Nemotron 3 Ultra through OpenRouter's free endpoint. No paid fallback.",
             apiKeyUrl = "https://openrouter.ai/keys",
@@ -117,6 +143,8 @@ object ModelCatalog {
         ProviderDefinition(
             id = "custom",
             displayName = "Custom",
+            platformGroup = "Advanced",
+            sourceLabel = "Custom endpoint",
             recommendationTag = "Advanced",
             recommendationDetail = "Point at any OpenAI-compatible endpoint you run or trust.",
             apiKeyUrl = null,
@@ -127,12 +155,18 @@ object ModelCatalog {
 
     /** The everyday chat surface stays focused on the supported first-party and explicit cloud lanes. */
     val primaryProviders: List<ProviderDefinition>
-        get() = providers.filter { it.id in setOf("local", "openai", "anthropic", "openrouter") }
+        get() = providers.filter { it.id in setOf("local", "openai", "anthropic", "nvidia", "openrouter") }
 
     fun providerById(id: String): ProviderDefinition? = providers.find { it.id == id }
 
     fun modelById(providerId: String, modelId: String): ModelEntry? =
         providerById(providerId)?.models?.find { it.id == modelId }
+
+    fun normalizeModelId(providerId: String, modelId: String): String {
+        val provider = providerById(providerId) ?: return modelId
+        if (providerId == "custom") return modelId
+        return provider.models.find { it.id == modelId }?.id ?: provider.defaultModelId
+    }
 
     /**
      * Best-effort match by reported model string, for cost estimation when the

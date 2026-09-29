@@ -30,3 +30,4 @@ apps/windows/dist/
 !.vscode/settings.json
 __pycache__/
 *.pyc
+.superpowers/
