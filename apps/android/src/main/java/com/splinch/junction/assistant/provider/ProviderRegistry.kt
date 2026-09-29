@@ -28,7 +28,8 @@ class ProviderRegistry(
     suspend fun getActiveProvider(): LlmProvider? {
         val config = prefs.providerConfigFlow.first()
         val definition = ModelCatalog.providerById(config.providerId)
-        val apiKey = keyStorage.getApiKey(config.providerId)
+        val credentialId = definition?.credentialProviderId
+        val apiKey = credentialId?.let(keyStorage::getApiKey).orEmpty()
         if (definition?.requiresApiKey != false && apiKey.isBlank()) return null
         if (definition?.requiresBaseUrl == true && config.baseUrl.isBlank()) return null
         return buildProvider(config, apiKey)
@@ -46,7 +47,7 @@ class ProviderRegistry(
                 "${definition.displayName} needs a base URL in Settings."
             }
         }
-        if (definition.requiresApiKey && keyStorage.getApiKey(config.providerId).isBlank()) {
+        if (definition.requiresApiKey && definition.credentialProviderId?.let(keyStorage::getApiKey).isNullOrBlank()) {
             return "${definition.displayName} needs an API key in Settings."
         }
         return null
@@ -80,7 +81,8 @@ class ProviderRegistry(
             .map { it.id }
             .filter { it != excludeId && it != "custom" && it != "local" && isHealthy(it) }
         for (candidateId in candidates) {
-            val apiKey = keyStorage.getApiKey(candidateId)
+            val credentialId = ModelCatalog.providerById(candidateId)?.credentialProviderId ?: continue
+            val apiKey = keyStorage.getApiKey(credentialId)
             if (apiKey.isBlank()) continue
             android.util.Log.i("ProviderRegistry", "Falling back to provider '$candidateId'")
             return buildProvider(ProviderConfig(providerId = candidateId), apiKey)
@@ -103,14 +105,7 @@ class ProviderRegistry(
         // Provider pickers only expose catalog models. When an app update retires an old
         // entry, move that saved selection to the provider's new default instead of
         // silently continuing to call an obsolete model that the UI no longer shows.
-        val modelId = if (
-            config.providerId != "custom" &&
-            providerDef?.models?.none { it.id == configuredModelId } == true
-        ) {
-            providerDef.defaultModelId
-        } else {
-            configuredModelId
-        }
+        val modelId = ModelCatalog.normalizeModelId(config.providerId, configuredModelId)
         val frontierId = config.frontierModel.ifBlank { null }
 
         if (config.providerId == "local") return LanFirstJunctionPcProvider(context, modelId.ifBlank { "qwen3.5:2b" }, conversationSync = conversationSync)

@@ -42,6 +42,18 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun `request route binds endpoint credential and selected model to one provider`() {
+        val openRouter = ModelCatalog.routeFor("openrouter", "gpt-5.6-sol")!!
+        assertEquals("https://openrouter.ai/api/v1", openRouter.baseUrl)
+        assertEquals("openrouter", openRouter.credentialProviderId)
+        assertEquals("nvidia/nemotron-3-ultra-550b-a55b:free", openRouter.modelId)
+
+        val nvidia = ModelCatalog.routeFor("nvidia", "nvidia/nemotron-3-ultra-550b-a55b")!!
+        assertEquals("https://integrate.api.nvidia.com/v1", nvidia.baseUrl)
+        assertEquals("nvidia", nvidia.credentialProviderId)
+    }
+
+    @Test
     fun `OpenAI catalog uses the current GPT family for every role`() {
         val openAi = ModelCatalog.providerById("openai")!!
 

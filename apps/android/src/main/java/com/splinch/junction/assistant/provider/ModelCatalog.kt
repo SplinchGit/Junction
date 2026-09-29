@@ -50,6 +50,13 @@ data class ProviderDefinition(
     val defaultModelId: String = ""
 )
 
+data class ProviderRoute(
+    val providerId: String,
+    val credentialProviderId: String?,
+    val baseUrl: String,
+    val modelId: String
+)
+
 object ModelCatalog {
     val providers: List<ProviderDefinition> = listOf(
         ProviderDefinition(
@@ -166,6 +173,11 @@ object ModelCatalog {
         val provider = providerById(providerId) ?: return modelId
         if (providerId == "custom") return modelId
         return provider.models.find { it.id == modelId }?.id ?: provider.defaultModelId
+    }
+
+    fun routeFor(providerId: String, modelId: String): ProviderRoute? {
+        val provider = providerById(providerId) ?: return null
+        return ProviderRoute(provider.id, provider.credentialProviderId, provider.baseUrl, normalizeModelId(providerId, modelId))
     }
 
     /**

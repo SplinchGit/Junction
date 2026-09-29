@@ -100,6 +100,7 @@ import com.splinch.junction.assistant.planning.StepStatus
 import com.splinch.junction.feature.voice.realtime.RealtimeConnectionState
 import com.splinch.junction.assistant.provider.ModelCatalog
 import com.splinch.junction.assistant.provider.ProviderDefinition
+import com.splinch.junction.assistant.provider.ProviderSelection
 import com.splinch.junction.assistant.tools.RiskTier
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
@@ -708,74 +709,71 @@ private fun ProviderSwitcher(
 ) {
     val context = LocalContext.current
     val keyStorage = remember { KeyStorage(context) }
-    var expanded by remember { mutableStateOf(false) }
+    var providerExpanded by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
     var configuredProviders by remember { mutableStateOf(emptyList<ProviderDefinition>()) }
 
-    LaunchedEffect(expanded) {
-        if (expanded) {
+    LaunchedEffect(providerExpanded) {
+        if (providerExpanded) {
             configuredProviders = ModelCatalog.primaryProviders
         }
     }
 
     val currentProvider = ModelCatalog.providerById(providerConfig.providerId)
-    // Header pill stays short (provider name only) so it never crowds out the
-    // screen title; the full "Provider — Model" detail still appears in the
-    // dropdown below and in the switch-confirmation chat message.
-    val currentLabel = currentProvider?.displayName ?: providerConfig.providerId.ifBlank { "Choose AI" }
+    val currentModelId = ModelCatalog.normalizeModelId(providerConfig.providerId, providerConfig.modelId)
+    val currentModel = currentProvider?.models?.find { it.id == currentModelId }
 
-    Box(modifier = modifier) {
-        OutlinedButton(
-            onClick = { expanded = true },
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-        ) {
-            Text(
-                text = currentLabel,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 96.dp)
-            )
-            Icon(
-                Icons.Default.ArrowDropDown,
-                contentDescription = "Switch AI provider",
-                modifier = Modifier.size(18.dp)
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            if (configuredProviders.isEmpty()) {
-                DropdownMenuItem(
-                    text = { Text("No providers configured — add one in Settings") },
-                    onClick = { expanded = false },
-                    enabled = false
-                )
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box {
+            OutlinedButton(
+                onClick = { providerExpanded = true },
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp)
+            ) {
+                Text(currentProvider?.displayName ?: "Provider", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 72.dp))
+                Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose AI provider", modifier = Modifier.size(18.dp))
             }
-            configuredProviders.forEach { provider ->
-                val available = !provider.requiresApiKey || keyStorage.getApiKey(provider.id).isNotBlank()
-                provider.models.forEach { model ->
-                    val selected = provider.id == providerConfig.providerId && model.id == providerConfig.modelId
+            DropdownMenu(expanded = providerExpanded, onDismissRequest = { providerExpanded = false }) {
+                configuredProviders.groupBy { it.platformGroup }.forEach { (group, providers) ->
                     DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text("${if (selected) "●" else "○"} ${provider.displayName}")
-                                Text(
-                                    text = if (available) "${model.displayName} · ${model.costTier}" else "Unavailable — configure in Settings",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        leadingIcon = {
-                            Icon(
-                                if (available) Icons.Default.Check else Icons.Default.Close,
-                                contentDescription = null,
-                                tint = if (available) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
-                            )
-                        },
+                        text = { Text(group, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) },
+                        onClick = {}, enabled = false
+                    )
+                    providers.forEach { provider ->
+                        val credentialId = provider.credentialProviderId
+                        val available = !provider.requiresApiKey || (credentialId != null && keyStorage.getApiKey(credentialId).isNotBlank())
+                        DropdownMenuItem(
+                            text = { Column { Text(provider.displayName); Text(if (available) provider.sourceLabel else "Configure key in Settings", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                            leadingIcon = { Icon(if (available) Icons.Default.Check else Icons.Default.Close, contentDescription = null, tint = if (available) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                providerExpanded = false
+                                val selection = ProviderSelection(providerConfig.providerId, currentModelId).selectProvider(provider.id)
+                                onSwitch(selection.providerId, selection.modelId)
+                            },
+                            enabled = available
+                        )
+                    }
+                }
+            }
+        }
+        Box {
+            OutlinedButton(
+                onClick = { modelExpanded = true },
+                contentPadding = PaddingValues(horizontal = 9.dp, vertical = 6.dp),
+                enabled = currentProvider?.models?.isNotEmpty() == true
+            ) {
+                Text(currentModel?.displayName ?: "Model", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 82.dp))
+                Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose AI model", modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
+                currentProvider?.models?.forEach { model ->
+                    DropdownMenuItem(
+                        text = { Column { Text(model.displayName); Text("${currentProvider.sourceLabel} · ${model.costTier}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                         onClick = {
-                            expanded = false
-                            onSwitch(provider.id, model.id)
+                            modelExpanded = false
+                            val selection = ProviderSelection(providerConfig.providerId, currentModelId).selectModel(model.id)
+                            onSwitch(selection.providerId, selection.modelId)
                         },
-                        enabled = available
+                        leadingIcon = { if (model.id == currentModelId) Icon(Icons.Default.Check, contentDescription = null) }
                     )
                 }
             }

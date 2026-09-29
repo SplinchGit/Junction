@@ -185,7 +185,7 @@ fun SettingsScreen(
 
     LaunchedEffect(providerConfig) {
         providerIdInput = providerConfig.providerId
-        providerModelIdInput = providerConfig.modelId
+        providerModelIdInput = ModelCatalog.normalizeModelId(providerConfig.providerId, providerConfig.modelId)
         providerFrontierInput = providerConfig.frontierModel
         providerBaseUrlInput = providerConfig.baseUrl
         providerApiKeyInput = keyStorage.getApiKey(providerConfig.providerId)
@@ -255,7 +255,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        text = currentModel?.displayName ?: "Default model",
+                        text = currentProvider?.let { "${it.sourceLabel} · ${currentModel?.displayName ?: "Default model"}" } ?: "Default model",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -269,15 +269,18 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
                 Text(text = "Provider", style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ModelCatalog.providers.forEach { provider ->
-                        ProviderCard(
-                            provider = provider,
-                            selected = provider.id == providerIdInput,
-                            onClick = {
-                                providerIdInput = provider.id
-                                providerModelIdInput = provider.defaultModelId
-                            }
-                        )
+                    ModelCatalog.providers.groupBy { it.platformGroup }.forEach { (group, providers) ->
+                        Text(group, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        providers.forEach { provider ->
+                            ProviderCard(
+                                provider = provider,
+                                selected = provider.id == providerIdInput,
+                                onClick = {
+                                    providerIdInput = provider.id
+                                    providerModelIdInput = provider.defaultModelId
+                                }
+                            )
+                        }
                     }
                 }
                 if (currentProvider != null && currentProvider.models.isNotEmpty()) {
@@ -300,7 +303,7 @@ fun SettingsScreen(
                 JunctionTextField(
                     value = providerApiKeyInput,
                     onValueChange = { providerApiKeyInput = it },
-                    label = if (providerIdInput == "openrouter") "OpenRouter API key" else "API key",
+                    label = if (providerIdInput == "openrouter") "OpenRouter API key · stored only on this device" else "First-party API key · stored only on this device",
                     isPassword = true
                 )
             } else {
@@ -396,7 +399,7 @@ fun SettingsScreen(
                         )
                         userPrefs.setProviderConfig(config)
                         if (currentProvider?.requiresApiKey != false && providerApiKeyInput.isNotBlank()) {
-                            keyStorage.setApiKey(providerIdInput.trim(), providerApiKeyInput)
+                            currentProvider?.credentialProviderId?.let { keyStorage.setApiKey(it, providerApiKeyInput) }
                         }
                         if (switched) {
                             chatManager.announceProviderSwitch(config.providerId, config.modelId)
@@ -411,7 +414,7 @@ fun SettingsScreen(
                     providerTestStatus = "Testing..."
                     scope.launch {
                         // Basic connectivity check: just verify we have a key
-                        val key = keyStorage.getApiKey(providerIdInput.trim())
+                        val key = currentProvider?.credentialProviderId?.let(keyStorage::getApiKey).orEmpty()
                         providerTestStatus = when {
                             currentProvider?.requiresBaseUrl == true && providerBaseUrlInput.isBlank() -> "Enter the local model base URL first."
                             currentProvider?.requiresApiKey == false -> "Endpoint configured. Send a message to test."

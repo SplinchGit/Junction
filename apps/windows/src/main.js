@@ -11,7 +11,7 @@ const { registerDevice } = require("./firebase-sync");
 const { LocalDataStore } = require("./local-data");
 const { sendChat } = require("./provider-client");
 const { getCodexStatus, sendCodexChat } = require("./codex-client");
-const { providers, estimate } = require("./model-catalog");
+const { providers, estimate, credentialProviderId } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
 const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
 const { LocalBrainRelay } = require("./local-brain-relay");
@@ -352,7 +352,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   let reply,research=null;
   const complete = ({messages, instruction}) => config.id === "codex"
     ? sendCodexChat({model:config.model,messages,memories:[],context:null,research:instruction,workingDirectory:app.getPath("userData")})
-    : sendChat({config,key:identityStore.getProviderKey(config.id),messages,memories:[],context:null,research:instruction});
+    : sendChat({config,key:identityStore.getProviderKey(credentialProviderId(config.id)||config.id),messages,memories:[],context:null,research:instruction});
   const intent = !nativeToolsAvailable && config.id !== "anthropic" && config.id !== "openrouter"
     ? await decideIntent({goal:content,history:conversation.messages.slice(0,-1),capabilities:["web_search","approval_gated_code_draft"],complete}) : null;
   const needsResearch = request.research || intent?.action === "search";
@@ -366,7 +366,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({
-            config,key:identityStore.getProviderKey(config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions,
+            config,key:identityStore.getProviderKey(credentialProviderId(config.id)||config.id),messages:conversation.messages,memories:localData.memories(),context:request.context||null,research:researchInstructions,
             signal:cloudToolsAvailable?controller.signal:null,
             onChunk:cloudToolsAvailable?text=>_event.sender.send("junction:chat-stream",{runId,provider:"openrouter",model:config.model,text}):null,
             tools:cloudToolsAvailable?localAgent.tools.definitions({allowCodeDelegation:false}):[],
@@ -392,8 +392,8 @@ ipcMain.handle("junction:cancel-agent", (_event, runId) => { const controller=ac
 ipcMain.handle("junction:memories", () => localData.memories());
 ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
 ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});
-ipcMain.handle("junction:provider", () => { const config=localData.provider(); return {...config,keyPresent:config.id==="local"||Boolean(config.id&&identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
-ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value); if(config.id!=="codex"&&config.id!=="local"&&String(value.apiKey||"").trim()) identityStore.setProviderKey(config.id,String(value.apiKey).trim()); return {...config,keyPresent:config.id==="local"||Boolean(identityStore.getProviderKey(config.id)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:provider", () => { const config=localData.provider(),credentialId=credentialProviderId(config.id); return {...config,keyPresent:config.id==="local"||Boolean(credentialId&&identityStore.getProviderKey(credentialId)),usesSubscription:config.id==="codex"}; });
+ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value),credentialId=credentialProviderId(config.id); if(credentialId&&String(value.apiKey||"").trim()) identityStore.setProviderKey(credentialId,String(value.apiKey).trim()); return {...config,keyPresent:config.id==="local"||Boolean(credentialId&&identityStore.getProviderKey(credentialId)),usesSubscription:config.id==="codex"}; });
 ipcMain.handle("junction:codex-status", () => getCodexStatus());
 ipcMain.handle("junction:research-status", () => researchClient.status());
 ipcMain.handle("junction:research-jobs", () => researchCoordinator.list());

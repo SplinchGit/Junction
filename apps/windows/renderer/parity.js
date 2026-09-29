@@ -1,5 +1,5 @@
 "use strict";
-const agentStyles=document.createElement("link");agentStyles.rel="stylesheet";agentStyles.href="agent-ui.css";document.head.append(agentStyles);const chatModel=document.createElement("select");chatModel.id="chat-model";chatModel.className="chat-model hidden";chatModel.setAttribute("aria-label","Local model");document.getElementById("research-toggle").before(chatModel);
+const agentStyles=document.createElement("link");agentStyles.rel="stylesheet";agentStyles.href="agent-ui.css";document.head.append(agentStyles);const chatProvider=document.createElement("select"),chatModel=document.createElement("select");chatProvider.id="chat-provider";chatProvider.className="chat-model";chatProvider.setAttribute("aria-label","AI provider");chatModel.id="chat-model";chatModel.className="chat-model";chatModel.setAttribute("aria-label","AI model");document.getElementById("research-toggle").before(chatProvider,chatModel);
 const generationStatus = document.createElement("div");
 generationStatus.id = "generation-status"; generationStatus.className = "generation-status";
 generationStatus.setAttribute("role", "status"); generationStatus.setAttribute("aria-live", "polite");
