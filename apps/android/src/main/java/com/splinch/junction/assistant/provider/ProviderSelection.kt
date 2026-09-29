@@ -17,7 +17,7 @@ data class ProviderSettingsDraft(
 ) {
     fun selectProvider(id: String): ProviderSettingsDraft = copy(
         providerId = id,
-        modelId = ModelCatalog.normalizeModelId(id, modelId),
+        modelId = if (id == "custom") "" else ModelCatalog.normalizeModelId(id, modelId),
         frontierModel = "",
         apiKey = "",
         baseUrl = ""

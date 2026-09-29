@@ -21,5 +21,6 @@
   function modelValueFor(providerId, selectedModel, customModel) {
     return providerId === "custom" ? String(customModel || "").trim() : selectedModel;
   }
-  return {groupedProviderOptions, selectionFor, modelValueFor};
+  function credentialDraftAfterReload() { return ""; }
+  return {groupedProviderOptions, selectionFor, modelValueFor, credentialDraftAfterReload};
 });

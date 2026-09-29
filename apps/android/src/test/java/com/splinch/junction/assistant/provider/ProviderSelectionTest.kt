@@ -28,4 +28,12 @@ class ProviderSelectionTest {
         assertEquals("", draft.apiKey)
         assertEquals("", draft.baseUrl)
     }
+
+    @Test
+    fun `switching to custom clears the previous providers model`() {
+        val draft = ProviderSettingsDraft("openai", "gpt-5.6-sol", "", "", "")
+            .selectProvider("custom")
+        assertEquals("custom", draft.providerId)
+        assertEquals("", draft.modelId)
+    }
 }

@@ -313,6 +313,15 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
+            if (currentProvider?.id == "custom") {
+                JunctionTextField(
+                    value = providerModelIdInput,
+                    onValueChange = { providerModelIdInput = it },
+                    label = "Custom model ID",
+                    placeholder = "provider/model-name"
+                )
+            }
+
             if (currentProvider?.requiresApiKey != false) {
                 JunctionTextField(
                     value = providerApiKeyInput,
