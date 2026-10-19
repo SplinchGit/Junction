@@ -289,7 +289,7 @@ async function syncSharedState(){
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
-ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3.5:2b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3:14b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
 ipcMain.handle("junction:lan-pair", () => createLanPairing());
 ipcMain.handle("junction:lan-status", () => identityStore?.lanStore().status() || { instanceId: null, port: null, pairedDeviceCount: 0, pairedDeviceIds: [] });
@@ -362,7 +362,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     if (intent && decisionAllowsDelegation(intent)) {
       reply = {content:"Name the local file, folder or repository for this work. Once the scope is clear, the instruction itself starts the persistent work.",model:config.model};
     } else reply=nativeToolsAvailable
-      ? await localAgent.run({ goal: content, model: config.model || "qwen3.5:2b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
+      ? await localAgent.run({ goal: content, model: config.model || "qwen3:14b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({

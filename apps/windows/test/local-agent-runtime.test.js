@@ -26,6 +26,10 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   const compact = compactResearchContext({sources:[{id:'S1',passages:[{id:'S1.p1',score:0,text:'Navigation text'},{id:'S1.p2',score:5,text:fullPassage}]}]});
   assert.equal(compact.sources[0].passages[0].text, fullPassage);
   assert.equal(compact.sources[0].passages[0].id, 'S1.p2');
+  const releaseQuery = "According to Python.org, on what date was Python 3.13.0 released? This happened after 2023, so use web_search and cite the returned passage evidence.";
+  const releaseEvidence = evidencePassages({text: 'Python 3.13 was released on October 7, 2024. This work was made possible thanks to many individuals and organizations, including the large community of contributors to Python and third-party projects to test and enable free-threading support.'}, releaseQuery, 'S1');
+  const releaseContext = compactResearchContext({query:releaseQuery,sources:[{id:'S1',passages:releaseEvidence}]});
+  assert.match(releaseContext.sources[0].passages[0].text, /October 7, 2024/, 'tool and citation instructions must not displace the answer from compact evidence');
   const ranked = evidencePassages({text:'Who won the 2026 football World Cup? Spain won the 2026 World Cup final.'}, 'Who won the 2026 football World Cup?', 'S1');
   assert.match([...ranked].sort((a,b)=>b.score-a.score)[0].text, /^Spain won/);
   assert.equal(validateSearchEgress('prime minister of the United Kingdom', 'Who is PM of the UK?'), 'prime minister of the United Kingdom');
@@ -106,24 +110,6 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   assert.deepEqual(officeQueries, ['Who is PM of the UK?']);
   assert.equal(officeRequests.length, 1);
   assert.ok(officeRequests[0].messages.some(message => message.tool_name === 'web_search'));
-
-  const gemmaRequests = [];
-  const gemmaRuntime = new LocalAgentRuntime({
-    fetchImpl: async (url, options) => {
-      if (url.endsWith('/api/ps')) return { ok: true, json: async () => ({ models: [] }) };
-      const body = JSON.parse(options.body); gemmaRequests.push(body);
-      if (body.tools?.length) return { ok: false, status: 400, json: async () => ({ error: 'does not support tools' }) };
-      return response({ role: 'assistant', content: 'Hello from Gemma.' });
-    }
-  });
-  assert.equal((await gemmaRuntime.run({ goal: 'Hello', model: 'gemma3:1b' })).content, 'Hello from Gemma.');
-  assert.equal(gemmaRequests.length, 1);
-  assert.ok(!gemmaRequests[0].tools?.length);
-  await assert.rejects(() => new LocalAgentRuntime({
-    fetchImpl: async url => url.endsWith('/api/ps')
-      ? { ok: true, json: async () => ({ models: [] }) }
-      : { ok: false, status: 404, json: async () => ({ error: 'model gemma3:1b not found' }) }
-  }).run({ goal: 'Hello', model: 'gemma3:1b' }), /ollama pull gemma3:1b/);
 
   const falseClaim = harness([
     { role: "assistant", content: "I accessed the internet via search and found the answer." },

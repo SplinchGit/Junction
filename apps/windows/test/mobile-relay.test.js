@@ -34,14 +34,16 @@ const {PairedConversationSync}=require('../src/paired-conversation-sync');
   assert.deepEqual(updates,['Café ','Café works']); assert.equal(reply.message.content,'Café works');
   const state={brainId:'brain',key:crypto.randomBytes(32),session:{idToken:'fixture'}};
   const id='stream-test',encrypted=crypt(state.key,`JBP1|brain|${id}|request`,Buffer.from(JSON.stringify({model:'fixture',messages:[{role:'user',content:'hello'}]})),null,true);
-  const writes=[]; let finalWasPending=false;
-  const relay=new LocalBrainRelay({projectId:'fixture',getState:async()=>state,runLocalAgent:async({onProgress})=>{
+  const writes=[]; let finalWasPending=false, selectedModel;
+  const relay=new LocalBrainRelay({projectId:'fixture',getState:async()=>state,runLocalAgent:async({onProgress,model})=>{
+    selectedModel = model;
     await onProgress({stage:'Running on PC'}); await onProgress({text:'First token'});
     finalWasPending=writes.some(x=>x.status==='streaming') && !writes.some(x=>x.status==='done');
     return {content:'First token, final answer',usage:{completion_tokens:5}};
   }});
   relay.update=async(_doc,_session,values)=>{writes.push(values);return {};};
   await relay.run(state,{document:{name:'fixture/commands/'+id,updateTime:'v1'},data:{id,...encrypted}});
+  assert.equal(selectedModel, 'qwen3:14b', 'encrypted requests with an unavailable model use the retained model');
   assert.ok(finalWasPending,'encrypted partial must be written before inference completes');
   const partial=writes.find(x=>x.status==='streaming');
   assert.equal(crypt(state.key,`JBP1|brain|${id}|partial`,Buffer.from(partial.partialCiphertext,'base64url'),Buffer.from(partial.partialNonce,'base64url'),false),'First token');

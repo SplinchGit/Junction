@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
 
-const WORLD_MODEL = "qwen3.5:2b";
+const WORLD_MODEL = "qwen3:14b";
 function buildWorldInferencePayload(messages, maxOutputTokens) {
   return {
     model: WORLD_MODEL,
@@ -13,7 +13,7 @@ function buildWorldInferencePayload(messages, maxOutputTokens) {
     stream: false,
     think: false,
     format: "json",
-    options: { num_predict: maxOutputTokens, temperature: 0 },
+    options: { num_ctx: 4096, num_predict: maxOutputTokens, temperature: 0 },
   };
 }
 const MAX_EVENT_SUMMARY = 280;

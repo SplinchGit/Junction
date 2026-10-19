@@ -70,11 +70,9 @@ object ModelCatalog {
             apiKeyUrl = null,
             baseUrl = "",
             requiresApiKey = false,
-            defaultModelId = "qwen3.5:2b",
+            defaultModelId = "qwen3:14b",
             models = listOf(
-                ModelEntry("qwen3.5:2b", "Qwen3.5 2B", "Local", "Compact current Qwen with native tools.", 0.0, 0.0),
-                ModelEntry("qwen3:1.7b", "Qwen3 1.7B", "Local", "Existing compact local model.", 0.0, 0.0),
-                ModelEntry("gemma3:1b", "Gemma 3 1B", "Fast conversational", "Optional Ollama model for conversation; native tool calls are not supported. Install it on your PC before selecting it.", 0.0, 0.0)
+                ModelEntry("qwen3:14b", "Qwen3 14B", "Local agent", "Runs on your paired PC with native agent tools. Keep Junction and Ollama running on the PC.", 0.0, 0.0)
             )
         ),
         ProviderDefinition(

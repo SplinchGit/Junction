@@ -212,7 +212,9 @@ function extractDocument(html, url) {
 }
 
 function keywords(query) {
-  const stop = new Set(["about", "after", "before", "could", "from", "have", "into", "that", "their", "there", "these", "they", "this", "what", "when", "where", "which", "with", "would"]);
+  // Tool/citation instructions describe how to answer, not which facts to rank.
+  // Their common words otherwise displace short factual passages in compact context.
+  const stop = new Set(["about", "according", "after", "and", "are", "before", "cite", "could", "evidence", "for", "from", "happened", "has", "have", "how", "into", "its", "not", "org", "passage", "passages", "returned", "search", "that", "the", "their", "there", "these", "they", "this", "use", "was", "web", "what", "when", "where", "which", "with", "would", "you", "your"]);
   return [...new Set(String(query || "").toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) || [])].filter(word => !stop.has(word)).slice(0, 20);
 }
 

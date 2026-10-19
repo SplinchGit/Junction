@@ -8,15 +8,12 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
-    fun `local model picker includes optional Gemma without changing the default`() {
+    fun `local model picker offers only the retained PC model`() {
         val local = ModelCatalog.providerById("local")!!
-        assertEquals("qwen3.5:2b", local.defaultModelId)
-        val gemma = ModelCatalog.modelById("local", "gemma3:1b")!!
-        assertEquals("Gemma 3 1B", gemma.displayName)
-        assertTrue(gemma.blurb.contains("conversation", ignoreCase = true))
-        assertTrue(gemma.blurb.contains("tool", ignoreCase = true))
+        assertEquals("qwen3:14b", local.defaultModelId)
+        assertEquals(listOf("qwen3:14b"), local.models.map { it.id })
         assertNull(ModelCatalog.modelById("local", "lfm2.5:2.6b"))
-        assertEquals("qwen3.5:2b", ModelCatalog.normalizeModelId("local", "lfm2.5:2.6b"))
+        assertEquals("qwen3:14b", ModelCatalog.normalizeModelId("local", "lfm2.5:2.6b"))
     }
 
     @Test

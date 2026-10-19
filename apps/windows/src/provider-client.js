@@ -1,6 +1,6 @@
 "use strict";
 const PROVIDERS={
-  local:{ baseUrl:"http://127.0.0.1:11434/v1", model:"qwen3.5:2b", kind:"openai", keyless:true },
+  local:{ baseUrl:"http://127.0.0.1:11434/v1", model:"qwen3:14b", kind:"openai", keyless:true },
   openai:{ baseUrl:"https://api.openai.com/v1", model:"gpt-5.6-luna", kind:"openai" },
   anthropic:{ baseUrl:"https://api.anthropic.com/v1", model:"claude-haiku-4-5", kind:"anthropic" },
   nvidia:{ baseUrl:"https://integrate.api.nvidia.com/v1", model:"nvidia/nemotron-3-ultra-550b-a55b", kind:"openai" },

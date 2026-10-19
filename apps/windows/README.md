@@ -125,6 +125,25 @@ will warn on unsigned installers; production distribution requires an Authentico
 certificate and CI signing. Elevated apps and custom-rendered/game surfaces may not
 expose usable UI Automation metadata. No broad automation is implemented.
 
+## Qwen3 14B on Windows and Android
+
+Choose **Local LLM** in either app. **Qwen3 14B** (`qwen3:14b`) is the only local
+model and the default. Older saved local selections and phone requests are
+redirected to 14B; no deleted model is downloaded automatically.
+
+Keep Junction and Ollama running on the paired PC. Android uses the authenticated
+LAN connection or the separately selected encrypted relay mode; weights stay on
+the PC. Both platforms use the existing agent runtime with native tools, a 4K
+context budget, and one active model request at a time. Web research requires
+internet. Coding work uses the existing explicitly requested Codex workflow.
+
+The installed model is approximately 9.3 GB. Keep disk space available for Windows'
+managed paging file as well as free GPU memory; insufficient host memory can cause
+CUDA allocation failures even when the weights fit in VRAM. Junction World also
+uses this retained model through its existing fixed inference route.
+
+Rebuild the Windows runtime and Android APK to update the selectors and defaults.
+
 ## Local model reliability and live search verification
 
 Desktop and paired-phone inference share a serialized runtime. Switching models

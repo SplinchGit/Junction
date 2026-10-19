@@ -244,6 +244,16 @@ test("rejects fingerprint mismatch, unknown, expired, and revoked clients", () =
   assert.equal(revoked.readyState, 3);
 });
 
+test("an older phone's deleted model selection runs on the retained PC model", async () => {
+  let selected;
+  const { server, socket } = await authenticatedServer({ run: async request => { selected = request.model; return { content: "hello" }; } });
+  try {
+    socket.receive({ protocolVersion: 1, type: "chat.send", requestId: "retired-model", payload: { content: "hello", model: "qwen3.5:2b" } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(selected, "qwen3:14b");
+  } finally { await server.stop(); }
+});
+
 test("streams chat deltas, prevents duplicate requests, and cancels active work", async () => {
   let resolveRun;
   const runtime = { run: async request => { request.onProgress({ text: "one" }); request.onProgress({ text: "one two" }); await new Promise(resolve => { resolveRun = resolve; }); return { content: "one two" }; } };

@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** First-class provider backed by a paired PC Junction brain, never a raw PC URL. */
-class JunctionPcProvider(override val workhorseModel: String = "qwen3.5:2b") : LlmProvider {
+class JunctionPcProvider(override val workhorseModel: String = "qwen3:14b") : LlmProvider {
     override val id = "local"
     override val frontierModel: String? = null
 

@@ -6,6 +6,7 @@ const os = require("node:os");
 const selfsigned = require("selfsigned");
 const { WebSocketServer } = require("ws");
 const { LanDiscovery } = require("./lan-discovery");
+const { normalizeLocalModel } = require("./model-catalog");
 const { MAX_FRAME_BYTES, parseEnvelope, serializeEnvelope, isExpired, isRevoked } = require("./lan-protocol");
 
 const PRIVATE_IPV4 = ip => {
@@ -217,7 +218,7 @@ class LanServer {
       if(workReply){const assistantMessage=conversation&&this.localData?.addMessage?this.localData.addMessage(conversation.id,"assistant",workReply,"JUNCTION"):null;emit("chat.complete",{conversationId:conversation?.id||payload.conversationId||null,messageId:assistantMessage?.id||null,content:workReply,model:"Junction foreman",usage:null});return;}
       if (!this.runtime?.run) throw new Error("LAN model runtime is unavailable.");
       let streamed = "";
-      const result = await this.runtime.run({ goal: content, model: payload.model, history: conversation?.messages?.slice(0, -1) || [], memories: this.localData?.memories?.() || [], context: payload.context || null, signal: controller.signal, runId: envelope.requestId, onProgress: progress => { if (!this.authorized(socket)) { controller.abort(); return; } const text = String(progress?.text || ""); const delta = text.startsWith(streamed) ? text.slice(streamed.length) : text; streamed = text; if (delta && !controller.signal.aborted) emit("chat.delta", { text: delta }); } });
+      const result = await this.runtime.run({ goal: content, model: normalizeLocalModel(payload.model), history: conversation?.messages?.slice(0, -1) || [], memories: this.localData?.memories?.() || [], context: payload.context || null, signal: controller.signal, runId: envelope.requestId, onProgress: progress => { if (!this.authorized(socket)) { controller.abort(); return; } const text = String(progress?.text || ""); const delta = text.startsWith(streamed) ? text.slice(streamed.length) : text; streamed = text; if (delta && !controller.signal.aborted) emit("chat.delta", { text: delta }); } });
       if (controller.signal.aborted || !this.authorized(socket)) { controller.abort(); return; }
       const assistantMessage = conversation && this.localData?.addMessage ? this.localData.addMessage(conversation.id, "assistant", String(result?.content || streamed), "JUNCTION") : null;
       emit("chat.complete", { conversationId: conversation?.id || payload.conversationId || null, messageId: assistantMessage?.id || null, content: result?.content || streamed, model: result?.model || payload.model || null, usage: result?.usage || null });

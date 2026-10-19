@@ -1,4 +1,5 @@
 "use strict";
+const { normalizeLocalModel } = require("./model-catalog");
 
 const crypto = require("node:crypto");
 const LOCAL_SOURCE = "junction_local_llm_v2";
@@ -136,6 +137,7 @@ class LocalBrainRelay {
       }
       this.onCommandStarted?.();
       if (!Array.isArray(payload.messages) || typeof payload.model !== "string") throw new Error("Invalid encrypted local-model request.");
+      payload.model = normalizeLocalModel(payload.model);
       const runStats = { requestId: id, model: payload.model, host: "PC", startedAt: this.now(), partialUpdates: 0, firstPartialAt: null, completedAt: null };
       this.lastRun = runStats;
       // Tool availability is a server-side invariant. Ignore legacy phone
