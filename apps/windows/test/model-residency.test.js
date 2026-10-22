@@ -51,3 +51,42 @@ test('a copy resident at a different context size is reloaded at the chat contex
   assert.equal(await agent.prewarm(),true);
   assert.equal(requests.filter(url=>url.endsWith('/api/generate')).length,1);
 });
+
+function streamingRuntime(firstEvents){
+  const bodies=[];
+  const ndjson=events=>({ok:true,status:200,body:(async function*(){for(const event of events)yield Buffer.from(JSON.stringify(event)+'\n');})()});
+  const fetchImpl=async(url,options={})=>{
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:4096}]})};
+    const body=JSON.parse(options.body);bodies.push(body);
+    if(bodies.length===1)return ndjson(firstEvents);
+    return ndjson([{message:{content:'Hello there.'}},{done:true,eval_count:4,prompt_eval_count:20,eval_duration:2e8,message:{}}]);
+  };
+  return {bodies,agent:new LocalAgentRuntime({toolRegistry:new LocalAgentToolRegistry({researchCoordinator:{run:async()=>({sources:[]})}}),fetchImpl})};
+}
+const thinkingEvents=count=>Array.from({length:count},(_,i)=>({message:{thinking:`t${i} `}}));
+
+test('runaway thinking is stopped at the budget and the model answers from its reasoning so far',async()=>{
+  const {agent,bodies}=streamingRuntime([...thinkingEvents(2000),{done:true,eval_count:2000,message:{}}]);
+  const result=await agent.chatOnce('qwen3:30b',[{role:'user',content:'Nethraaaaa'}],[],null,()=>{},null,{thinking:true,onThinking:()=>{},thinkingBudget:256});
+  assert.equal(bodies.length,2);
+  const continuation=bodies[1].messages.at(-1);
+  assert.equal(continuation.role,'assistant');assert.equal(continuation.content,'');
+  assert.match(continuation.thinking,/^t0 .*t255/s);assert.doesNotMatch(continuation.thinking,/t256 /);
+  assert.equal(result.message.content,'Hello there.');assert.equal(result.thinkingBudgetReached,true);
+  assert.equal(result.eval_count,4+256);
+});
+
+test('a reply that starts answering within budget is never cut',async()=>{
+  const {agent,bodies}=streamingRuntime([...thinkingEvents(100),{message:{content:'Fine.'}},{done:true,eval_count:101,message:{}}]);
+  const result=await agent.chatOnce('qwen3:30b',[{role:'user',content:'hi'}],[],null,()=>{},null,{thinking:true,onThinking:()=>{},thinkingBudget:256});
+  assert.equal(bodies.length,1);assert.equal(result.message.content,'Fine.');assert.equal(result.thinkingBudgetReached,undefined);
+});
+
+test('simple turns get the small budget and research-shaped turns keep the safety cap',async()=>{
+  for(const [goal,expected] of [['Nethraaaaa',256],['Are you 14b or 30?',256],['Compare the UK and Scottish housing strategies',1100]]){
+    const {agent,bodies}=streamingRuntime([{message:{content:'ok'}},{done:true,eval_count:1,message:{}}]);
+    agent.chatOnce=(original=>async function(...args){bodies.push({budget:args[6]?.thinkingBudget});return original.apply(this,args);})(agent.chatOnce);
+    await agent.run({goal,model:'qwen3:30b',history:[],surface:'android-relay',onProgress:async()=>{}}).catch(()=>{});
+    assert.equal(bodies.find(item=>'budget' in item)?.budget,expected,goal);
+  }
+});
