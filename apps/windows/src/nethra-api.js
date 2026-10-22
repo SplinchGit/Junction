@@ -97,6 +97,8 @@ class NethraApi {
       try{await this.onSettings(settings,payload);}catch(error){s.setSettings(before);throw error;}
       return {settings};
     }
+    // A status check means a client just opened; load the model while the owner types.
+    if(source!=='desktop')this.runtime.prewarm?.();
     let model={known:false,thinking:false};try{model=await this.runtime.modelCapabilities('qwen3:30b',AbortSignal.timeout(3000));}catch{}
     return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:this.gmail?.status()||{status:'DISCONNECTED'}}};
   }

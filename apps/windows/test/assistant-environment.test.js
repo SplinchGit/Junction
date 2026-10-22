@@ -8,7 +8,7 @@ test('phone deployment describes actual local tools without inventing phone acce
   assert.match(context,/Android.*paired Windows PC/);
   assert.match(context,/qwen3:14b/);
   assert.match(context,/web_search/);
-  assert.match(context,/not connected to this local model/);
+  assert.match(context,/not connected to this model/);assert.match(context,/never message bodies/);assert.match(context,/Nothing in Junction can send email/);
   assert.match(context,/approval/);
   assert.match(context,/Nethra is Junction's persistent primary agent/);
   assert.match(context,/Nethra status/);

@@ -87,6 +87,22 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         foregroundTicks.value = foregroundTicks.value + 1
+        prewarmPcModel()
+    }
+
+    /**
+     * A cold load of the PC's 30B model takes ~50 s. Pinging the host when the app comes
+     * to the foreground starts that load while the owner is still typing. Throttled, and
+     * only for a paired PC; a failure is silent because chat reports its own errors.
+     */
+    private fun prewarmPcModel() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastPrewarmAt < PREWARM_INTERVAL_MS) return
+        lastPrewarmAt = now
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val paired = runCatching { com.splinch.junction.data.sync.lan.LanIdentityStore(applicationContext).loadPairing() != null || com.splinch.junction.data.sync.firebase.LocalBrainPairingStore.load(applicationContext) != null }.getOrDefault(false)
+            if (paired) runCatching { com.splinch.junction.data.sync.lan.NethraClient(applicationContext).request("nethra.status") }
+        }
     }
     private val prefsRepository by lazy { (application as JunctionApplication).container.prefs }
 
@@ -268,6 +284,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val PREWARM_INTERVAL_MS = 10 * 60_000L
+        private var lastPrewarmAt = -PREWARM_INTERVAL_MS
         const val EXTRA_OPEN_CHAT = "extra_open_chat"
         const val EXTRA_OPEN_VOICE = "extra_open_voice"
         private const val TAG = "MainActivity"

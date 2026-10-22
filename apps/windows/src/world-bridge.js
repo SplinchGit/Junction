@@ -12,7 +12,7 @@ function buildWorldInferencePayload(messages, maxOutputTokens) {
     messages,
     stream: false,
     think: false,
-    keep_alive: "30m",
+    keep_alive: "2h", // Match the chat runtime so a World call never shortens model residency.
     format: "json",
     options: { num_ctx: 4096, num_predict: maxOutputTokens, temperature: 0 },
   };
