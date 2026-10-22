@@ -151,6 +151,11 @@ jobs:
           name: app-debug.apk
           path: smoke-apk
 
+      - name: Check out the smoke script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+
       - name: Enable KVM group permissions
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -164,41 +169,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: |
-            set -euo pipefail
-            apk="smoke-apk/app-debug.apk"
-            test -s "$apk"
-            adb install -r "$apk"
-            adb shell pm path com.splinch.junction
-
-            if ! launch_output="$(adb shell am start -W -n com.splinch.junction/.app.MainActivity 2>&1)"; then
-              printf '%s\n' "$launch_output"
-              adb logcat -d -t 2000
-              exit 1
-            fi
-            printf '%s\n' "$launch_output"
-            if ! printf '%s\n' "$launch_output" | grep -q 'Status: ok'; then
-              adb logcat -d -t 2000
-              exit 1
-            fi
-
-            for attempt in $(seq 1 15); do
-              if adb shell pidof com.splinch.junction >/dev/null 2>&1; then
-                break
-              fi
-              sleep 1
-            done
-            if ! adb shell pidof com.splinch.junction >/dev/null 2>&1; then
-              echo "Junction process did not stay alive after launch."
-              adb logcat -d -t 2000
-              exit 1
-            fi
-
-            if ! adb shell dumpsys activity activities | grep -F 'com.splinch.junction/.app.MainActivity'; then
-              echo "Junction MainActivity is not present in the foreground activity stack."
-              adb logcat -d -t 2000
-              exit 1
-            fi
+          script: bash scripts/ci/android-emulator-smoke.sh smoke-apk/app-debug.apk
 
   publish-pages:
     needs: [build, android-apk-smoke]
