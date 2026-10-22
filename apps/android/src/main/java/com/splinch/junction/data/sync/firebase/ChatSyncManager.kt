@@ -8,6 +8,7 @@ import com.google.firebase.firestore.SetOptions
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
+import com.splinch.junction.data.database.chat.ChatDeletedSessionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,11 +116,13 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
                         val deletedAt = (data["deletedAt"] as? Number)?.toLong()
                         if (deletedAt != null) {
                             messageListeners.remove(doc.id)?.remove()
+                            chatDao.markSessionDeleted(ChatDeletedSessionEntity(doc.id, deletedAt))
                             chatDao.clearMessagesForSession(doc.id)
                             chatDao.deleteSessionById(doc.id)
                             removeTombstone(uid, doc.id)
                             continue
                         }
+                        if (chatDao.isSessionDeleted(doc.id) || pendingTombstones(uid).any { it.id == doc.id }) continue
                         val remoteUpdatedAt = (data["updatedAt"] as? Number)?.toLong() ?: continue
                         val local = chatDao.getSessionById(doc.id)
                         if (local == null || remoteUpdatedAt > local.sharedUpdatedAt) {
@@ -145,6 +148,7 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
                 snapshot ?: return@addSnapshotListener
                 scope.launch {
                     for (doc in snapshot.documents) {
+                        if (chatDao.isSessionDeleted(conversationId) || pendingTombstones(uid).any { it.id == conversationId }) continue
                         if (chatDao.getMessageById(doc.id) != null) continue
                         val data = doc.data ?: continue
                         val content = (data["content"] as? String)?.take(20_000) ?: continue

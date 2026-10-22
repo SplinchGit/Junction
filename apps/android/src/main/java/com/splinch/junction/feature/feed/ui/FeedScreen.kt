@@ -111,7 +111,7 @@ fun FeedScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(text = "Your Junction", style = MaterialTheme.typography.titleLarge)
+                Text(text = "Your Nethra", style = MaterialTheme.typography.titleLarge)
                 if (updateInfo != null) {
                     UpdateDot()
                 }
@@ -129,7 +129,7 @@ fun FeedScreen(
                         if (needsInstallPermission || !installer.canInstallPackages()) {
                             needsInstallPermission = true
                             installer.requestInstallPermission().getOrElse {
-                                Toast.makeText(context, "Open Settings › Apps › Junction to allow installing updates.", Toast.LENGTH_LONG).show()
+                                Toast.makeText(context, "Open Settings › Apps › Nethra to allow installing updates.", Toast.LENGTH_LONG).show()
                             }
                             return@UpdateBanner
                         }
@@ -286,7 +286,7 @@ fun FeedScreen(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(text = "Open JunctionGPT", style = MaterialTheme.typography.titleMedium)
+                Text(text = "Open Nethra", style = MaterialTheme.typography.titleMedium)
                 ActionRow("Text chat") {
                     showChatChooser = false
                     chatItem?.let { onAskChat(it, false) }
@@ -368,7 +368,7 @@ private fun updateBannerDetail(
     needsPermission: Boolean
 ): String = when {
     needsPermission ->
-        "Android needs your go-ahead before Junction can install its own updates. Tap to allow it."
+        "Android needs your go-ahead before Nethra can install its own updates. Tap to allow it."
 
     stage is UpdateStage.Downloading ->
         stage.percent?.let { "Downloading version ${updateInfo.version}… $it%" }
@@ -505,30 +505,30 @@ private fun FeedActionSheet(
         when (item.category) {
             FeedCategory.FRIENDS_FAMILY -> {
                 ActionRow("Open", onOpen)
-                ActionRow("Ask JunctionGPT", onAskChat)
+                ActionRow("Ask Nethra", onAskChat)
                 ActionRow("Mark seen", onMarkSeen)
                 ActionRow("Dismiss", onArchive)
             }
             FeedCategory.PROJECTS -> {
                 ActionRow("Open", onOpen)
-                ActionRow("Ask JunctionGPT", onAskChat)
+                ActionRow("Ask Nethra", onAskChat)
                 ActionRow("Mark done", onMarkSeen)
                 ActionRow("Snooze", onDismiss)
             }
             FeedCategory.NEWS -> {
                 ActionRow("Read", onOpen)
-                ActionRow("Ask JunctionGPT", onAskChat)
+                ActionRow("Ask Nethra", onAskChat)
                 ActionRow("Save", onDismiss)
                 ActionRow("Dismiss", onArchive)
             }
             FeedCategory.SYSTEM -> {
                 ActionRow("Open app", onOpen)
-                ActionRow("Ask JunctionGPT", onAskChat)
+                ActionRow("Ask Nethra", onAskChat)
                 ActionRow("Dismiss", onArchive)
             }
             else -> {
                 ActionRow("Open", onOpen)
-                ActionRow("Ask JunctionGPT", onAskChat)
+                ActionRow("Ask Nethra", onAskChat)
                 ActionRow("Mark seen", onMarkSeen)
                 ActionRow("Dismiss", onArchive)
             }

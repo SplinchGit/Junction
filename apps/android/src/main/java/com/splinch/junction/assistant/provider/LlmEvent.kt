@@ -21,7 +21,9 @@ sealed class LlmEvent {
         val text: String,
         val thinking: String? = null,
         val tokensPerSecond: Double? = null,
-        val messageId: String? = null
+        val messageId: String? = null,
+        /** Verbose run metrics from the host; metrics only, never reasoning text. */
+        val telemetry: String? = null
     ) : LlmEvent()
     data class Thinking(val text: String) : LlmEvent()
     data class ToolCallRequested(

@@ -108,7 +108,7 @@ class ProviderRegistry(
         val modelId = ModelCatalog.normalizeModelId(config.providerId, configuredModelId)
         val frontierId = ModelCatalog.normalizeFrontierModelId(config.providerId, modelId, config.frontierModel)
 
-        if (config.providerId == "local") return LanFirstJunctionPcProvider(context, modelId.ifBlank { "qwen3:14b" }, conversationSync = conversationSync)
+        if (config.providerId == "local") return LanFirstJunctionPcProvider(context, modelId.ifBlank { "qwen3:30b" }, conversationSync = conversationSync)
 
         if (config.providerId == "anthropic") {
             return AnthropicProvider(

@@ -43,6 +43,17 @@ async function authenticatedServer(runtime = {}) {
   return { fixture, server, socket };
 }
 
+test("LAN inference receives host-selected Android surface and conversation identity", async () => {
+  let request;
+  const { server, socket } = await authenticatedServer({run:async value => {request=value;return {content:"hello"};}});
+  try {
+    await server.chat(socket,{requestId:"context-run",payload:{content:"hello",conversationId:"phone-chat",surface:"desktop",workSnapshot:[{status:"invented"}]}});
+    assert.equal(request.surface,"android-lan");
+    assert.equal(request.conversationId,"phone-chat");
+    assert.equal(request.workSnapshot,undefined);
+  } finally {socket.close();await server.stop();}
+});
+
 test("Android requestId cancellation aborts only its authenticated connection's run", async () => {
   let release, signal;
   const { server, socket } = await authenticatedServer({ run: async options => { signal = options.signal; await new Promise(resolve => { release = resolve; }); return { content: "unused" }; } });
@@ -173,6 +184,21 @@ test("closes an authenticated socket when its pairing is later revoked or expire
   assert.equal(expired.socket.readyState, 3);
 });
 
+test("replacing a paired device key invalidates its previously authenticated socket", () => {
+  const fixture = identityFixture();
+  let currentKey = fixture.keyPair.publicKey.export({ type: "spki", format: "pem" });
+  fixture.store.getPairedAndroidKeys = () => ({ "phone-1": { publicKey: currentKey, expiresAt: Date.now() + 60_000 } });
+  const server = new LanServer({ identityStore: fixture.store, now: () => 1_000 });
+  const socket = new FakeSocket(); server.accept(socket);
+  socket.receive({ protocolVersion: 1, type: "hello", requestId: "h", payload: { deviceId: "phone-1", certificateFingerprint: server.certificateFingerprint } });
+  const challenge = socket.sent.at(-1).payload;
+  socket.receive({ protocolVersion: 1, type: "authenticate", requestId: "a", payload: { deviceId: "phone-1", signature: crypto.sign(null, Buffer.from(authMessage(challenge.nonce, "pc-1", "phone-1")), fixture.keyPair.privateKey).toString("base64url") } });
+  assert.equal(server.connectionState(socket), "authenticated");
+  currentKey = crypto.generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" });
+  socket.receive({ protocolVersion: 1, type: "ping", requestId: "p", payload: {} });
+  assert.equal(socket.readyState, 3);
+});
+
 test("bounds unauthenticated sockets and closes silent sockets by deadline", async () => {
   const fixture = identityFixture(); const server = new LanServer({ identityStore: fixture.store, maxUnauthenticatedConnections: 1, authTimeoutMs: 10 });
   const first = new FakeSocket(); server.accept(first); const excess = new FakeSocket(); server.accept(excess);
@@ -250,7 +276,7 @@ test("an older phone's deleted model selection runs on the retained PC model", a
   try {
     socket.receive({ protocolVersion: 1, type: "chat.send", requestId: "retired-model", payload: { content: "hello", model: "qwen3.5:2b" } });
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(selected, "qwen3:14b");
+    assert.equal(selected, "qwen3:30b");
   } finally { await server.stop(); }
 });
 

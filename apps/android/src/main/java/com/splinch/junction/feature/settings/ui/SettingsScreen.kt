@@ -332,7 +332,7 @@ fun SettingsScreen(
             } else {
                 Text(
                     text = if (providerIdInput == "local") {
-                        "Local LLM runs on your signed-in Junction PC. No API key, URL, VPN, or separate app is needed."
+                        "Local LLM runs on your signed-in Nethra PC. No API key, URL, VPN, or separate app is needed."
                     } else {
                         "No provider API key is stored."
                     },
@@ -342,16 +342,29 @@ fun SettingsScreen(
             }
             if (providerIdInput == "local") {
                 Spacer(Modifier.height(12.dp))
-                Text(text = "Pair your Junction PC", style = MaterialTheme.typography.titleSmall)
-                Text("On the PC, open Junction Settings → Local Junction Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = "Pair your Nethra PC", style = MaterialTheme.typography.titleSmall)
+                Text("On the PC, open Nethra Settings → Local Nethra Brain, show the QR code, then scan it here. Google sign-in, a VPN, and an API key are not used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 var useFirebase by remember { mutableStateOf(LanConnectionMode.fromStored(KeyStorage(context).getSecret("lan_mode_v1")) == LanConnectionMode.FIREBASE) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(if (useFirebase) "5G / Firebase relay" else "Wi-Fi / direct PC relay", style = MaterialTheme.typography.bodySmall)
                     Switch(checked = useFirebase, onCheckedChange = { useFirebase = it; KeyStorage(context).setSecret("lan_mode_v1", if (it) LanConnectionMode.FIREBASE.stored else LanConnectionMode.WIFI.stored) })
                 }
+                var manualPcAddress by remember { mutableStateOf(KeyStorage(context).getSecret("lan_manual_host_v1")) }
+                var manualPcAddressStatus by remember { mutableStateOf("") }
+                JunctionTextField(value = manualPcAddress, onValueChange = { manualPcAddress = it }, label = "Direct PC address (optional)", placeholder = "PC IP on USB or private network")
+                OutlinedButton(onClick = {
+                    val address = manualPcAddress.trim()
+                    if (address.isNotEmpty() && !address.matches(Regex("[A-Za-z0-9_.:-]{1,253}"))) {
+                        manualPcAddressStatus = "Enter a valid PC IP address or host name."
+                    } else {
+                        KeyStorage(context).setSecret("lan_manual_host_v1", address)
+                        manualPcAddressStatus = if (address.isEmpty()) "Direct address cleared." else "Direct address saved. Your paired PC certificate is still verified."
+                    }
+                }) { Text("Save direct address") }
+                if (manualPcAddressStatus.isNotEmpty()) Text(manualPcAddressStatus, style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = {
                     localBrainQrScanner.launch(ScanOptions().apply {
-                        setPrompt("Hold the black-and-white Junction PC QR code in the frame")
+                        setPrompt("Hold the black-and-white Nethra PC QR code in the frame")
                         setBeepEnabled(false)
                         // Phones are normally held portrait while pairing; allowing the
                         // scanner activity to rotate makes the camera preview unusable.
@@ -383,7 +396,7 @@ fun SettingsScreen(
                                 if (client.get().await().exists()) return@repeat
                                 delay(1_000)
                             }
-                            if (!client.get().await().exists()) error("Your PC did not confirm pairing. Keep Junction open on the PC and try again.")
+                            if (!client.get().await().exists()) error("Your PC did not confirm pairing. Keep Nethra open on the PC and try again.")
                             LocalBrainPairingStore.save(context, LocalBrainPairing(parsed.first, uid, parsed.third))
                         }.onSuccess { localPairingStatus = "Paired. Local LLM is ready." }
                             .onFailure { localPairingStatus = "Pairing failed: ${it.message}" }
@@ -531,7 +544,7 @@ fun SettingsScreen(
                             if (azureSpeechKeyInput.isBlank()) {
                                 "Cleared — using this phone's built-in voice"
                             } else {
-                                "Saved — Junction will speak with an Azure neural voice"
+                                "Saved — Nethra will speak with an Azure neural voice"
                             },
                             Toast.LENGTH_SHORT
                         ).show()
@@ -613,7 +626,7 @@ fun SettingsScreen(
         item {
             Text(text = "Gmail", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Configure the Gmail account Junction may use for inbox triage and unsubscribe actions. " +
+                text = "Configure the Gmail account Nethra may use for inbox triage and unsubscribe actions. " +
                     "You'll be prompted to grant access the first time it's used.",
                 style = MaterialTheme.typography.bodySmall
             )
@@ -633,7 +646,7 @@ fun SettingsScreen(
         item {
             Text(text = "Web destinations", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Junction may open HTTPS links only for domains you list here. One domain per line.",
+                text = "Nethra may open HTTPS links only for domains you list here. One domain per line.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -717,9 +730,9 @@ fun SettingsScreen(
         }
 
         item {
-            Text(text = "Junction account & sync", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Nethra account & sync", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Optional for cloud sync. Required only when using Local LLM remotely through your Junction PC.",
+                text = "Optional for cloud sync. Required only when using Local LLM remotely through your Nethra PC.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -728,7 +741,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(text = "Enable Junction account sync", style = MaterialTheme.typography.bodyMedium)
+                Text(text = "Enable Nethra account sync", style = MaterialTheme.typography.bodyMedium)
                 Switch(
                     checked = firebaseSyncEnabled,
                     onCheckedChange = { enabled ->
@@ -739,7 +752,7 @@ fun SettingsScreen(
             if (firebaseSyncEnabled) {
                 if (user == null) {
                     Text(
-                        text = "Sign in to connect this Junction client to your account, sync it, and use Local LLM through your PC.",
+                        text = "Sign in to connect this Nethra client to your account, sync it, and use Local LLM through your PC.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -899,7 +912,7 @@ fun SettingsScreen(
             Text(text = "Notification access", style = MaterialTheme.typography.titleMedium)
             if (!notificationAck) {
                 Text(
-                    text = "Junction can read notification metadata to build your calm feed. " +
+                    text = "Nethra can read notification metadata to build your calm feed. " +
                         "Nothing leaves your device unless you enable a backend.",
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -940,9 +953,9 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Junction-only notifications", style = MaterialTheme.typography.bodyMedium)
+                        Text(text = "Nethra-only notifications", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            text = "If enabled, Junction will dismiss incoming app notifications and show them only in your Junction feed.",
+                            text = "If enabled, Nethra will dismiss incoming app notifications and show them only in your Nethra feed.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -965,7 +978,7 @@ fun SettingsScreen(
         item {
             Text(text = "Screen automation", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Lets Junction read the screen and tap/type on your behalf when you ask it to " +
+                text = "Lets Nethra read the screen and tap/type on your behalf when you ask it to " +
                     "(e.g. \"reply to this thread\"). Every action still requires your confirmation in chat.",
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -1013,7 +1026,7 @@ fun SettingsScreen(
             val facts by memoryFactDao.allFlow().collectAsState(initial = emptyList())
             Text(text = "Memory", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "Facts Junction has remembered about you (max 200), built forward from conversation. " +
+                text = "Facts Nethra has remembered about you (max 200), built forward from conversation. " +
                     "Deleting one here is permanent.",
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -1054,7 +1067,7 @@ fun SettingsScreen(
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = "Connect Junction to other services.",
+                text = "Connect Nethra to other services.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -1113,7 +1126,7 @@ fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Disable apps you don't want in your Junction feed.",
+                    text = "Disable apps you don't want in your Nethra feed.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

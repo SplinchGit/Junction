@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** First-class provider backed by a paired PC Junction brain, never a raw PC URL. */
-class JunctionPcProvider(override val workhorseModel: String = "qwen3:14b") : LlmProvider {
+class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : LlmProvider {
     override val id = "local"
     override val frontierModel: String? = null
 
@@ -38,13 +38,14 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:14b") : Ll
             if (!brain.exists() || brain.getString("status") != "active" ||
                 System.currentTimeMillis() - lastSeenAtMs > PC_ONLINE_WINDOW_MS
             ) {
-                error("Your Junction PC is offline. Junction starts automatically when you sign in to Windows; open it on the PC and try again.")
+                error(PC_OFFLINE_ERROR_MESSAGE)
             }
             val requestId = UUID.randomUUID().toString()
             val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
             val plain = JSONObject().apply {
                 put("model", workhorseModel)
                 put("messages", messages)
+                conversationId?.let { put("conversationId", it) }
                 put("mode", "agent")
             }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
@@ -127,7 +128,8 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:14b") : Ll
     }
 
     override suspend fun readUntrusted(content: String, sourceHint: String) = null
-    private companion object {
+    companion object {
+        const val PC_OFFLINE_ERROR_MESSAGE = "Your Junction PC is offline. Junction starts automatically when you sign in to Windows; open it on the PC and try again."
         const val SOURCE = "junction_local_llm_v2"
         const val MAX_CONTEXT_BLOCKS = 8
         const val MAX_BLOCK_CHARS = 2_000

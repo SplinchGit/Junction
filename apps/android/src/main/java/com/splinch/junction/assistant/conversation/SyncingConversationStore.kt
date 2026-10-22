@@ -62,8 +62,11 @@ class SyncingConversationStore(
     }
 
     override suspend fun deleteSession(sessionId: String) {
-        if (lanDelete?.invoke(sessionId) != true) syncManager.tombstoneConversation(sessionId)
+        // Queue the account tombstone while metadata still exists, then hide the chat
+        // locally before any network wait. LAN and Firebase may both hold a copy.
+        syncManager.tombstoneConversation(sessionId)
         delegate.deleteSession(sessionId)
+        lanDelete?.invoke(sessionId)
     }
 
     private fun ChatMessage.toEntity(sessionId: String): ChatMessageEntity {

@@ -68,7 +68,7 @@ fun AuditScreen(
     var exportStatus by remember { mutableStateOf("") }
     val worldEvents by worldAuditDao.recentFlow().collectAsState(initial = emptyList())
     var worldStatus by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) }
-    var worldMessage by remember { mutableStateOf("Checking Junction World…") }
+    var worldMessage by remember { mutableStateOf("Checking Nethra World…") }
     var worldFilter by remember { mutableStateOf("All") }
     var worldSearch by remember { mutableStateOf("") }
     var heartbeatMinutes by remember { mutableStateOf(15) }
@@ -85,7 +85,7 @@ fun AuditScreen(
                 worldPaused = status["paused"] as? Boolean ?: true
                 heartbeatMinutes = (status["heartbeatMinutes"] as? Number)?.toInt()?.coerceIn(10, 120) ?: 15
                 worldMessage = "Updated just now"
-            }.onFailure { worldMessage = it.message?.take(160) ?: "Junction World is unavailable" }
+            }.onFailure { worldMessage = it.message?.take(160) ?: "Nethra World is unavailable" }
         }
     }
     LaunchedEffect(Unit) {
@@ -129,7 +129,7 @@ fun AuditScreen(
             )
         }
         item {
-            Text("Junction World activity", style = MaterialTheme.typography.titleMedium)
+            Text("Nethra World activity", style = MaterialTheme.typography.titleMedium)
             Text("Host-validated events from the isolated Debian environment. Action results are shown only after guest runtime confirmation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(value = worldSearch, onValueChange = { worldSearch = it.take(120) }, label = { Text("Search activity") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -151,7 +151,7 @@ fun AuditScreen(
                         worldChatSending = true
                         junctionWorldClient.sendMessage(worldDraft).onSuccess { receipt ->
                             worldDraft = ""
-                            worldChatStatus = if (receipt.status == "QUEUED") "Queued for Junction World." else "Message already delivered."
+                            worldChatStatus = if (receipt.status == "QUEUED") "Queued for Nethra World." else "Message already delivered."
                             refreshWorld()
                         }.onFailure { worldChatStatus = it.message?.take(160) ?: "Message could not be sent." }
                         worldChatSending = false
@@ -161,7 +161,7 @@ fun AuditScreen(
         }
         val filteredWorldEvents = worldEvents.filter { worldMatches(it, worldFilter, worldSearch) }
         if (filteredWorldEvents.isEmpty()) item {
-            Text(if (worldEvents.isEmpty()) "No Junction World events received yet." else "No activity matches this filter.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (worldEvents.isEmpty()) "No Nethra World events received yet." else "No activity matches this filter.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else items(filteredWorldEvents, key = { "world-${it.sequence}" }) { entry ->
             WorldAuditEntry(entry, expanded = expandedWorldEvent == entry.id, onExpand = { expandedWorldEvent = if (expandedWorldEvent == entry.id) null else entry.id })
         }
@@ -268,7 +268,7 @@ private fun JunctionWorldPanel(
     Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Junction World", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Nethra World", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(if (status.isEmpty()) "OFFLINE" else if (paused) "PAUSED" else state, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             }
             Text("Goal: $currentGoal", style = MaterialTheme.typography.bodySmall)
@@ -329,20 +329,20 @@ private fun JunctionWorldChat(
 ) {
     Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Talk to Junction World", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Messages stay in this app and the VM communication audit. They are not added to Junction's Firebase chat sync.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Talk to Nethra World", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Messages stay in this app and the VM communication audit. They are not added to Nethra's Firebase chat sync.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (events.isEmpty()) Text("No messages yet.", style = MaterialTheme.typography.bodySmall)
             events.forEach { event ->
                 val fromJunction = event.communicationDirection == "AGENT_TO_OWNER"
                 Card(colors = CardDefaults.cardColors(containerColor = if (fromJunction) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(if (fromJunction) "Junction" else "You", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Text(if (fromJunction) "Nethra" else "You", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         Text(event.details.orEmpty().take(4_000), style = MaterialTheme.typography.bodyMedium)
                         Text(formatTimestamp(event.timestamp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            OutlinedTextField(value = draft, onValueChange = onDraftChange, label = { Text("Message Junction") }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 5)
+            OutlinedTextField(value = draft, onValueChange = onDraftChange, label = { Text("Message Nethra") }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 5)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (paused) "Paused: messages queue until resumed" else status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                 Button(onClick = onSend, enabled = !sending && draft.isNotBlank()) {

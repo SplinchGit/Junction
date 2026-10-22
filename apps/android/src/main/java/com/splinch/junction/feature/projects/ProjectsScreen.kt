@@ -14,7 +14,13 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun ProjectsScreen(modifier: Modifier = Modifier) {
+fun ProjectsScreen(modifier: Modifier = Modifier, objectivesOnly: Boolean = false, initialObjectiveGoal: String? = null, onObjectiveGoalConsumed: () -> Unit = {}) {
+    if (objectivesOnly) {
+        LazyColumn(modifier.fillMaxSize().padding(16.dp)) {
+            item { NethraPanel(initialGoal = initialObjectiveGoal, onInitialGoalConsumed = onObjectiveGoalConsumed) }
+        }
+        return
+    }
     val context = LocalContext.current
     val client = remember { ForemanClient(context) }
     val scope = rememberCoroutineScope()
@@ -47,12 +53,12 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("Work Activity", style = MaterialTheme.typography.headlineMedium)
-            Text(if (connected) "Connected to Junction Windows" else "Disconnected — controls unavailable")
-            Text("Give Junction a development instruction in Chat. Name a file, folder or repository once; the conversation starts and keeps that work context. Stop remains available here while work is active.")
+            Text(if (connected) "Connected to Nethra Windows" else "Disconnected — controls unavailable")
+            Text("Give Nethra a development instruction in Chat. Name a file, folder or repository once; the conversation starts and keeps that work context. Stop remains available here while work is active.")
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             OutlinedButton(onClick = { scope.launch { refresh() } }, enabled = !busy) { Text("Refresh") }
         }
-        if (projects.isEmpty()) item { Text("No work yet. Ask Junction to work on a local path or named project in Chat.") }
+        if (projects.isEmpty()) item { Text("No work yet. Ask Nethra to work on a local path or named project in Chat.") }
         projects.forEach { p -> item {
             OutlinedButton(onClick = { selectedId = p["id"]?.toString(); project = null }, modifier = Modifier.fillMaxWidth()) {
                 Text("${p["name"]} · ${p["status"]}")
@@ -86,7 +92,7 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
                 } }
             } }
             item { Text("Handoff", style = MaterialTheme.typography.titleMedium); Text(p["handoff"].toString()) }
-            if (!active) item { Text("Tell Junction to continue or give it the next instruction in Chat.") }
+            if (!active) item { Text("Tell Nethra to continue or give it the next instruction in Chat.") }
             item { Text("Activity log", style = MaterialTheme.typography.titleMedium) }
             events.forEach { e -> item { Text("${e["kind"]}: ${e["detail"]}") } }
         }

@@ -44,7 +44,9 @@ data class ChatMessage(
     /** Local-model reasoning trace, shown only on explicit expansion. */
     val thinking: String? = null,
     /** Decode rate supplied by a local runtime, never an estimate. */
-    val tokensPerSecond: Double? = null
+    val tokensPerSecond: Double? = null,
+    /** Verbose run metrics from the PC host: speed, token counts and timing. */
+    val telemetry: String? = null
 )
 
 data class ChatSession(

@@ -37,6 +37,10 @@ class JunctionApplication : Application() {
             val enabled = prefsRepository.digestEnabledFlow.first()
             Scheduler.configureFeedDigest(this@JunctionApplication, enabled, interval.toLong())
         }
+        appScope.launch {
+            runCatching { com.splinch.junction.feature.scheduler.DeviceCommandWorker.schedule(this@JunctionApplication) }
+                .onFailure { Log.e(TAG, "Failed to schedule device command sync", it) }
+        }
     }
 
     private companion object {

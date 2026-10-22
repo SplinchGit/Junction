@@ -42,9 +42,9 @@ async function readNdjson(stream, onEvent) {
 
 /** PC-only endpoint for encrypted, paired local inference. */
 class LocalBrainRelay {
-  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, syncConversations = null, onCommandStarted = null, now = () => Date.now() }) {
+  constructor({ projectId, getState, fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", intervalMs = POLL_INTERVAL_MS, workspacePath = "", createCodeDelegation = null, runLocalAgent = null, dispatchAgent = null, syncConversations = null, onCommandStarted = null, now = () => Date.now() }) {
     Object.assign(this, { projectId, getState, fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), intervalMs, workspacePath, createCodeDelegation, runLocalAgent, onCommandStarted, now, timer: null, polling: false, lastError: null, lastHeartbeatAt: 0 });
-    this.active = new Map(); this.syncConversations = syncConversations;
+    this.active = new Map(); this.syncConversations = syncConversations; this.dispatchAgent=dispatchAgent;
     this.retryAfter = 0; this.lastPairCheck = null;
   }
   start() { if (this.timer || !this.projectId) return; this.timer = setInterval(() => this.poll().catch(error => { this.lastError = error.message; }), this.intervalMs); this.poll().catch(error => { this.lastError = error.message; }); }
@@ -128,6 +128,14 @@ class LocalBrainRelay {
       claimed = true;
       const plaintext = crypt(state.key, `JBP1|${state.brainId}|${id}|request`, Buffer.from(item.data.ciphertext, "base64url"), Buffer.from(item.data.nonce, "base64url"), false);
       const payload = JSON.parse(plaintext);
+      if(payload.mode==='agent_api'){
+        if(!this.dispatchAgent)throw new Error('Update Junction Windows to use Nethra');
+        const requestId=`nethra-${payload.requestId||id}`;
+        const result=await this.dispatchAgent(payload.type,payload.payload||{},requestId);
+        const encrypted=crypt(state.key,`JBP1|${state.brainId}|${id}|response`,Buffer.from(JSON.stringify(result)),null,true);
+        await this.update(item.document,state.session,{status:'done',responseCiphertext:encrypted.ciphertext,responseNonce:encrypted.nonce,leaseUntilMs:0},null);
+        return;
+      }
       if (payload.mode === "conversation_sync") {
         if (!this.syncConversations) throw new Error("Update Junction on the PC to enable paired conversation sync.");
         const result = await this.syncConversations(payload);
@@ -175,7 +183,7 @@ class LocalBrainRelay {
           try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
         }, 1_000);
         try {
-          const result = await this.runLocalAgent({ goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
+          const result = await this.runLocalAgent({ surface:'android-relay', conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
             onProgress: async progress => {
               if (progress.text !== undefined) { answer = progress.text; await flush(); }
               else await this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: String(progress.stage || "Working on your PC").slice(0, 150) }, null);

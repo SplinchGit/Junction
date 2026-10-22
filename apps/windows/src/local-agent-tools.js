@@ -30,6 +30,11 @@ class LocalAgentToolRegistry {
     try { fs.mkdirSync(path.dirname(this.auditPath), { recursive: true }); fs.appendFileSync(this.auditPath, `${JSON.stringify({ id: `agent-${this.now()}-${Math.random().toString(16).slice(2)}`, timestamp: new Date(this.now()).toISOString(), event, capability, decision: event === "agent_tool_requested" ? "requested" : "executed", outcome, reason: safeAuditText(reason), ...telemetry })}\n`); } catch {}
   }
   async execute(name, args, run) {
+    const definition=this.definitions({allowCodeDelegation:Boolean(run.allowCodeDelegation)}).find(tool=>tool.function.name===name);
+    if(!definition)throw new Error(`Unknown or unavailable Junction tool: ${String(name).slice(0,80)}.`);
+    const schema=definition.function.parameters;
+    if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(key=>!Object.hasOwn(schema.properties,key)))throw new Error('Invalid tool argument fields.');
+    for(const key of schema.required){const value=args[key],rule=schema.properties[key];if(typeof value!=='string'||value.length<rule.minLength||value.length>rule.maxLength)throw new Error(`Invalid tool argument: ${key}.`);}
     if (name === "web_search") {
       const query = run.validateSearch(args?.query);
       this.audit("agent_tool_requested", name, "success", query, run.audit);
@@ -45,8 +50,9 @@ class LocalAgentToolRegistry {
       const task = String(args?.task || "").replace(/\s+/g, " ").trim().slice(0, 2000);
       if (task.length < 10) throw new Error("Codex delegation requires a focused coding task.");
       this.audit("agent_tool_requested", name, "success", task, run.audit);
-      const plan = await this.createCodeDelegation(task);
-      const result = { ok: true, tool: name, status: "draft_created", approvalRequired: true, draftId: plan?.id ? String(plan.id).slice(0, 12) : null, message: "A reviewable Codex draft was created. Owner approval is required before Codex starts; the main checkout was not modified." };
+      const plan = await this.createCodeDelegation(task, {goal:run.goal,conversationId:run.conversationId});
+      if (!plan?.id || !plan?.status || !plan?.response) throw new Error("The work coordinator did not confirm a saved work session.");
+      const result = { ok: true, tool: name, status: plan.status, approvalRequired: false, applyApprovalRequired: true, workId: plan.id, message: plan.response };
       this.audit("agent_tool_result", name, "success", result.message, run.audit);
       return { content: JSON.stringify(result) };
     }

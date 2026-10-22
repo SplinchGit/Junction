@@ -9,15 +9,32 @@ const { LanDiscovery } = require("./lan-discovery");
 const { normalizeLocalModel } = require("./model-catalog");
 const { MAX_FRAME_BYTES, parseEnvelope, serializeEnvelope, isExpired, isRevoked } = require("./lan-protocol");
 
-const PRIVATE_IPV4 = ip => {
+const octetsOf = ip => {
   const octets = String(ip).split(".").map(Number);
-  return octets.length === 4 && octets.every(value => Number.isInteger(value) && value >= 0 && value <= 255) &&
-    ((octets[0] === 10) || (octets[0] === 192 && octets[1] === 168) || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31));
+  return octets.length === 4 && octets.every(value => Number.isInteger(value) && value >= 0 && value <= 255) ? octets : null;
 };
+// 100.64.0.0/10 is the shared-address range Tailscale assigns. It is not
+// routable on the physical LAN, and traffic to it is carried inside the
+// authenticated WireGuard tunnel, so it is the preferred bind target on an
+// untrusted network such as shared hostel Wi-Fi.
+const TAILSCALE_IPV4 = ip => { const o = octetsOf(ip); return !!o && o[0] === 100 && o[1] >= 64 && o[1] <= 127; };
+const RFC1918_IPV4 = ip => {
+  const o = octetsOf(ip);
+  return !!o && ((o[0] === 10) || (o[0] === 192 && o[1] === 168) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31));
+};
+const PRIVATE_IPV4 = ip => RFC1918_IPV4(ip) || TAILSCALE_IPV4(ip);
 function selectPrivateIPv4(bindAddress) {
   if (bindAddress) { if (!PRIVATE_IPV4(bindAddress)) throw new Error("LAN server bind address must be a private IPv4 address."); return bindAddress; }
-  for (const interfaces of Object.values(os.networkInterfaces())) for (const entry of interfaces || []) if (entry.family === "IPv4" && !entry.internal && PRIVATE_IPV4(entry.address)) return entry.address;
-  throw new Error("No private IPv4 LAN interface is available.");
+  const candidates = privateIPv4Addresses();
+  // Prefer the encrypted overlay address when one exists; fall back to the
+  // physical private LAN otherwise.
+  return candidates.find(TAILSCALE_IPV4) || candidates[0] || (() => { throw new Error("No private IPv4 LAN interface is available."); })();
+}
+// Listen on each private interface so an already paired phone can reconnect
+// when Windows switches between a hotspot and an overlay. The Junction API
+// authenticates each device and pins TLS; Ollama itself remains loopback-only.
+function preferredBindAddresses() {
+  return privateIPv4Addresses();
 }
 function privateIPv4Addresses() {
   return [...new Set(Object.values(os.networkInterfaces()).flatMap(entries => (entries || []).filter(entry => (entry.family === "IPv4" || entry.family === 4) && !entry.internal && PRIVATE_IPV4(entry.address)).map(entry => entry.address)))].sort();
@@ -30,6 +47,12 @@ function certificateFingerprint(certificate) {
     // Test doubles may not contain a parseable certificate; production identities always do.
     return crypto.createHash("sha256").update(String(certificate)).digest("hex");
   }
+}
+function pairedPublicKeyFingerprint(value) {
+  const key = typeof value === "string"
+    ? (value.includes("BEGIN") ? crypto.createPublicKey(value) : crypto.createPublicKey({ key: Buffer.from(value, "base64"), format: "der", type: "spki" }))
+    : value;
+  return crypto.createHash("sha256").update(key.export({ type: "spki", format: "der" })).digest("hex");
 }
 function authMessage(nonce, instanceId, deviceId) { return `junction-lan-v1\n${nonce}\n${instanceId}\n${deviceId}`; }
 function redactedError(error) { return String(error?.message || error || "LAN request failed").replace(/[\r\n]/g, " ").slice(0, 500); }
@@ -45,9 +68,9 @@ function createTlsIdentity(identityStore, advertisedHost = "junction.local", adv
 }
 
 class LanServer {
-  constructor({ identityStore, foremanApi = null, localData = null, runtime = null, onOwnerWork = null, worldAuditStore = null, worldControlStore = null, worldChatStore = null, onWorldControl = () => {}, onWorldMessage = () => {}, getWorldStatus = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
+  constructor({ identityStore, nethraApi = null, foremanApi = null, localData = null, runtime = null, onOwnerWork = null, worldAuditStore = null, worldControlStore = null, worldChatStore = null, onWorldControl = () => {}, onWorldMessage = () => {}, getWorldStatus = null, discovery = null, getBootstrapState = null, httpsImpl = https, wsServerFactory = options => new WebSocketServer(options), bindAddress = null, port = 0, now = () => Date.now(), heartbeatMs = 30_000, maxUnauthenticatedConnections = 32, authTimeoutMs = 15_000, authorizationCheckMs = 1_000 } = {}) {
     if (!identityStore) throw new Error("LAN identity store is required.");
-    this.foremanApi = foremanApi; this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.onOwnerWork=onOwnerWork; this.worldAuditStore = worldAuditStore; this.worldControlStore = worldControlStore; this.worldChatStore = worldChatStore; this.onWorldControl = onWorldControl; this.onWorldMessage = onWorldMessage; this.getWorldStatus = getWorldStatus; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
+    this.nethraApi = nethraApi; this.foremanApi = foremanApi; this.identityStore = identityStore; this.localData = localData; this.runtime = runtime; this.onOwnerWork=onOwnerWork; this.worldAuditStore = worldAuditStore; this.worldControlStore = worldControlStore; this.worldChatStore = worldChatStore; this.onWorldControl = onWorldControl; this.onWorldMessage = onWorldMessage; this.getWorldStatus = getWorldStatus; this.discovery = discovery || new LanDiscovery(); this.getBootstrapState = getBootstrapState; this.https = httpsImpl; this.wsServerFactory = wsServerFactory; this.bindAddress = bindAddress; this.port = port; this.now = now; this.heartbeatMs = heartbeatMs; this.maxUnauthenticatedConnections = maxUnauthenticatedConnections; this.authTimeoutMs = authTimeoutMs; this.authorizationCheckMs = authorizationCheckMs; this.connections = new Map(); this.runs = new Map(); this.replayCache = new Map(); this.server = null; this.wss = null; this.heartbeat = null;
     this.instance = identityStore.getInstanceMetadata?.() || {}; this.instanceId = this.instance.instanceId || crypto.randomUUID(); this.bindHost = selectPrivateIPv4(bindAddress); const tls = createTlsIdentity(identityStore, this.instanceId, this.bindHost); this.tls = tls; this.certificateFingerprint = certificateFingerprint(tls.certificate);
     if (!this.instance.instanceId) { this.instance = { ...this.instance, instanceId: this.instanceId }; identityStore.setInstanceMetadata?.(this.instance); }
   }
@@ -69,6 +92,12 @@ class LanServer {
     try {
       if (state.state !== "authenticated") return envelope.type === "pair.bootstrap" ? this.bootstrapPair(socket, envelope) : envelope.type === "pair" ? this.pair(socket, envelope) : envelope.type === "hello" ? this.hello(socket, envelope) : envelope.type === "authenticate" ? this.authenticate(socket, envelope) : this.reject(socket, "Authentication required.");
       if (!this.authorized(socket)) return;
+      if(require('./nethra-api').NETHRA_TYPES.includes(envelope.type)){
+        if(!this.nethraApi)throw new Error('Nethra is unavailable');
+        const requestId=`nethra-${envelope.requestId}`;
+        const result=await this.nethraApi.dispatch(envelope.type,envelope.payload,requestId,'android');
+        return this.send(socket,`${envelope.type}.result`,envelope.requestId,result);
+      }
       if (["project.list","project.get","task.control","task.enqueue"].includes(envelope.type)) {
         if(!this.foremanApi) throw new Error("Project runtime is unavailable");
         const controlId=crypto.createHash('sha256').update(`${state.deviceId}:${envelope.requestId}`).digest('hex');
@@ -129,7 +158,7 @@ class LanServer {
   }
   authenticate(socket, envelope) {
     const state = this.connections.get(socket);
-    let valid = false;
+    let valid = false, authenticatedKey = null;
     try {
       const signature = Buffer.from(String(envelope.payload.signature || ""), "base64url");
       const paired = this.identityStore.getPairedAndroidKeys?.()[state.deviceId];
@@ -138,9 +167,10 @@ class LanServer {
         ? (paired.publicKey.includes("BEGIN") ? crypto.createPublicKey(paired.publicKey) : crypto.createPublicKey({ key: Buffer.from(paired.publicKey, "base64"), format: "der", type: "spki" }))
         : paired?.publicKey;
       valid = state.state === "challenged" && this.now() < state.challengeExpiresAt && envelope.payload.deviceId === state.deviceId && paired && !isExpired(paired, this.now()) && !isRevoked(revoked, this.now()) && verificationKey && crypto.verify(verificationKey.asymmetricKeyType === "ec" ? "sha256" : null, Buffer.from(authMessage(state.nonce, this.instanceId, state.deviceId)), verificationKey, signature);
+      if(valid)authenticatedKey=pairedPublicKeyFingerprint(verificationKey);
     } catch {}
     if (!valid) return this.reject(socket, "Invalid LAN authentication signature.");
-    state.pairing = this.identityStore.getPairedAndroidKeys()[state.deviceId]; state.state = "authenticated"; clearTimeout(state.authTimer); state.authTimer = null; this.send(socket, "authenticated", envelope.requestId, { instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint });
+    state.pairing = this.identityStore.getPairedAndroidKeys()[state.deviceId]; state.authenticatedKey=authenticatedKey; state.state = "authenticated"; clearTimeout(state.authTimer); state.authTimer = null; this.send(socket, "authenticated", envelope.requestId, { instanceId: this.instanceId, certificateFingerprint: this.certificateFingerprint });
   }
   pair(socket, envelope) {
     const payload = envelope.payload || {}, token = String(payload.token || ""), deviceId = String(payload.deviceId || ""), publicKey = String(payload.publicKey || "");
@@ -190,7 +220,8 @@ class LanServer {
   authorized(socket, { reject = true } = {}) {
     const state = this.connections.get(socket); if (!state || state.state !== "authenticated") return false;
     const paired = this.identityStore.getPairedAndroidKeys?.()[state.deviceId]; const revoked = this.identityStore.getRevocationState?.()[state.deviceId];
-    if (!paired || isExpired(paired, this.now()) || isRevoked(revoked, this.now())) { if (reject) this.reject(socket, "LAN authorization expired or revoked."); return false; }
+    let currentKey=null;try{if(paired?.publicKey)currentKey=pairedPublicKeyFingerprint(paired.publicKey);}catch{}
+    if (!paired || isExpired(paired, this.now()) || isRevoked(revoked, this.now()) || !currentKey || currentKey!==state.authenticatedKey) { if (reject) this.reject(socket, "LAN authorization expired, changed or revoked."); return false; }
     state.pairing = paired; return true;
   }
   runKey(state, requestId) { return `${state.connectionId}:${requestId}`; }
@@ -218,10 +249,12 @@ class LanServer {
       if(workReply){const assistantMessage=conversation&&this.localData?.addMessage?this.localData.addMessage(conversation.id,"assistant",workReply,"JUNCTION"):null;emit("chat.complete",{conversationId:conversation?.id||payload.conversationId||null,messageId:assistantMessage?.id||null,content:workReply,model:"Junction foreman",usage:null});return;}
       if (!this.runtime?.run) throw new Error("LAN model runtime is unavailable.");
       let streamed = "";
-      const result = await this.runtime.run({ goal: content, model: normalizeLocalModel(payload.model), history: conversation?.messages?.slice(0, -1) || [], memories: this.localData?.memories?.() || [], context: payload.context || null, signal: controller.signal, runId: envelope.requestId, onProgress: progress => { if (!this.authorized(socket)) { controller.abort(); return; } const text = String(progress?.text || ""); const delta = text.startsWith(streamed) ? text.slice(streamed.length) : text; streamed = text; if (delta && !controller.signal.aborted) emit("chat.delta", { text: delta }); } });
+      const result = await this.runtime.run({ surface:"android-lan", conversationId:conversation?.id||payload.conversationId||null, goal: content, model: normalizeLocalModel(payload.model), history: conversation?.messages?.slice(0, -1) || [], memories: this.localData?.memories?.() || [], context: payload.context || null, signal: controller.signal, runId: envelope.requestId, onProgress: progress => { if (!this.authorized(socket)) { controller.abort(); return; } const text = String(progress?.text || ""); const delta = text.startsWith(streamed) ? text.slice(streamed.length) : text; streamed = text; if (delta && !controller.signal.aborted) emit("chat.delta", { text: delta }); } });
       if (controller.signal.aborted || !this.authorized(socket)) { controller.abort(); return; }
-      const assistantMessage = conversation && this.localData?.addMessage ? this.localData.addMessage(conversation.id, "assistant", String(result?.content || streamed), "JUNCTION") : null;
-      emit("chat.complete", { conversationId: conversation?.id || payload.conversationId || null, messageId: assistantMessage?.id || null, content: result?.content || streamed, model: result?.model || payload.model || null, usage: result?.usage || null });
+      // Run metrics only; no reasoning text, prompt content or host paths.
+      const telemetry = { model: result?.model || normalizeLocalModel(payload.model), inputTokens: Number(result?.usage?.prompt_tokens || 0), outputTokens: Number(result?.usage?.completion_tokens || 0), tokensPerSecond: Number.isFinite(result?.metrics?.tokensPerSecond) ? result.metrics.tokensPerSecond : null, generatedTokens: Number(result?.metrics?.generatedTokens || result?.usage?.completion_tokens || 0), evalMs: Number(result?.metrics?.evalMs || 0), loadMs: Number(result?.metrics?.loadMs || 0), modelCalls: Number(result?.metrics?.modelCalls || 0), durationMs: Number(result?.durationMs || 0), iterations: Number(result?.iterations || 0), toolCalls: Number(result?.toolCalls || 0), toolsExecuted: Number(result?.toolsExecuted || 0), toolNames: Array.isArray(result?.toolNames) ? result.toolNames.slice(0, 8) : [], thinkingState: String(result?.thinkingState || "off"), thinkingCharacters: Number(result?.thinkingCharacters || 0) };
+      const assistantMessage = conversation && this.localData?.addMessage ? this.localData.addMessage(conversation.id, "assistant", String(result?.content || streamed), "JUNCTION", telemetry) : null;
+      emit("chat.complete", { conversationId: conversation?.id || payload.conversationId || null, messageId: assistantMessage?.id || null, content: result?.content || streamed, model: result?.model || payload.model || null, usage: result?.usage || null, telemetry });
     } catch (error) { if (!controller.signal.aborted) emit("chat.error", { code: error?.name === "AbortError" ? "LAN_CANCELLED" : "LAN_MODEL_FAILED", message: redactedError(error) }); }
     finally { clearInterval(run.authorizationTimer); run.authorizationTimer = null; this.runs.delete(replayKey); state.runs.delete(replayKey); if (events.at(-1)?.type === "chat.complete" || events.at(-1)?.type === "chat.error") { this.replayCache.set(replayKey, events.slice(-1)); while (this.replayCache.size > 256) this.replayCache.delete(this.replayCache.keys().next().value); } }
   }
@@ -262,4 +295,4 @@ class LanServer {
   }
 }
 
-module.exports = { LanServer, authMessage, certificateFingerprint, selectPrivateIPv4, privateIPv4Addresses, createTlsIdentity };
+module.exports = { LanServer, authMessage, certificateFingerprint, selectPrivateIPv4, privateIPv4Addresses, preferredBindAddresses, createTlsIdentity };

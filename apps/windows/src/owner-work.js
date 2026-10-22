@@ -1,8 +1,7 @@
 "use strict";
 const fs=require("node:fs"),path=require("node:path");
 
-const DEVELOPMENT=/\b(?:work(?:ing)?\s+on|continue(?:\s+with)?|resume|implement|fix|update|change|edit|build|develop|refactor|debug|test|finish|create)\b/i;
-const STOP=/\b(?:stop|pause|cancel)\b.*\b(?:work|working|project|task|this)\b|^(?:stop|pause|cancel)\s*$/i;
+const DEVELOPMENT=/^(?:keep\s+)?(?:work(?:ing)?\s+on|continue(?:\s+with)?|resume|implement|fix|repair|update|change|edit|build|develop|refactor|debug|test|finish|create)\b/i;
 const DISCUSSION=/^(?:what|why|how|where|when|who|should|do you think|explain|tell me)\b/i;
 const ignored=new Set(["node_modules",".git",".gradle","build","dist","Library","Temp"]);
 
@@ -28,8 +27,21 @@ function findNamedFolder(content,roots,maxDepth=3){
 function resolveOwnerWork({content,conversationId,projects=[],roots=[]}){
  const message=String(content||"").trim();if(!message)return null;
  const named=namedProject(message,projects),current=named||associated(projects,conversationId);
- if(STOP.test(message))return current?{action:"stop",projectId:current.id}:null;
- if(!DEVELOPMENT.test(message)||DISCUSSION.test(message))return null;
+ const command=message.replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i,"").replace(/[.!?]+$/,"").trim();
+ const status=/^(?:what (?:are you|is junction) working on|how (?:is|are) (?:the |my |our )?(?:work|tasks?|projects?) (?:going|progressing)|(?:what(?:'s| is) (?:the )?status(?: of .+)?|(?:show|list)(?: me)? (?:the |all |current |my )*(?:work|tasks?|projects?)(?: status)?|(?:give me|show me) (?:an? )?(?:update|status) on .+))$/i.test(command);
+ if(status)return {action:"status",projectId:/\ball\b/i.test(command)?null:current?.id||null};
+ if(DISCUSSION.test(message))return null;
+ const control=command.match(/^(stop|pause|cancel|resume|continue)(?:\s+(.+))?$/i);
+ if(control){
+  let target=normal(control[2]||"");
+  if(named)target=target.replace(normal(named.name),"").trim();
+  if(!target||/^(?:(?:the|this|my|current) )?(?:work|working|project|task|queue)(?: on(?: this)?)?$/.test(target))
+   return current?{action:({cancel:"stop",continue:"resume"}[control[1].toLowerCase()]||control[1].toLowerCase()),projectId:current.id}:null;
+ }
+ // Capability and product-wishlist questions belong in chat; only an imperative
+ // development request (including a concrete polite request) can create work.
+ if(/^(?:can|could|would) you\s+(?:create|build|develop)\s+(?:an? )?(?:emails?|agents?|apps?|websites?)\??$/i.test(message))return null;
+ if(!DEVELOPMENT.test(command))return null;
  const supplied=explicitPath(message);if(named&&!supplied)return {action:"submit",projectId:named.id,task:message};
  if(current&&!supplied&&!/\bwork(?:ing)?\s+on\b/i.test(message))return {action:"submit",projectId:current.id,task:message};
  const candidate=supplied||findNamedFolder(message,roots);if(!candidate)return {action:"needs_scope",task:message};

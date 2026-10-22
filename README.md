@@ -1,4 +1,4 @@
-    Yoi # Junction
+# Junction
 
 Current verification: [feature catalogue, test results and open findings](docs/audit/2026-09-27-feature-review.md). Music is now [Junction DAW](https://github.com/SplinchGit/Junction-DAW); Mafioso Android is in its [own repository PR](https://github.com/SplinchGit/Mafioso/pull/1).
 

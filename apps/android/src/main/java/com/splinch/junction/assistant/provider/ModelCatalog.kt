@@ -70,9 +70,9 @@ object ModelCatalog {
             apiKeyUrl = null,
             baseUrl = "",
             requiresApiKey = false,
-            defaultModelId = "qwen3:14b",
+            defaultModelId = "qwen3:30b",
             models = listOf(
-                ModelEntry("qwen3:14b", "Qwen3 14B", "Local agent", "Runs on your paired PC with native agent tools. Keep Junction and Ollama running on the PC.", 0.0, 0.0)
+                ModelEntry("qwen3:30b", "Qwen3 30B", "Local agent", "Runs on your paired PC with native agent tools and always-on thinking.", 0.0, 0.0)
             )
         ),
         ProviderDefinition(

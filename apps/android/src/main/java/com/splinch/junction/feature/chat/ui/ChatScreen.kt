@@ -57,6 +57,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +78,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -126,6 +128,8 @@ fun ChatScreen(
     chatManager: ChatManager,
     onOpenNavigation: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenObjectives: () -> Unit = {},
+    onContinueAsObjective: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val messages by chatManager.messages.collectAsState()
@@ -138,7 +142,7 @@ fun ChatScreen(
     val voiceListening by chatManager.localVoiceListening.collectAsState()
     val voiceSpeaking by chatManager.localVoiceSpeaking.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -301,6 +305,14 @@ fun ChatScreen(
                     expanded = historyMenuOpen,
                     onDismissRequest = { historyMenuOpen = false }
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Nethra objectives") },
+                        onClick = { historyMenuOpen = false; onOpenObjectives() }
+                    )
+                    if (input.isNotBlank()) DropdownMenuItem(
+                        text = { Text("Continue draft as objective") },
+                        onClick = { historyMenuOpen = false; onContinueAsObjective(input.trim()) }
+                    )
                     DropdownMenuItem(
                         text = { Text("Keep last ${ChatManager.DEFAULT_TRIM_KEEP} messages") },
                         onClick = {
@@ -479,15 +491,39 @@ fun JunctionDrawerContent(
     onNewChat: () -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
-    onOpenBuild: () -> Unit
+    onOpenBuild: () -> Unit,
+    onOpenWork: () -> Unit,
+    onOpenObjectives: () -> Unit
 ) {
+    var pendingDelete by remember { mutableStateOf<com.splinch.junction.assistant.conversation.ChatSessionSummary?>(null) }
+    pendingDelete?.let { summary ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete conversation?") },
+            text = { Text("This removes the conversation from this phone and its paired devices.") },
+            confirmButton = { TextButton(onClick = { pendingDelete = null; onDelete(summary.sessionId) }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
+        )
+    }
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Text(text = "Junction", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Nethra", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         NavigationDrawerItem(
             label = { Text("Build") },
             selected = false,
             onClick = onOpenBuild,
+            icon = { Icon(Icons.Default.Build, contentDescription = null) }
+        )
+        NavigationDrawerItem(
+            label = { Text("Build projects") },
+            selected = false,
+            onClick = onOpenWork,
+            icon = { Icon(Icons.Default.Build, contentDescription = null) }
+        )
+        NavigationDrawerItem(
+            label = { Text("Nethra objectives") },
+            selected = false,
+            onClick = onOpenObjectives,
             icon = { Icon(Icons.Default.Build, contentDescription = null) }
         )
         Spacer(Modifier.height(8.dp))
@@ -526,7 +562,7 @@ fun JunctionDrawerContent(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { onDelete(summary.sessionId) }, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = { pendingDelete = summary }, modifier = Modifier.size(32.dp)) {
                         Icon(
                             Icons.Filled.Delete,
                             contentDescription = "Delete chat",
@@ -619,7 +655,7 @@ fun ChatInputRow(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 56.dp, max = 160.dp),
-                placeholder = "Message Junction…",
+                placeholder = "Message Nethra…",
                 singleLine = false,
                 maxLines = 6
             )
@@ -956,10 +992,20 @@ private fun MessageBubble(message: ChatMessage) {
                 }
             }
             if (message.sender == Sender.ASSISTANT &&
-                (!message.thinking.isNullOrBlank() || message.tokensPerSecond != null)
+                (!message.thinking.isNullOrBlank() || message.tokensPerSecond != null || !message.telemetry.isNullOrBlank())
             ) {
                 Spacer(Modifier.height(8.dp))
-                message.tokensPerSecond?.let { speed ->
+                // The host's verbose line already contains the decode rate, so
+                // the short "tokens/s" label is only a fallback for providers
+                // that report speed without full run metrics.
+                val metrics = message.telemetry?.takeIf { it.isNotBlank() }
+                if (metrics != null) {
+                    Text(
+                        text = metrics,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                    )
+                } else message.tokensPerSecond?.let { speed ->
                     Text(
                         text = "${String.format(java.util.Locale.US, "%.1f", speed)} tokens/s",
                         style = MaterialTheme.typography.labelSmall,

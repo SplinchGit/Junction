@@ -28,19 +28,29 @@ const { WorldHostRelay } = require("./world-host-relay");
 const { Foreman } = require("./foreman");
 const { ForemanExecutor } = require("./foreman-executor");
 const { ForemanApi } = require("./foreman-api");
-const { resolveOwnerWork } = require("./owner-work");
+const { handleOwnerWorkInstruction: executeOwnerWork } = require("./owner-work-handler");
+const { workSnapshot } = require("./assistant-environment");
+const { NethraStore } = require("./nethra-store");
+const { NethraScheduler } = require("./nethra-scheduler");
+const { NethraRunner } = require("./nethra-runner");
+const { NethraApi } = require("./nethra-api");
+const { handleNethraChat } = require("./nethra-chat");
+const { configureStartup } = require("./nethra-startup");
 let foreman, foremanApi;
+let nethraStore, nethraScheduler, nethraApi, deviceCommands, hostInitialized=false;
+const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
+const launchAsHost = process.argv.includes("--agent-host");
+function hasPersistentObjectives(){return nethraStore?.list().some(task=>task.persistent&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status));}
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
-async function handleOwnerWorkInstruction(content,conversationId,requestId){
-  const ownerWork=resolveOwnerWork({content,conversationId,projects:foreman.list(),roots:[app.getPath('documents')]});if(!ownerWork)return null;
-  if(ownerWork.action==='stop'){const project=foreman.get(ownerWork.projectId);await foreman.control(project.id,'stop',project.revision,`chat-stop-${requestId||crypto.randomUUID()}`);return `Stopped work on ${project.name}. Its queue, checkpoints, test results and handoff are preserved.`;}
-  if(ownerWork.action==='needs_scope')return 'Tell me the local file or folder path for this work once. I will keep that scope with this conversation and start immediately.';
-  const task=ownerWork.task.slice(0,240),project=await foreman.submit(ownerWork.projectId?{projectId:ownerWork.projectId,task,objective:content,conversationId}:{name:ownerWork.name,repoPath:ownerWork.scopePath,task,objective:content,conversationId});
-  return `Working on ${project.name} at ${project.repoPath}. I’ll keep coordinating, implementing and testing while Junction is open. Use Stop in Work Activity or tell me to stop at any time.`;
+async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop'){
+  const nethraReply=await handleNethraChat({api:nethraApi,content,conversationId,requestId,source});
+  if(nethraReply)return nethraReply;
+  const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content,conversationId,requestId});
+  return result?.response||null;
 }
 function hydrateFirebaseEnvironment() {
   if (process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID) return;
@@ -66,6 +76,24 @@ function recordStartupIssue(component, error) {
   } catch {}
 }
 
+// Per-message run metrics for the owner's verbose footer. Generation speed is
+// only reported when the provider gave real eval timings, so a blank rate means
+// "not measured" rather than zero.
+function messageTelemetry({ config, reply, inputTokens, outputTokens, telemetry }) {
+  const metrics = reply?.metrics || null;
+  return {
+    provider: config.id, model: reply?.model || config.model || "", mode: telemetry.mode,
+    inputTokens, outputTokens,
+    tokensPerSecond: Number.isFinite(metrics?.tokensPerSecond) ? metrics.tokensPerSecond : null,
+    generatedTokens: Number.isFinite(metrics?.generatedTokens) ? metrics.generatedTokens : outputTokens,
+    evalMs: Number.isFinite(metrics?.evalMs) ? metrics.evalMs : null,
+    loadMs: Number.isFinite(metrics?.loadMs) ? metrics.loadMs : null,
+    modelCalls: Number.isFinite(metrics?.modelCalls) ? metrics.modelCalls : null,
+    durationMs: telemetry.durationMs, iterations: telemetry.iterations,
+    toolCalls: telemetry.toolCalls, toolsExecuted: telemetry.toolsExecuted, toolNames: telemetry.toolNames,
+    thinkingState: telemetry.thinkingState, thinkingCharacters: telemetry.thinkingCharacters
+  };
+}
 function appendAudit(entry) {
   try {
     fs.mkdirSync(path.dirname(auditPath), { recursive: true });
@@ -116,6 +144,7 @@ async function createWindowImpl() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show(); mainWindow.focus(); return mainWindow;
   }
+  if(hostInitialized)return openDesktopWindow();
   hydrateFirebaseEnvironment();
   identityStore = new DeviceIdentityStore(path.join(app.getPath("userData"), "identity"), safeStorage);
   identity = identityStore.load();
@@ -133,6 +162,8 @@ async function createWindowImpl() {
       token: WorldBridge.token(identityStore), auditStore: worldAuditStore,
       getControlState: async () => worldControlStore.get(),
       infer: async (messages, maxOutputTokens, { signal }) => {
+        if(!localAgent)throw new Error('Local inference is starting');
+        return localAgent.withInference(async()=>{
         const started = Date.now();
         const response = await fetch("http://127.0.0.1:11434/api/chat", {
           method: "POST", signal, headers: { "content-type": "application/json" },
@@ -144,6 +175,7 @@ async function createWindowImpl() {
         const payload = JSON.parse(Buffer.from(bytes).toString("utf8"));
         if (payload.model !== WORLD_MODEL || typeof payload.message?.content !== "string") throw new Error("Local Qwen response did not match the configured model.");
         return { content: payload.message.content, durationMs: Date.now() - started };
+        },signal);
       }
     });
     worldHostRelay = new WorldHostRelay({ bridge: worldBridge, auditStore: worldAuditStore, controlStore: worldControlStore, chatStore: worldChatStore });
@@ -154,14 +186,23 @@ async function createWindowImpl() {
   researchClient = new WebResearchClient();
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
-  const createCodeDelegation = async instruction => {const response=await handleOwnerWorkInstruction(instruction,null,crypto.randomUUID());if(!response||response.startsWith('Tell me'))throw new Error('Name the local file, folder or repository in the coding request.');return {id:crypto.randomUUID(),status:'running',response};};
+  const createCodeDelegation = async (_instruction,owner={}) => {const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content:owner.goal||'',conversationId:owner.conversationId,requestId:crypto.randomUUID()});if(!result?.id||result.status==='NEEDS_SCOPE')throw new Error('Name the local file, folder or repository in the owner coding request.');return result;};
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
   localAgent = new LocalAgentRuntime({ toolRegistry });
+  nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
+  let deviceSigner=null;
+  deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
+  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands});
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options)});
+  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  nethraScheduler.start();
+  if(app.isPackaged&&nethraStore.settings().persistentStartup)configureStartup({enabled:true,executable:process.execPath,packaged:true,resourcesPath:process.resourcesPath}).catch(error=>recordStartupIssue('Nethra startup registration',error));
   if (process.platform === "win32") {
     try {
-      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: localAgent, getBootstrapState: localBrainBootstrapState,
+      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: {run:request=>localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId)})}, getBootstrapState: localBrainBootstrapState,
+        nethraApi,
         worldAuditStore, worldControlStore, worldChatStore, foremanApi,
-        onOwnerWork: ({content,conversationId,requestId}) => handleOwnerWorkInstruction(content,conversationId,requestId),
+        onOwnerWork: ({content,conversationId,requestId}) => handleOwnerWorkInstruction(content,conversationId,requestId,'android'),
         onWorldControl: () => worldHostRelay?.pollNow(), onWorldMessage: () => worldHostRelay?.pollNow(),
         getWorldStatus: async () => {
           const relay = worldHostRelay?.getStatus?.() || { state: "OFFLINE" };
@@ -194,7 +235,8 @@ async function createWindowImpl() {
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
-    runLocalAgent: request => localAgent.run(request),
+    runLocalAgent: async request => {const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android');return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId)});},
+    dispatchAgent: (type,payload,requestId)=>nethraApi.dispatch(type,payload,requestId,'android'),
     syncConversations: payload => new PairedConversationSync(localData, () => {
       scheduleSharedSync(); mainWindow?.webContents.send("junction:conversations-changed");
     }).sync(payload),
@@ -207,7 +249,12 @@ async function createWindowImpl() {
   // still owns it, start a fresh loopback-only endpoint rather than failing the
   // entire desktop launch. Ollama stays on its own loopback socket.
   companion = await startCompanion();
-  const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  hostInitialized=true;
+  if(launchAsHost)return null;
+  return openDesktopWindow();
+}
+async function openDesktopWindow(){
+  const window = new BrowserWindow({ width: 1180, height: 780, minWidth: 900, minHeight: 620, show: !launchInBackground, icon:path.join(__dirname,'../assets/junction.ico'), backgroundColor: "#090b10", webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   mainWindow = window;
   window.webContents.setWindowOpenHandler(({url}) => {
     try { const link = new URL(url); if (["https:","http:"].includes(link.protocol) && !link.username && !link.password) void shell.openExternal(link.href); } catch {}
@@ -216,7 +263,7 @@ async function createWindowImpl() {
   // Only the Windows-login instance is intentionally headless. A normal
   // desktop launch must retain conventional close/open behaviour; otherwise a
   // hidden process can make Junction appear unable to open.
-  window.on("close", event => { if (!isQuitting) { event.preventDefault(); app.quit(); } });
+  window.on("close", event => { if (!isQuitting) { event.preventDefault(); if(hasPersistentObjectives()){window.destroy();}else app.quit(); } });
   window.on("closed", () => { mainWindow = null; });
   try {
     await window.loadFile(path.join(__dirname, "../renderer/index.html"));
@@ -289,7 +336,7 @@ async function syncSharedState(){
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
 ipcMain.handle("junction:status", () => ({ device: identity, account: identityStore.getSession() ? { uid: identityStore.getSession().uid, email: identityStore.getSession().email, displayName: identityStore.getSession().displayName } : null, cloudConfigured: Boolean(process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID && process.env.JUNCTION_GOOGLE_DESKTOP_CLIENT_ID) }));
-ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3:14b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
+ipcMain.handle("junction:local-brain-status",async()=>{const state=await freshLocalBrainState(),config=localData.provider();return {enabled:Boolean(state),brainId:state?.brainId||null,model:config.id==="local"&&config.model?config.model:"qwen3:30b",relayError:localBrainRelay?.lastError||null,lastRun:localBrainRelay?.lastRun||null};});
 ipcMain.handle("junction:enable-local-brain",()=>enableLocalBrain());
 ipcMain.handle("junction:lan-pair", () => createLanPairing());
 ipcMain.handle("junction:lan-status", () => identityStore?.lanStore().status() || { instanceId: null, port: null, pairedDeviceCount: 0, pairedDeviceIds: [] });
@@ -362,7 +409,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     if (intent && decisionAllowsDelegation(intent)) {
       reply = {content:"Name the local file, folder or repository for this work. Once the scope is clear, the instruction itself starts the persistent work.",model:config.model};
     } else reply=nativeToolsAvailable
-      ? await localAgent.run({ goal: content, model: config.model || "qwen3:14b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research) })
+      ? await localAgent.run({ surface: "desktop", conversationId:conversation.id, thinking:nethraStore.settings().thinking, workSnapshot:workSnapshot(foreman.list(),conversation.id), goal: content, model: config.model || "qwen3:30b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research), onProgress: progress => { if (progress.text !== undefined && !_event.sender.isDestroyed()) _event.sender.send("junction:chat-stream", {runId,provider:"local",model:config.model || "qwen3:30b",text:progress.text}); } })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({
@@ -378,11 +425,11 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
   } finally { if(toolsAvailable)activeAgentRuns.delete(runId); }
   const contentWithSources = research ? renderCitations(reply.content, research) : reply.content;
   if (research) researchCoordinator.recordAnswer(research.jobId, reply.content);
-  const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION");
   const inputTokens=Number(reply.usage?.prompt_tokens??reply.usage?.input_tokens??0),outputTokens=Number(reply.usage?.completion_tokens??reply.usage?.output_tokens??0);
   const reasoningTokens=Number(reply.usage?.completion_tokens_details?.reasoning_tokens??reply.usage?.output_tokens_details?.reasoning_tokens??0);
   const thinkingState=reply.thinkingState||(reasoningTokens?"reported":config.id==="local"?"off":"not_reported");
   const telemetry={mode,runId,toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],iterations:Number(reply.iterations||1),thinkingCharacters:Number(reply.thinkingCharacters||0),thinkingState,reasoningTokens,durationMs:Number(reply.durationMs||Date.now()-started)};
+  const message=localData.addMessage(conversation.id,"assistant",contentWithSources,"JUNCTION",messageTelemetry({config,reply,inputTokens,outputTokens,telemetry}));
   localData.addUsage({providerId:config.id,model:reply.model,inputTokens,outputTokens,estimatedUsd:estimate(config.id,reply.model,inputTokens,outputTokens),...telemetry});
   if(!nativeToolsAvailable)appendAudit({event:"model_run_completed",capability:"model",decision:"answered",outcome:"success",runId,provider:config.id,model:reply.model||config.model||"Default model",mode,toolsAvailable:cloudToolsAvailable,inputTokens,outputTokens,reasoningTokens,thinkingCharacters:Number(reply.reasoningCharacters||0),thinkingState,durationMs:telemetry.durationMs,iterations:Number(reply.iterations||1),toolCalls:Number(reply.toolCalls||0),toolsExecuted:Number(reply.toolsExecuted||0),toolNames:reply.toolNames||[],reason:reply.toolCalls?`Answered after ${reply.toolCalls} OpenRouter function call(s)`:request.research?"Answered from owner-requested Junction Search evidence":"Answered without a tool call"});
   scheduleSharedSync();
@@ -401,6 +448,7 @@ ipcMain.handle("junction:model-catalog", () => providers);
 ipcMain.handle("junction:usage", () => localData.usage());
 ipcMain.handle("junction:delegations",()=>delegation.list());
 ipcMain.handle("junction:foreman",(_event,{type,payload,requestId})=>foremanApi.dispatch(type,payload,requestId));
+ipcMain.handle("junction:nethra",(_event,{type,payload,requestId})=>nethraApi.dispatch(type,payload,requestId));
 ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
 ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));
 ipcMain.handle("junction:review-delegation",(_event,value)=>delegation.review(value.planId,value.projectId));
@@ -411,20 +459,23 @@ ipcMain.handle("junction:cancel-delegation",(_event,value)=>delegation.cancel(va
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => { createWindow().catch(() => {}); });
+  app.on("second-instance", (_event,argv) => { if(!argv.includes('--agent-host'))createWindow().catch(() => {}); });
   app.whenReady().then(() => {
-    // Launch is owner-controlled. Do not silently opt the PC into login startup.
-    if (app.isPackaged && process.platform === "win32") {
-      app.setLoginItemSettings({ openAtLogin: false, args: ["--background"] });
-    }
+    // Retire the old login item; the dedicated per-user scheduled host owns recovery.
+    if(app.isPackaged&&process.platform==='win32')app.setLoginItemSettings({openAtLogin: false,args:['--background']});
     return createWindow();
   });
 }
 app.on("activate", () => { createWindow().catch(() => {}); });
+// Registering this listener suppresses Electron's default last-window quit.
+// Explicit app.quit still runs the orderly shutdown below.
+app.on("window-all-closed", () => {if(!isQuitting&&!hasPersistentObjectives())app.quit();});
 app.on("before-quit", event => {
   if (isQuitting) return;
   event.preventDefault(); isQuitting = true;
   shutdownPromise = (async () => {
+    await nethraScheduler?.stop();
+    nethraStore?.close(); deviceCommands?.close();
     await foreman?.shutdown();
     foreman?.close();
     await delegation?.shutdown?.();

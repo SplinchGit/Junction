@@ -189,7 +189,7 @@ private fun WelcomeStep(onGetStarted: () -> Unit, onSkip: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Junction",
+                text = "Nethra",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
@@ -199,7 +199,7 @@ private fun WelcomeStep(onGetStarted: () -> Unit, onSkip: () -> Unit) {
         Text(text = "Let's set up your AI", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Junction needs an AI provider to power chat. Bring your own API key from " +
+            text = "Nethra needs an AI provider to power chat. Bring your own API key from " +
                 "any of ${ModelCatalog.providers.size} supported providers — Anthropic, OpenAI, DeepSeek, " +
                 "Mistral, Groq, xAI, Gemini, OpenRouter, or any OpenAI-compatible endpoint — takes about a minute.",
             style = MaterialTheme.typography.bodyLarge,
@@ -307,7 +307,7 @@ private fun ApiKeyStep(
         Text(text = "Get your ${provider.displayName} API key", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Junction will use $modelName. Your key stays on this " +
+            text = "Nethra will use $modelName. Your key stays on this " +
                 "device, encrypted, and is sent only to ${provider.displayName}'s API.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -368,10 +368,10 @@ private fun VoiceStep(
 ) {
     val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize()) {
-        Text(text = "Give Junction a voice", style = MaterialTheme.typography.titleLarge)
+        Text(text = "Give Nethra a voice", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Junction can talk to you, and you can talk back. Your phone's built-in voice " +
+            text = "Nethra can talk to you, and you can talk back. Your phone's built-in voice " +
                 "works right away and costs nothing — but it sounds robotic.",
             style = MaterialTheme.typography.bodyLarge
         )
@@ -410,7 +410,7 @@ private fun VoiceStep(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Your voice is always recognised on your phone, never uploaded — only Junction's " +
+            text = "Your voice is always recognised on your phone, never uploaded — only Nethra's " +
                 "replies are sent to Azure to be spoken.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant

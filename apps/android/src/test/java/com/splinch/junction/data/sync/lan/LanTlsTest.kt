@@ -10,6 +10,19 @@ import org.junit.Test
 import java.security.MessageDigest
 
 class LanTlsTest {
+    @Test fun `pinned PC remains reachable after private address changes`() {
+        val certificate = HeldCertificate.Builder().commonName("Junction test").addSubjectAlternativeName("192.168.0.134").build()
+        val tls = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        MockWebServer().use { server ->
+            server.useHttps(tls.sslSocketFactory(), false)
+            server.enqueue(MockResponse().setBody("MOVED_PC_OK"))
+            server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
+            val pin = MessageDigest.getInstance("SHA-256").digest(certificate.certificate.publicKey.encoded).joinToString("") { "%02x".format(it) }
+            val client = LanTls.client(pin)
+            client.newCall(Request.Builder().url(server.url("/")).build()).execute().use { assertEquals("MOVED_PC_OK", it.body!!.string()) }
+            client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown()
+        }
+    }
     @Test fun `trusts exactly the pinned self signed PC and rejects another pin`() {
         val certificate = HeldCertificate.Builder().commonName("Junction test").addSubjectAlternativeName("127.0.0.1").build()
         val tls = HandshakeCertificates.Builder().heldCertificate(certificate).build()

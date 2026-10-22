@@ -10,10 +10,10 @@ class ModelCatalogTest {
     @Test
     fun `local model picker offers only the retained PC model`() {
         val local = ModelCatalog.providerById("local")!!
-        assertEquals("qwen3:14b", local.defaultModelId)
-        assertEquals(listOf("qwen3:14b"), local.models.map { it.id })
+        assertEquals("qwen3:30b", local.defaultModelId)
+        assertEquals(listOf("qwen3:30b"), local.models.map { it.id })
         assertNull(ModelCatalog.modelById("local", "lfm2.5:2.6b"))
-        assertEquals("qwen3:14b", ModelCatalog.normalizeModelId("local", "lfm2.5:2.6b"))
+        assertEquals("qwen3:30b", ModelCatalog.normalizeModelId("local", "qwen3:14b"))
     }
 
     @Test

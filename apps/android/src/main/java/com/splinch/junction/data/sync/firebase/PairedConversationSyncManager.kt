@@ -6,6 +6,7 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
+import com.splinch.junction.data.database.chat.ChatDeletedSessionEntity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
@@ -110,15 +111,15 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
         for (index in 0 until remote.length()) {
             val row = remote.getJSONObject(index); val value = row.getJSONObject("value"); val id = value.getString("id")
             when (row.getString("kind")) {
-                "delete" -> { deleted.put(id,value); dao.clearMessagesForSession(id); dao.deleteSessionById(id) }
-                "conversation" -> if (!deleted.has(id)) {
+                "delete" -> { deleted.put(id,value); dao.markSessionDeleted(ChatDeletedSessionEntity(id,value.optLong("deletedAt",System.currentTimeMillis()))); dao.clearMessagesForSession(id); dao.deleteSessionById(id) }
+                "conversation" -> if (!deleted.has(id) && !dao.isSessionDeleted(id)) {
                     val local = dao.getSessionById(id)
                     if (local == null || value.getLong("updatedAt") > local.sharedUpdatedAt) dao.upsertSession(ChatSessionEntity(id, value.getLong("createdAt"), local?.speechModeEnabled ?: false, local?.agentToolsEnabled ?: true, value.optString("title"), value.getLong("updatedAt")))
                     imported.add(id)
                 }
                 "message", "message_part" -> {
                     val conversationId = row.getString("conversationId")
-                    if (!deleted.has(conversationId) && dao.getSessionById(conversationId) != null && dao.getMessageById(id) == null) {
+                    if (!deleted.has(conversationId) && !dao.isSessionDeleted(conversationId) && dao.getSessionById(conversationId) != null && dao.getMessageById(id) == null) {
                         val partsKey = "parts:${pairing.brainId}:$conversationId:$id"
                         val content = if (row.getString("kind") == "message_part") {
                             val parts = JSONObject(prefs.getString(partsKey, "{}")!!)

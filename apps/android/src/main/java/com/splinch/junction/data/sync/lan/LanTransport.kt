@@ -163,8 +163,7 @@ class LanTransport(
         return requestId
     }
 
-    suspend fun request(type: String, payload: Map<String, Any?> = emptyMap(), timeoutMs: Long = 10_000L): LanProtocol.Envelope {
-        val requestId = UUID.randomUUID().toString()
+    suspend fun request(type: String, payload: Map<String, Any?> = emptyMap(), timeoutMs: Long = 10_000L, requestId: String = UUID.randomUUID().toString()): LanProtocol.Envelope {
         val result = CompletableDeferred<LanProtocol.Envelope>()
         pending[requestId] = result
         return try {

@@ -5,13 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
 
-const WORLD_MODEL = "qwen3:14b";
+const WORLD_MODEL = "qwen3:30b";
 function buildWorldInferencePayload(messages, maxOutputTokens) {
   return {
     model: WORLD_MODEL,
     messages,
     stream: false,
     think: false,
+    keep_alive: "30m",
     format: "json",
     options: { num_ctx: 4096, num_predict: maxOutputTokens, temperature: 0 },
   };

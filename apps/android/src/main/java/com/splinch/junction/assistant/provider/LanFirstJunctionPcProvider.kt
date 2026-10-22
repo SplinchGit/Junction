@@ -49,13 +49,20 @@ class LanFirstJunctionPcProvider(
         tools: List<ToolDefinition>,
         useFrontier: Boolean,
         conversationId: String?
+    ): Flow<LlmEvent> {
+        val lan = { lanAct(context, tools, useFrontier, conversationId) }
+        return if (LanConnectionMode.fromStored(KeyStorage(appContext).getSecret(LAN_MODE_SECRET)) == LanConnectionMode.FIREBASE) {
+            firebaseWithOfflineLanFallback(remote.act(context, tools, useFrontier, conversationId), lan)
+        } else lan()
+    }
+
+    private fun lanAct(
+        context: List<ContextBlock>,
+        tools: List<ToolDefinition>,
+        useFrontier: Boolean,
+        conversationId: String?
     ): Flow<LlmEvent> = callbackFlow {
         val identity = LanIdentityStore(appContext)
-        if (LanConnectionMode.fromStored(KeyStorage(appContext).getSecret(LAN_MODE_SECRET)) == LanConnectionMode.FIREBASE) {
-            remote.act(context, tools, useFrontier, conversationId).collect { trySend(it).isSuccess }
-            close()
-            return@callbackFlow
-        }
         val transport = LanTransport(identity, scope)
         try {
         var pairing = identity.loadPairing()
@@ -73,7 +80,7 @@ class LanFirstJunctionPcProvider(
                 .onFailure { Log.w(TAG, "LAN stage=discovery kind=NOT_DISCOVERED cause=${it.javaClass.simpleName}") }
             kotlinx.coroutines.delay(DISCOVERY_TIMEOUT_MS)
         } finally { discovery.stop() }
-        val candidates = synchronized(discovered) { com.splinch.junction.data.sync.lan.lanCandidates(discovered.toList(), pairing) }
+        val candidates = synchronized(discovered) { com.splinch.junction.data.sync.lan.lanCandidates(discovered.toList(), pairing, KeyStorage(appContext).getSecret("lan_manual_host_v1")) }
         if (candidates.isEmpty() || (pairing == null && legacy == null)) {
             val error = when {
                 damagedTrust -> "Saved PC trust could not be read. Verify the pairing in Settings."
@@ -139,7 +146,14 @@ class LanFirstJunctionPcProvider(
                     "chat.delta" -> event.payload["text"]?.toString()?.takeIf { it.isNotEmpty() }?.let { trySend(LlmEvent.TextDelta(it)) }
                     "chat.complete" -> {
                         val text = event.payload["content"]?.toString().orEmpty()
-                        trySend(LlmEvent.TextDone(text, messageId = event.payload["messageId"]?.toString()))
+                        @Suppress("UNCHECKED_CAST")
+                        val metrics = event.payload["telemetry"] as? Map<String, Any?>
+                        trySend(LlmEvent.TextDone(
+                            text,
+                            tokensPerSecond = HostTelemetry.tokensPerSecond(metrics),
+                            messageId = event.payload["messageId"]?.toString(),
+                            telemetry = HostTelemetry.line(metrics)
+                        ))
                         trySend(LlmEvent.Done)
                         close()
                     }
@@ -183,6 +197,7 @@ class LanFirstJunctionPcProvider(
         } finally { transport.close() }
     }
 
+
     override suspend fun readUntrusted(content: String, sourceHint: String): ReaderOutput? = null
 
     companion object {
@@ -201,5 +216,23 @@ class LanFirstJunctionPcProvider(
         const val MAX_BLOCK_CHARS = 8_000
         const val LAN_MODE_SECRET = "lan_mode_v1"
         private const val TAG = "JunctionLanProvider"
+    }
+}
+
+internal fun firebaseWithOfflineLanFallback(
+    firebase: Flow<LlmEvent>,
+    lan: () -> Flow<LlmEvent>
+): Flow<LlmEvent> = kotlinx.coroutines.flow.flow {
+    var offline = false
+    firebase.collect { event ->
+        if (event is LlmEvent.Error && event.message == JunctionPcProvider.PC_OFFLINE_ERROR_MESSAGE) {
+            offline = true
+        } else if (!(offline && event === LlmEvent.Done)) {
+            emit(event)
+        }
+    }
+    if (offline) {
+        emit(LlmEvent.Activity("Trying the local Wi-Fi connection"))
+        lan().collect { emit(it) }
     }
 }

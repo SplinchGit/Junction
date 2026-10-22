@@ -27,6 +27,12 @@ object LanTls {
         }
         val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
         return OkHttpClient.Builder().sslSocketFactory(tls.socketFactory, trust)
+            // A paired PC keeps the same pinned key while its private IP changes (USB,
+            // DHCP, or VPN). Its original certificate SAN cannot list future addresses.
+            .hostnameVerifier { _, session ->
+                val leaf = runCatching { session.peerCertificates.firstOrNull() as? X509Certificate }.getOrNull()
+                leaf != null && MessageDigest.isEqual(expected, MessageDigest.getInstance("SHA-256").digest(leaf.publicKey.encoded))
+            }
             .pingInterval(20, java.util.concurrent.TimeUnit.SECONDS).build()
     }
 }

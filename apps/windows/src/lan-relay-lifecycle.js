@@ -1,11 +1,13 @@
 "use strict";
 
-const { LanServer, privateIPv4Addresses } = require("./lan-server");
+const { LanServer, preferredBindAddresses } = require("./lan-server");
 
 // Each listener is bound to one private interface, never a wildcard/public NIC.
-// Polling also handles adapter arrival, sleep/resume and DHCP address changes.
+// When an encrypted overlay interface is present only that is bound, so the API
+// is not offered on an untrusted shared network. Polling also handles adapter
+// arrival, sleep/resume and DHCP address changes.
 class LanRelayLifecycle {
-  constructor({ getAddresses = privateIPv4Addresses, serverFactory = options => new LanServer(options), pollMs = 5000, onStatus = () => {}, ...options } = {}) {
+  constructor({ getAddresses = preferredBindAddresses, serverFactory = options => new LanServer(options), pollMs = 5000, onStatus = () => {}, ...options } = {}) {
     this.options = options; this.getAddresses = getAddresses; this.serverFactory = serverFactory;
     this.pollMs = pollMs; this.onStatus = onStatus; this.servers = new Map();
     this.running = false; this.pending = null; this.timer = null; this.lastStatus = null;

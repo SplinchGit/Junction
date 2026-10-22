@@ -1,0 +1,8 @@
+{
+ "pin": "2d03803afd8b0bd05105ca94197cfd8ee0fcd02cdbac17b0dd3dcfc148fa35e4",
+ "envelope": {
+  "body": "{\"v\":1,\"id\":\"0f8e9c4a-2b1d-4c3e-9a7f-5d6b8e1f2a3c\",\"instanceId\":\"instance-1\",\"deviceId\":\"phone-1\",\"kind\":\"COLLECT_LOGS\",\"args\":{\"lines\":50},\"tier\":\"READ\",\"requestedBy\":\"claude\",\"createdAt\":1800000000000,\"expiresAt\":1800000900000,\"nonce\":\"n\"}",
+  "signature": "JS/a+YCKN+O9fZVRsEHEyNZDOTVEg7Pf13wxUbLu1wY4phUgJGQWyZRDeA8VKzRv1q5Nn8bwwiCHpYp7hxTmhi/aayKC9VZdvqNBiWHJ34prG5Dblmaef63L1Wgt7dUPcdVYfb+U0vEdd7uWVtR5Kth0CW6Wl4FeoTQc1DAxSyVrrJymRKuDB7lFBOB/hW2SbBTK5b58WcozYUWZCZo5pDm53AyprRfIARFurKONPkMGuiD5z2bvF2bxLkCuR0y43ARnWJ+mFwQYHzHVI2BOmwTfLygmEvdU7uw+TU0GSJIxE8WMTmyZcfGpVYPkdUGWAda0YOrwI7HJHORZc7m+Sg==",
+  "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtd8NectCwT7rFLBpb6XQkywZ9PEgnKLSyoO7iKotj8piciKZwuGHHMYWIYdm9IxL9KzscEC94uaLBI/rvy7FaaQ9NQ45uSmFkPG81Dktyf2+bgqvLZFNjG9d77IlWhodBmhKWSOdmDVdbWbnD0x3Mgylb/eBUJInjs/dDDrGpja086t2dgC6mLiabVfO9xkfHgOXuiHcCTXfY3xmSyWG7YWQgKvxCEUQj0GpBvSc7/f6iBGojXtSjPHcOMAwQ1h/k8LPSQCSgNYAOzJVH8zQ76RU9mbfvGS9RR2vDsDv2nIzJmrL4k0iXFUJharpyKtSTIWyXHK0zl35agdUKhn2DwIDAQAB"
+ }
+}

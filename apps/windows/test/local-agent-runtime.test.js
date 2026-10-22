@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { LocalAgentRuntime, validateSearchEgress } = require("../src/local-agent-runtime");
 const { compactResearchContext } = require("../src/local-agent-tools");
 const { parseSearchHtml, evidencePassages } = require("../src/web-research");
+const { detectSearchRequirement } = require("../src/intent-router");
 
 function response(message) { return { ok: true, json: async () => ({ message, prompt_eval_count: 2, eval_count: 1 }) }; }
 function harness(outputs, { execute, decision = { intent: "question", action: "answer", authorization: "none" } } = {}) {
@@ -20,6 +21,53 @@ function harness(outputs, { execute, decision = { intent: "question", action: "a
 function call(query) { return { role: "assistant", content: "", tool_calls: [{ function: { name: "web_search", arguments: { query } } }] }; }
 
 (async () => {
+  const correctionHistory = [{ role: 'user', content: 'Who is current PM of UK?' }];
+  for (let i = 0; i < 10; i++) correctionHistory.push({ role: 'assistant', content: 'An unsupported old answer. '.repeat(30) }, { role: 'user', content: 'Still false, websearch it' });
+  for (const goal of ['Still false, websearch it', 'Google it?']) {
+    const required = detectSearchRequirement(goal, correctionHistory);
+    assert.equal(required.required, true, 'explicit follow-up lookup must bypass model routing');
+    assert.equal(required.query, 'Who is current PM of UK?', 'recover the owner topic even outside the compact inference history');
+  }
+  assert.equal(detectSearchRequirement('Hello', correctionHistory).required, false);
+  assert.equal(detectSearchRequirement('Google it?', [...correctionHistory, {role:'user',content:'Hello'}]).query, '', 'do not cross a changed owner topic');
+  assert.equal(detectSearchRequirement('Google it?', [{role:'assistant',content:'Who is current PM of UK?'}]).query, '', 'assistant claims cannot authorize search topics');
+  assert.equal(detectSearchRequirement('Google it?', [{role:'user',content:'My private access token is abcdefghijklmnopqrstuvwxyz'}]).query, '', 'do not infer research consent for private background');
+  assert.equal(detectSearchRequirement('websearch it', [{role:'user',content:'Who owns Android?'}]).query, 'Who owns Android?', 'explicit follow-up can research an ordinary owner question');
+
+  const phone = harness([{role:'assistant',content:'Hello from Junction.'}]);
+  await phone.runtime.run({goal:'Hello',model:'tiny',surface:'android-lan',workSnapshot:[{name:'Owner project',status:'paused'}],history:[{role:'system',content:'CLIENT_POLICY_INJECTION'}]});
+  assert.match(phone.requests[0].messages[0].content, /Android app.*paired Windows PC/);
+  assert.match(phone.requests[0].messages[0].content, /Owner project/);
+  assert.doesNotMatch(phone.requests[0].messages[0].content, /CLIENT_POLICY_INJECTION/);
+  const greeting = harness([call('current UK PM'), {role:'assistant',content:'Hello!'}]);
+  const greeted = await greeting.runtime.run({goal:'Hello!',model:'tiny',history:correctionHistory});
+  assert.equal(greeting.executions.length, 0, 'a stale model tool request must not restart research on a greeting');
+  assert.equal(greeted.content,'Hello!', 'a rejected stale call must not turn a greeting into a search failure');
+
+  const recoveredQueries = [];
+  const recovered = new LocalAgentRuntime({
+    researchCoordinator: { run: async query => { recoveredQueries.push(query); return {sources:[{id:'S1',title:'Office',url:'https://example.org/office',passages:[{id:'S1.p1',text:'Example Person holds the office.'}]}]}; } },
+    fetchImpl: async url => url.endsWith('/api/ps') ? {ok:true,json:async()=>({models:[]})} : response({role:'assistant',content:'Example Person [S1.p1].'})
+  });
+  await recovered.run({goal:'Google it?',model:'tiny',history:correctionHistory});
+  assert.deepEqual(recoveredQueries, ['Who is current PM of UK?']);
+
+  // Use the real registry so egress rejection and empty results exercise the
+  // same failure boundary as the phone's native tool calls.
+  for (const failure of ['empty', 'egress']) {
+    let modelCalls = 0, researchCalls = 0;
+    const failedLookup = new LocalAgentRuntime({
+      researchCoordinator: {run:async()=>{researchCalls++;return {sources:[]};}},
+      fetchImpl: async url => {
+        if (url.endsWith('/api/ps')) return {ok:true,json:async()=>({models:[]})};
+        return response(modelCalls++ === 0 ? call(failure === 'egress' ? 'confidentialperson biography' : 'London temperature') : {role:'assistant',content:'The answer is definitely stale, as of 2024.'});
+      }
+    });
+    const bounded = await failedLookup.run({goal:'Tell me about London temperature',model:'tiny',history:[{role:'user',content:'My confidentialperson notes are private.'}]});
+    assert.doesNotMatch(bounded.content, /definitely stale|2024/);
+    assert.match(bounded.content, /could not verify/i);
+    assert.equal(researchCalls, failure === 'egress' ? 0 : 1, 'unrelated owner history must not permit private egress');
+  }
   const parsed = parseSearchHtml('<a class="result__a" href="https://example.com/">Title</a><a class="result__snippet">Argentina won <b>the final</b>.</a>');
   assert.equal(parsed[0].snippet, 'Argentina won the final .');
   const fullPassage = 'Evidence '.repeat(60) + 'The answer is at the end.';
@@ -95,6 +143,16 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   const deterministicUnavailable = harness([], { execute: async () => { throw new Error("Search unavailable"); } });
   await assert.rejects(() => deterministicUnavailable.runtime.run({ goal: "What is the current price of gold?", model: "tiny" }), /Search unavailable/);
   assert.equal(deterministicUnavailable.requests.length, 0, "a failed required search must not fall through to model memory");
+  let emptyModelCalls = 0;
+  const requiredEmpty = new LocalAgentRuntime({
+    researchCoordinator: {run:async()=>({sources:[]})},
+    fetchImpl: async url => {
+      if (url.endsWith('/api/ps')) return {ok:true,json:async()=>({models:[]})};
+      emptyModelCalls++; return response({role:'assistant',content:'Unsupported answer.'});
+    }
+  });
+  await assert.rejects(() => requiredEmpty.run({goal:'Who is current PM of UK?',model:'tiny'}), /no usable evidence/i);
+  assert.equal(emptyModelCalls, 0, 'empty required evidence must not reach inference');
 
   const officeRequests = [], officeQueries = [];
   const officeRuntime = new LocalAgentRuntime({
@@ -142,6 +200,7 @@ function call(query) { return { role: "assistant", content: "", tool_calls: [{ f
   const failed = harness([call("London temperature"), { role: "assistant", content: "Search failed, so I cannot verify it." }], { execute: async () => { throw new Error("deterministic tool failure"); } });
   await failed.runtime.run({ goal: "London temperature", model: "tiny" });
   assert.match(failed.requests[1].messages.at(-1).content, /deterministic tool failure/);
+  assert.equal(failed.audits.find(entry => entry[0] === 'model_run_completed')[2], 'failure');
 
   // A bounded model can repeat a useful tool call until its work budget is
   // exhausted. Once evidence exists, Junction must give it a tool-free

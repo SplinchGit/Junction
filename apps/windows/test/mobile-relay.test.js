@@ -33,9 +33,11 @@ const {PairedConversationSync}=require('../src/paired-conversation-sync');
   const reply=await runtime.chat('test',[],[],null,text=>updates.push(text));
   assert.deepEqual(updates,['Café ','Café works']); assert.equal(reply.message.content,'Café works');
   const state={brainId:'brain',key:crypto.randomBytes(32),session:{idToken:'fixture'}};
-  const id='stream-test',encrypted=crypt(state.key,`JBP1|brain|${id}|request`,Buffer.from(JSON.stringify({model:'fixture',messages:[{role:'user',content:'hello'}]})),null,true);
+  const id='stream-test',encrypted=crypt(state.key,`JBP1|brain|${id}|request`,Buffer.from(JSON.stringify({model:'fixture',conversationId:'phone-chat',surface:'desktop',messages:[{role:'user',content:'hello'}]})),null,true);
   const writes=[]; let finalWasPending=false, selectedModel;
-  const relay=new LocalBrainRelay({projectId:'fixture',getState:async()=>state,runLocalAgent:async({onProgress,model})=>{
+  const relay=new LocalBrainRelay({projectId:'fixture',getState:async()=>state,runLocalAgent:async({onProgress,model,surface,conversationId})=>{
+    assert.equal(surface,'android-relay');
+    assert.equal(conversationId,'phone-chat');
     selectedModel = model;
     await onProgress({stage:'Running on PC'}); await onProgress({text:'First token'});
     finalWasPending=writes.some(x=>x.status==='streaming') && !writes.some(x=>x.status==='done');
@@ -43,7 +45,7 @@ const {PairedConversationSync}=require('../src/paired-conversation-sync');
   }});
   relay.update=async(_doc,_session,values)=>{writes.push(values);return {};};
   await relay.run(state,{document:{name:'fixture/commands/'+id,updateTime:'v1'},data:{id,...encrypted}});
-  assert.equal(selectedModel, 'qwen3:14b', 'encrypted requests with an unavailable model use the retained model');
+  assert.equal(selectedModel, 'qwen3:30b', 'encrypted requests with an unavailable model use the retained model');
   assert.ok(finalWasPending,'encrypted partial must be written before inference completes');
   const partial=writes.find(x=>x.status==='streaming');
   assert.equal(crypt(state.key,`JBP1|brain|${id}|partial`,Buffer.from(partial.partialCiphertext,'base64url'),Buffer.from(partial.partialNonce,'base64url'),false),'First token');

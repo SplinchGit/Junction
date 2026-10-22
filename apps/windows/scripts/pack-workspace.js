@@ -5,6 +5,21 @@ const path = require("node:path");
 const asar = require("@electron/asar");
 const { createRequire } = require("node:module");
 const { execFileSync } = require("node:child_process");
+const ResEdit = require("resedit");
+
+function embedApplicationIcon(executablePath, iconPath) {
+  // Electron's distributed executable is signed; modifying resources produces
+  // an unsigned workspace executable, just like the regular local package.
+  const executable = ResEdit.NtExecutable.from(fs.readFileSync(executablePath), { ignoreCert: true });
+  const resources = ResEdit.NtExecutableResource.from(executable);
+  const icons = ResEdit.Data.IconFile.from(fs.readFileSync(iconPath)).icons.map(item => item.data);
+  const groups = resources.entries.filter(entry => entry.type === 14);
+  for (const group of groups.length ? groups : [{ id: 1, lang: 1033 }]) {
+    ResEdit.Resource.IconGroupEntry.replaceIconsForResource(resources.entries, group.id, group.lang, icons);
+  }
+  resources.outputResource(executable);
+  fs.writeFileSync(executablePath, Buffer.from(executable.generate()));
+}
 
 function copyRuntimeDependencies(root, staging) {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -57,15 +72,18 @@ async function main() {
   fs.mkdirSync(staging, { recursive: true });
   fs.cpSync(path.join(root, "node_modules", "electron", "dist"), output, { recursive: true });
   fs.renameSync(path.join(output, "electron.exe"), path.join(output, "Junction.exe"));
+  embedApplicationIcon(path.join(output, "Junction.exe"), path.join(root, "assets", "junction.ico"));
   fs.cpSync(path.join(root, "src"), path.join(staging, "src"), { recursive: true });
   fs.cpSync(path.join(root, "renderer"), path.join(staging, "renderer"), { recursive: true });
+  fs.cpSync(path.join(root, "assets"), path.join(staging, "assets"), { recursive: true });
   copyRuntimeDependencies(root, staging);
   validateRuntimeDependencies(staging);
   await asar.createPackage(staging, path.join(output, "resources", "app.asar"));
   fs.cpSync(path.resolve(root, "../../services/pc-companion/src"), path.join(output, "resources", "pc-companion"), { recursive: true });
+  fs.copyFileSync(path.join(root, "src", "nethra-startup.ps1"), path.join(output, "resources", "nethra-startup.ps1"));
   fs.rmSync(staging, { recursive: true, force: true });
   console.log(output);
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { copyRuntimeDependencies, validateRuntimeDependencies };
+module.exports = { copyRuntimeDependencies, validateRuntimeDependencies, embedApplicationIcon };

@@ -13,7 +13,7 @@ const runtime = process.env.JUNCTION_RUNTIME_DIRECTORY
 const target = path.join(runtime, "Junction.exe");
 const resources = path.join(runtime, "resources", "app.asar");
 const desktop = path.join(os.homedir(), "Desktop");
-const shortcut = path.join(desktop, "Junction.lnk");
+const shortcut = path.join(desktop, "Nethra.lnk");
 
 if (process.platform !== "win32") throw new Error("The Junction desktop shortcut is only supported on Windows.");
 if (!fs.existsSync(target) || !fs.existsSync(resources)) {
@@ -31,7 +31,7 @@ const command = [
   `$shortcut.TargetPath = ${powershellString(target)}`,
   `$shortcut.WorkingDirectory = ${powershellString(runtime)}`,
   `$shortcut.IconLocation = ${powershellString(`${target},0`)}`,
-  "$shortcut.Description = 'Junction desktop companion'",
+  "$shortcut.Description = 'Nethra local agent'",
   "$shortcut.Save()"
 ].join("; ");
 const encoded = Buffer.from(command, "utf16le").toString("base64");

@@ -3,6 +3,7 @@ package com.splinch.junction.data.sync.lan
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
+import com.splinch.junction.data.database.chat.ChatDeletedSessionEntity
 import com.splinch.junction.data.secret.KeyStorage
 
 /** Applies the Windows-authoritative LAN event log to Android's Room cache. */
@@ -30,6 +31,7 @@ class LanConversationSync(private val dao: ChatDao, private val keys: KeyStorage
             "conversation.created", "conversation.updated" -> {
                 val conversation = (value["conversation"] as? Map<*, *>) ?: return
                 val id = conversation["id"]?.toString() ?: return
+                if (dao.isSessionDeleted(id)) return
                 dao.upsertSession(ChatSessionEntity(id, number(conversation["createdAt"]), title = conversation["title"]?.toString(), sharedUpdatedAt = number(conversation["updatedAt"])))
                 (conversation["messages"] as? List<*>)?.mapNotNull { it as? Map<*, *> }?.forEach { upsertMessage(id, it) }
             }
@@ -40,7 +42,7 @@ class LanConversationSync(private val dao: ChatDao, private val keys: KeyStorage
             }
             "conversation.deleted" -> {
                 val tombstone = value["tombstone"] as? Map<*, *> ?: return
-                tombstone["id"]?.toString()?.let { id -> dao.clearMessagesForSession(id); dao.deleteSessionById(id) }
+                tombstone["id"]?.toString()?.let { id -> dao.markSessionDeleted(ChatDeletedSessionEntity(id, number(tombstone["deletedAt"]))); dao.clearMessagesForSession(id); dao.deleteSessionById(id) }
             }
         }
     }

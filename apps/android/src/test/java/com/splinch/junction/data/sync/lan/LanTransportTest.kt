@@ -13,6 +13,18 @@ import org.junit.Test
 import java.security.MessageDigest
 
 class LanTransportTest {
+    @Test fun callerRequestIdIsPreservedForMutationReplay() = fixture { server, transport, endpoint ->
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val event = LanProtocol.decode(text)!!
+                if (event.type == "hello") webSocket.send(LanProtocol.encode(LanProtocol.Envelope("authenticated", event.requestId)))
+                else webSocket.send(LanProtocol.encode(LanProtocol.Envelope("${event.type}.result", event.requestId, mapOf("receivedId" to event.requestId))))
+            }
+        }))
+        withTimeout(2000) { transport.connect(endpoint).getOrThrow() }
+        val response = transport.request("nethra.create", mapOf("goal" to "Research an objective"), requestId = "stable-owner-request")
+        assertEquals("stable-owner-request", response.payload["receivedId"])
+    }
     private fun fixture(block: suspend (MockWebServer, LanTransport, LanEndpoint) -> Unit) = runBlocking {
         val cert = HeldCertificate.Builder().commonName("PC").addSubjectAlternativeName("127.0.0.1").build()
         val pin = MessageDigest.getInstance("SHA-256").digest(cert.certificate.publicKey.encoded).joinToString("") { "%02x".format(it) }

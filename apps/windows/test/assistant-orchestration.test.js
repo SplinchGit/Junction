@@ -27,7 +27,7 @@ async function routedRun(goal, decision, history = []) {
   const requests=[],drafts=[],searches=[];
   const runtime=new LocalAgentRuntime({
     researchCoordinator:{run:async query=>{searches.push(query);return evidence;}},
-    createCodeDelegation:async task=>{drafts.push(task);return {id:'draft-1'};},
+    createCodeDelegation:async task=>{drafts.push(task);return {id:'work-1',status:'RUNNING',response:'Working on the saved owner scope.'};},
     fetchImpl:async (url,options)=>{
       if(url.endsWith('/api/ps')) return {ok:true,json:async()=>({models:[]})};
       const request=JSON.parse(options.body);requests.push(request);

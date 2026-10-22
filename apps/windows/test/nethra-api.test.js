@@ -1,0 +1,83 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {NethraStore}=require('../src/nethra-store');
+const {NethraApi}=require('../src/nethra-api');
+function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-api-'));const store=new NethraStore(dir);t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});return {store,api:new NethraApi({store,runtime:{modelCapabilities:async()=>({known:true,thinking:true})}})};}
+test('paired phone creates durable objectives but cannot grant itself PC read roots',async t=>{const {api,store}=fixture(t);await assert.rejects(api.dispatch('nethra.create',{goal:'Research housing',readRoots:['C:/Users']},'bad','android'),/Windows/);const {task}=await api.dispatch('nethra.create',{goal:'Research housing'},'create','android');assert.equal(store.get(task.id).goal,'Research housing');assert.deepEqual(store.get(task.id).readRoots,[]);});
+test('replayed creates preserve a single objective and reject changed goals',async t=>{const {api,store}=fixture(t);const a=await api.dispatch('nethra.create',{goal:'Research housing'},'create');const b=await api.dispatch('nethra.create',{goal:'Research housing'},'create');assert.equal(a.task.id,b.task.id);assert.equal(store.list().length,1);await assert.rejects(api.dispatch('nethra.create',{goal:'Different goal'},'create'));});
+test('thinking preference is persisted and startup remains a Windows setting',async t=>{const {api,store}=fixture(t);await api.dispatch('nethra.settings',{thinking:true},'think','android');assert.equal(store.settings().thinking,true);await assert.rejects(api.dispatch('nethra.settings',{persistentStartup:true},'start','android'),/Windows/);await assert.rejects(api.dispatch('nethra.settings',{thinking:'yes'}),/thinking/);});
+test('30B thinking-only mode is reported honestly and cannot be disabled',async t=>{
+  const {api,store}=fixture(t);
+  assert.equal((await api.dispatch('nethra.status')).thinkingRequired,true);
+  assert.equal((await api.dispatch('nethra.list')).settings.thinking,true);
+  await assert.rejects(api.dispatch('nethra.settings',{thinking:false}),/always uses thinking/);
+  const {task}=await api.dispatch('nethra.create',{goal:'Review evidence'});
+  assert.equal(store.get(task.id).thinking,true);
+});
+test('Windows and Android share durable autonomy, priority, check-in and attention journal',async t=>{
+  const {api}=fixture(t);
+  const {task}=await api.dispatch('nethra.create',{goal:'Monitor university deadlines',autonomy:'QUIET',priority:2,checkIn:'DAILY'},'create-policy','android');
+  assert.equal(task.autonomy,'QUIET');
+  const changed=await api.dispatch('nethra.configure',{id:task.id,revision:task.revision,autonomy:'ACTIVE',checkIn:'MILESTONES'},'policy','android');
+  assert.equal(changed.task.autonomy,'ACTIVE');
+  assert.equal((await api.dispatch('nethra.list')).objectives[0].checkIn,'MILESTONES');
+  const detail=await api.dispatch('nethra.get',{id:task.id},'get','android');
+  assert.equal(detail.task.priority,2);
+  assert.ok(Array.isArray(detail.attention));
+  await assert.rejects(api.dispatch('nethra.configure',{id:task.id,revision:task.revision,autonomy:'UNBOUNDED'},'bad','android'),/autonomy/i);
+});
+test('reunion audit is grounded in durable events and never invokes the model',async t=>{
+  const {api,store}=fixture(t);
+  const task=store.create({goal:'Track deadlines'});
+  store.update(task.id,{plan:['Check deadlines'],summary:'Plan saved'},'CHECKPOINT');
+  const result=await api.dispatch('nethra.reunion',{since:0},'reunion','android');
+  assert.equal(result.modelInvoked,false);
+  assert.equal(result.objectives.length,1);
+  assert.ok(result.events.some(event=>event.kind==='CHECKPOINT'&&event.taskId===task.id));
+  assert.equal(result.pendingApprovals,0);
+});
+
+test('large unicode objective lists fit the encrypted transport without losing task IDs',async()=>{
+  const tasks=Array.from({length:100},(_,i)=>({id:`task-${i}`,goal:'界'.repeat(500),summary:'界'.repeat(500),status:'ACTIVE',revision:1,persistent:true}));
+  const api=new NethraApi({store:{list:()=>tasks,settings:()=>({thinking:true})}});
+  const result=await api.dispatch('nethra.list',{},'list','android');
+  assert.ok(Buffer.byteLength(JSON.stringify(result))<50000);
+  assert.deepEqual(result.objectives.map(t=>t.id),tasks.map(t=>t.id));
+});
+
+test('paired answer retries return the durable response before live state checks',async t=>{
+  const {api,store}=fixture(t);const task=store.create({goal:'Research sources'});
+  const waiting=store.update(task.id,{status:'WAITING_FOR_USER'});
+  const payload={id:task.id,answer:'Use source A',revision:waiting.revision};
+  const first=await api.dispatch('nethra.answer',payload,'answer-retry','android');
+  const retry=await api.dispatch('nethra.answer',payload,'answer-retry','android');
+  assert.deepEqual(retry,first);assert.equal(store.get(task.id).ownerInputs.length,1);
+  await assert.rejects(api.dispatch('nethra.answer',{...payload,answer:'Use B'},'answer-retry','android'),/payload mismatch/);
+  await assert.rejects(api.dispatch('nethra.answer',{...payload,revision:first.task.revision},'new-answer','android'),/not waiting/);
+});
+
+test('large pending approvals stay individually actionable within the Android frame',async t=>{
+  const {api,store}=fixture(t),task=store.create({goal:'Review two exact draft replacements'});
+  const first=store.requestApproval(task.id,{tool:'write_draft',args:{path:'one.txt',content:'a'.repeat(24000)},category:'LOCAL_WRITE',key:'one'});
+  const second=store.requestApproval(task.id,{tool:'write_draft',args:{path:'two.txt',content:'b'.repeat(24000)},category:'LOCAL_WRITE',key:'two'});
+  const detail=await api.dispatch('nethra.get',{id:task.id},'detail','android');
+  assert.ok(Buffer.byteLength(JSON.stringify(detail))<50000);
+  assert.equal(detail.approvals.length,1);
+  assert.equal(detail.approvals[0].id,first.id);
+  assert.equal(detail.approvals[0].args.content.length,24000);
+  assert.equal(detail.moreApprovals,1);
+  store.decideApproval(first.id,false,'reject-one');
+  const next=await api.dispatch('nethra.get',{id:task.id},'next','android');
+  assert.equal(next.approvals[0].id,second.id);
+});
+
+test('oversize Unicode approval requires complete review on Windows',async t=>{
+  const {api,store}=fixture(t),task=store.create({goal:'Review Unicode draft'});
+  store.requestApproval(task.id,{tool:'write_draft',args:{path:'unicode.txt',content:'界'.repeat(24000)},category:'LOCAL_WRITE',key:'unicode'});
+  const detail=await api.dispatch('nethra.get',{id:task.id},'detail','android');
+  assert.ok(Buffer.byteLength(JSON.stringify(detail))<50000);
+  assert.equal(detail.approvals[0].reviewOnWindows,true);
+  assert.equal(detail.approvals[0].args.content.length,1000);
+  assert.match(detail.approvals[0].contentSha256,/^[0-9a-f]{64}$/);
+});

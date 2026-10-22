@@ -14,6 +14,13 @@ data class ChatSessionEntity(
     val sharedUpdatedAt: Long = startedAt
 )
 
+/** A durable local guard against stale LAN/Firebase snapshots restoring a deleted chat. */
+@Entity(tableName = "chat_deleted_sessions")
+data class ChatDeletedSessionEntity(
+    @PrimaryKey val id: String,
+    val deletedAt: Long
+)
+
 @Entity(tableName = "chat_messages")
 data class ChatMessageEntity(
     @PrimaryKey val id: String,
@@ -32,5 +39,7 @@ data class ChatMessageEntity(
     /** Friendly provider/model label ("Claude Sonnet 5") for an ASSISTANT message. */
     val modelLabel: String? = null,
     val thinking: String? = null,
-    val tokensPerSecond: Double? = null
+    val tokensPerSecond: Double? = null,
+    /** Pre-rendered verbose run metrics for this reply; never reasoning text. */
+    val telemetry: String? = null
 )

@@ -3,15 +3,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 const { providers, normalizeLocalModel, normalizeModel, credentialProviderId } = require("../src/model-catalog");
 const { LocalDataStore } = require("../src/local-data");
-assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:14b"]);
+assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:30b"]);
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "junction-model-retirement-"));
-for (const retired of ["qwen3:8b", "qwen3:30b", "qwen3.5:4b", "qwen3.5:2b", "qwen3:1.7b", "lfm2.5:2.6b", "gemma3:1b", ""]) {
-  assert.equal(normalizeLocalModel(retired), "qwen3:14b");
+for (const retired of ["qwen3:8b", "qwen3:14b", "qwen3.5:4b", "qwen3.5:2b", "qwen3:1.7b", "lfm2.5:2.6b", "gemma3:1b", ""]) {
+  assert.equal(normalizeLocalModel(retired), "qwen3:30b");
   fs.writeFileSync(path.join(directory, "junction-local.json"), JSON.stringify({ provider: { id: "local", model: retired } }));
   const store = new LocalDataStore(directory);
-  assert.equal(store.provider().model, "qwen3:14b");
-  assert.equal(store.setProvider({ id: "local", model: retired }).model, "qwen3:14b");
-  assert.equal(new LocalDataStore(directory).provider().model, "qwen3:14b");
+  assert.equal(store.provider().model, "qwen3:30b");
+  assert.equal(store.setProvider({ id: "local", model: retired }).model, "qwen3:30b");
+  assert.equal(new LocalDataStore(directory).provider().model, "qwen3:30b");
 }
 assert.deepEqual(
   providers.filter(provider => provider.group === "First Party").map(provider => provider.id),

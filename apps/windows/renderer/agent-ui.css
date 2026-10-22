@@ -9,3 +9,47 @@
 .generation-status{flex:0 0 28px;box-sizing:border-box;padding:4px 38px;color:var(--md-primary,#b9c5ff);font-size:12px;line-height:20px;visibility:hidden}
 .conversation[aria-busy="true"] .generation-status{visibility:visible}
 .message .bubble a{color:#b9c5ff;text-decoration:underline;text-underline-offset:3px}
+.message .telemetry{margin-top:4px;padding-top:4px;border-top:1px solid #1d2430;font:400 9px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#6d7a8d;word-break:break-word}
+.compose .chat-options{position:relative;align-self:center;flex:none}
+.compose .chat-options>summary{display:grid;place-items:center;width:38px;height:38px;border:1px solid var(--line);border-radius:11px;color:#dce1ff;background:#20283a;font-size:25px;line-height:1;cursor:pointer;list-style:none}
+.compose .chat-options>summary::-webkit-details-marker{display:none}
+.compose .chat-options[open]>summary{background:#33408f}
+.compose .chat-options-panel{position:absolute;left:0;bottom:calc(100% + 13px);z-index:20;display:flex;flex-direction:column;gap:9px;width:250px;padding:16px;border:1px solid #46516b;border-radius:16px;background:#181e2a;box-shadow:0 18px 50px #0009}
+.compose .chat-options-panel:after{content:"";position:absolute;left:15px;bottom:-7px;width:12px;height:12px;background:#181e2a;border-right:1px solid #46516b;border-bottom:1px solid #46516b;transform:rotate(45deg)}
+.compose .chat-options-panel strong{font-size:13px;color:#f2f5fb}
+.compose .chat-options-panel p{font-size:11px;line-height:1.4;color:#9ba8bd;margin:0 0 4px}
+.compose .chat-options-panel .chat-model,.compose .chat-options-panel .research-toggle{width:100%;min-width:0;height:38px;text-align:left;border:1px solid #354057;border-radius:9px;padding:0 11px;background:#222b3d;color:#dce2ec;font:600 12px inherit;cursor:pointer}
+.compose .chat-options-panel .research-toggle.active{background:#33408f;color:#f5f6ff;border-color:#5b6ab6}
+@media(prefers-color-scheme:light){.compose .chat-options-panel{background:#fff;border-color:#c4cadb;box-shadow:0 16px 44px #30406038}.compose .chat-options-panel:after{background:#fff;border-color:#c4cadb}.compose .chat-options-panel strong{color:#1b2230}.compose .chat-options-panel p{color:#657086}.compose .chat-options-panel .chat-model,.compose .chat-options-panel .research-toggle{background:#f4f6fb;color:#263245;border-color:#c4cadb}}
+.nav-more{margin:15px 0 0;border-top:1px solid var(--line);padding-top:10px}
+.nav-more>summary{list-style:none;cursor:pointer;color:#9ba8bd;font:600 12px inherit;padding:10px 12px;border-radius:9px}
+.nav-more>summary::-webkit-details-marker{display:none}
+.nav-more>summary:after{content:"⌄";float:right}
+.nav-more[open]>summary,.nav-more>summary:hover{background:#151d28;color:#edf4ff}
+.nav-more:has(.nav.active)>summary{color:#d5fff5;background:#142723}
+.nav-more-menu{padding:2px 0 0 8px}
+.nav-more-menu .nav{font-size:12px;padding:8px 10px}
+.conversation .compose{width:100%;padding:0 clamp(16px,3vw,38px) 18px}
+.conversation .compose .composer-row{width:min(100%,960px);min-height:64px;margin:0 auto;padding:10px 12px;align-items:flex-end;gap:12px;border-radius:18px}
+.conversation .compose textarea{min-width:0;min-height:42px;max-height:240px;overflow-y:auto;padding:10px 3px;font-size:14px;line-height:1.55}
+.conversation .compose textarea{font-family:"Segoe UI Variable",Segoe UI,system-ui,sans-serif}
+.conversation .compose .chat-options,.conversation .compose #send-message{align-self:flex-end}
+.conversation .compose #send-message{flex:none;width:40px;height:40px;cursor:pointer}
+.conversation .compose>p{max-width:960px;margin:8px auto 0;text-align:right}
+.message{max-width:860px}
+.compose .chat-options-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:min(340px,calc(100vw - 70px));padding:15px}
+.compose .chat-options-panel strong,.compose .chat-options-panel p,.compose .chat-options-panel #new-objective{grid-column:1/-1}
+.compose .chat-options-panel p{margin:0 0 3px}
+.compose .chat-options-panel .chat-model,.compose .chat-options-panel .research-toggle{width:100%;height:40px;min-height:40px;align-self:stretch;white-space:normal;line-height:1.2}
+.compose .chat-options-panel .chat-model,.compose .chat-options-panel .research-toggle{font-family:"Segoe UI Variable",Segoe UI,system-ui,sans-serif;font-size:12px;font-weight:600}
+.compose .chat-options-panel .fixed-option{display:flex;align-items:center;cursor:default;color:#9fb9b8;background:#172528;border-color:#2b5754}
+.compose .chat-options-panel #new-objective{background:#244a48;border-color:#3d7772;color:#ddfffa;font-weight:700}
+#objective-status{flex:none;margin-left:0;margin-right:10px;min-height:36px;padding:0 12px;border:1px solid #355453;border-radius:20px;background:#152724;color:#a9ddd4;font:600 11px "Segoe UI Variable",Segoe UI,system-ui,sans-serif;cursor:pointer}
+#objective-status.has-active{background:#1e3e37;color:#dbfff3;border-color:#418a75}
+.brand i,.orb{position:relative;background:#10272d;border:1px solid #3bbab0;box-shadow:0 0 28px #32bcb544}
+.brand i b,.orb b{display:none}
+.brand i:before,.orb:before{content:"";position:absolute;width:59%;height:36%;border:2px solid #65e5d5;border-radius:75% 12%;transform:rotate(45deg)}
+.brand i:after,.orb:after{content:"";position:absolute;width:18%;aspect-ratio:1;border-radius:50%;background:#f4fffd;box-shadow:0 0 11px #9af7e8}
+.objective-policy { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 12px 0; }
+.objective-policy label, #view-nethra form label:has(select) { display: inline-flex; flex-direction: column; gap: 5px; font-size: .9rem; }
+.objective-policy select, #view-nethra form select { max-width: 220px; min-height: 36px; border-radius: 8px; }

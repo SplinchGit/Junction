@@ -32,6 +32,12 @@ interface ChatDao {
     @Query("DELETE FROM chat_sessions WHERE id = :id")
     suspend fun deleteSessionById(id: String)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun markSessionDeleted(row: ChatDeletedSessionEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM chat_deleted_sessions WHERE id = :id)")
+    suspend fun isSessionDeleted(id: String): Boolean
+
     @Query("SELECT content FROM chat_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT 1")
     suspend fun lastMessageContent(sessionId: String): String?
 

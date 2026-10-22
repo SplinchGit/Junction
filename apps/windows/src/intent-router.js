@@ -5,13 +5,27 @@ const FALLBACK=Object.freeze({intent:'conversation',action:'answer',authorizatio
 const SEARCH_PATTERNS=Object.freeze([
   /\b(?:current|currently|latest|today(?:'s)?|now|right\s+now|recent|recently|breaking)\b/i,
   /\b(?:news|weather|forecast|price|prices|cost|schedule|schedules|score|scores|winner|winners|won|release\s+dates?|released)\b/i,
-  /\b(?:online\s+lookup|look\s+up|browse|browsing|web\s+search|search\s+(?:for|online|the\s+web)|find\s+(?:online|on\s+the\s+web)|sources?|verify|verification|according\s+to)\b/i,
+  /\b(?:online\s+lookup|look\s+up|browse|browsing|web[\s_]*search|google|search\s+(?:for|online|the\s+web)|find\s+(?:online|on\s+the\s+web)|sources?|verify|verification|according\s+to)\b/i,
   /\bwho\s+(?:is|are)\s+(?:the\s+)?(?:pm|prime\s+minister|president|chancellor|ceo|leader|head\s+of\s+state)\b/i
 ]);
 const ROUTING_PATTERNS=Object.freeze([/\b(?:code|coding|repository|repo|fix|implement|change|modify|edit|build|create|delegate|draft)\b/i,/\b(?:inspect|troubleshoot|debug|diagnose|diagnosis|investigate|why\s+does)\b/i,/\b(?:plan|planning|project|app|application)\b/i]);
-function detectSearchRequirement(value) {
+const CORRECTION = /^(?:(?:no|nope|still\s+(?:false|wrong|incorrect)|(?:that(?:'s|\s+is)|you(?:'re|\s+are))\s+(?:false|wrong|incorrect)|false|wrong|incorrect)[\s,.!?]*)+$/i;
+const FOLLOWUP_SEARCH = /^(?:(?:please|no|still\s+(?:false|wrong|incorrect)|(?:that(?:'s|\s+is)|you(?:'re|\s+are))\s+(?:false|wrong|incorrect))[,!?.\s]+)*(?:(?:web[\s_]*search|google|search|verify)\s+(?:it|this|that|again)|look\s+(?:it|this|that)\s+up|search\s+(?:the\s+web|online))[.!?\s]*$/i;
+function detectSearchRequirement(value, history = []) {
   const goal=String(value||'').replace(/\s+/g,' ').trim();
   const matched=SEARCH_PATTERNS.filter(pattern=>pattern.test(goal)).map(pattern=>pattern.source);
+  if (FOLLOWUP_SEARCH.test(goal)) {
+    // Resolve only a chain of explicit corrections/search retries. Never sweep
+    // unrelated private history or assistant guesses into public search consent.
+    const owners = history.slice(-80).filter(item => item?.role === 'user' && typeof item.content === 'string').slice(-24);
+    for (let i = owners.length - 1; i >= 0; i--) {
+      const topic = owners[i].content.replace(/\s+/g,' ').trim();
+      if (FOLLOWUP_SEARCH.test(topic) || CORRECTION.test(topic)) continue;
+      if (topic.length <= 240 && (SEARCH_PATTERNS.some(pattern => pattern.test(topic)) || /^(?:who|what|when|where|why|how|which)\b/i.test(topic))) return {required:true,query:topic,reasons:['owner_followup']};
+      break;
+    }
+    return {required:true,query:'',reasons:['unresolved_owner_followup']};
+  }
   return {required:matched.length>0,query:goal.slice(0,240),reasons:matched};
 }
 function shouldRunRouting(goal, context=null) {

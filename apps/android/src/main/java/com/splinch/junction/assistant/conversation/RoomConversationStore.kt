@@ -10,6 +10,7 @@ import com.splinch.junction.assistant.trust.*
 
 import com.splinch.junction.data.database.chat.ChatDao
 import com.splinch.junction.data.database.chat.ChatMessageEntity
+import com.splinch.junction.data.database.chat.ChatDeletedSessionEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
 import java.time.Instant
 import kotlinx.coroutines.flow.map
@@ -56,11 +57,13 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     }
 
     override suspend fun deleteSession(sessionId: String) {
+        chatDao.markSessionDeleted(ChatDeletedSessionEntity(sessionId, System.currentTimeMillis()))
         chatDao.clearMessagesForSession(sessionId)
         chatDao.deleteSessionById(sessionId)
     }
 
     override suspend fun saveSession(session: ChatSession) {
+        if (chatDao.isSessionDeleted(session.sessionId)) return
         val existing = chatDao.getSessionById(session.sessionId)
         val preserveNewerSharedMetadata = existing != null && existing.sharedUpdatedAt > session.sharedUpdatedAt
         chatDao.upsertSession(
@@ -76,6 +79,7 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
     }
 
     override suspend fun appendMessage(sessionId: String, message: ChatMessage) {
+        if (chatDao.isSessionDeleted(sessionId)) return
         chatDao.insertMessage(message.toEntity(sessionId))
     }
 
@@ -106,7 +110,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             imageSummary = imageSummary,
             modelLabel = modelLabel,
             thinking = thinking,
-            tokensPerSecond = tokensPerSecond
+            tokensPerSecond = tokensPerSecond,
+            telemetry = telemetry
         )
     }
 
@@ -123,7 +128,8 @@ class RoomConversationStore(private val chatDao: ChatDao) : ConversationStore {
             imageSummary = imageSummary,
             modelLabel = modelLabel,
             thinking = thinking,
-            tokensPerSecond = tokensPerSecond
+            tokensPerSecond = tokensPerSecond,
+            telemetry = telemetry
         )
     }
 }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -38,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,6 +66,7 @@ import com.splinch.junction.feature.calculator.CalculatorClient
 import com.splinch.junction.feature.calculator.ui.CalculatorScreen
 import com.splinch.junction.feature.audit.ui.AuditScreen
 import com.splinch.junction.feature.onboarding.ui.OnboardingScreen
+import com.splinch.junction.feature.projects.ProjectsScreen
 import com.splinch.junction.feature.settings.ui.SettingsScreen
 import com.splinch.junction.ui.theme.JunctionTheme
 import com.splinch.junction.feature.update.UpdateChecker
@@ -286,12 +289,14 @@ class MainActivity : ComponentActivity() {
 
 private enum class JunctionTab {
     CHAT,
+    NETHRA,
     AUDIT
 }
 
 private enum class JunctionWorkspace {
     CHAT,
     BUILD,
+    WORK,
     SETTINGS
 }
 
@@ -324,6 +329,7 @@ private fun JunctionApp(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(JunctionTab.CHAT) }
     var selectedWorkspace by remember { mutableStateOf(JunctionWorkspace.CHAT) }
+    var pendingObjectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val sessionSummaries by chatManager.sessionSummaries.collectAsState(initial = emptyList())
     val currentSessionId by chatManager.sessionId.collectAsState()
@@ -391,6 +397,14 @@ private fun JunctionApp(
                     onOpenBuild = {
                         selectedWorkspace = JunctionWorkspace.BUILD
                         scope.launch { drawerState.close() }
+                    },
+                    onOpenWork = {
+                        selectedWorkspace = JunctionWorkspace.WORK
+                        scope.launch { drawerState.close() }
+                    },
+                    onOpenObjectives = {
+                        selectedTab = JunctionTab.NETHRA
+                        scope.launch { drawerState.close() }
                     }
                 )
             }
@@ -423,6 +437,8 @@ private fun JunctionApp(
                         chatManager = chatManager,
                         onOpenNavigation = { scope.launch { drawerState.open() } },
                         onOpenSettings = { selectedWorkspace = JunctionWorkspace.SETTINGS },
+                        onOpenObjectives = { selectedTab = JunctionTab.NETHRA },
+                        onContinueAsObjective = { draft -> pendingObjectiveDraft = draft; selectedTab = JunctionTab.NETHRA },
                         modifier = Modifier.padding(padding)
                     )
                     JunctionWorkspace.BUILD -> WorkspaceScreen(
@@ -433,6 +449,12 @@ private fun JunctionApp(
                     ) { contentModifier ->
                         CalculatorScreen(client = calculatorClient, modifier = contentModifier)
                     }
+                    JunctionWorkspace.WORK -> WorkspaceScreen(
+                        title = "Build projects",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier -> ProjectsScreen(modifier = contentModifier) }
                     JunctionWorkspace.SETTINGS -> WorkspaceScreen(
                         title = "Settings",
                         onOpenNavigation = { scope.launch { drawerState.open() } },
@@ -457,6 +479,7 @@ private fun JunctionApp(
                     junctionWorldClient = junctionWorldClient,
                     modifier = Modifier.padding(padding)
                 )
+                JunctionTab.NETHRA -> ProjectsScreen(modifier = Modifier.padding(padding), objectivesOnly = true, initialObjectiveGoal = pendingObjectiveDraft, onObjectiveGoalConsumed = { pendingObjectiveDraft = null })
             }
         }
     }

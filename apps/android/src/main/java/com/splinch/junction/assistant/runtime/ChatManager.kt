@@ -459,7 +459,8 @@ class ChatManager(
                                             sourceRef = "assistant_text:$itemId",
                                             modelLabel = turnModelLabel,
                                             thinking = finalThinking,
-                                            tokensPerSecond = event.tokensPerSecond ?: tokensPerSecond
+                                            tokensPerSecond = event.tokensPerSecond ?: tokensPerSecond,
+                                            telemetry = event.telemetry
                                         )
                                     )
                                     lastAssistantText = final
