@@ -8,6 +8,8 @@ const STATES = new Set(['CREATED','PLANNING','ACTIVE','SLEEPING','WAITING_FOR_US
 const TERMINAL = new Set(['COMPLETED','CANCELLED','FAILED']);
 const AUTONOMY = new Set(['QUIET','BALANCED','ACTIVE']);
 const CHECK_INS = new Set(['DAILY','WEEKLY','MILESTONES','MANUAL']);
+const SOURCES = new Set(['calendar']);
+const validSources=value=>Array.isArray(value)&&value.length<=SOURCES.size&&value.every(item=>SOURCES.has(item))&&new Set(value).size===value.length;
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
 const DAY = 86400000;
 const checkInDelay=policy=>policy==='DAILY'?DAY:policy==='WEEKLY'?7*DAY:null;
@@ -65,11 +67,12 @@ class NethraStore {
   save(task,kind,detail={}) {task.revision++;task.updatedAt=this.now();this.db.prepare('INSERT INTO tasks VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id,JSON.stringify(task));this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(task.id,this.now(),kind,JSON.stringify(detail));return structuredClone(task);}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {
-    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY'}=input;
+    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[]}=input;
     if(typeof goal!=='string'||!goal.trim()||goal.length>24000)throw new Error('Invalid goal');
     if(!AUTONOMY.has(autonomy))throw new Error('Invalid autonomy profile');
     if(!Number.isSafeInteger(priority)||priority<1||priority>5)throw new Error('Invalid objective priority');
     if(!CHECK_INS.has(checkIn))throw new Error('Invalid check-in policy');
+    if(!validSources(sources))throw new Error('Invalid watched sources');
     if(!Array.isArray(readRoots)||readRoots.some(r=>typeof r!=='string'||!path.isAbsolute(r)))throw new Error('Read roots must be absolute paths');
     return this.transaction(()=>{
       const binding=canonical({kind:'create',input}),old=requestId&&this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
@@ -80,7 +83,7 @@ class NethraStore {
       if(runnable>=this.maxRunnableObjectives)throw new Error('Nethra active objective limit reached; pause or finish existing work before creating more.');
       const id=randomUUID(),workspace=path.join(this.directory,'workspaces',id);
       fs.mkdirSync(workspace,{recursive:true});
-      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,revision:0,createdAt:this.now()},'CREATED');
+      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,revision:0,createdAt:this.now()},'CREATED');
       if(requestId)this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
     });
   }
@@ -101,10 +104,11 @@ class NethraStore {
     if(!requestId)throw new Error('A request ID is required');
     const binding=canonical({kind:'configure',id,patch,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
     if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
-    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
     if(patch.autonomy!==undefined&&!AUTONOMY.has(patch.autonomy))throw new Error('Invalid autonomy profile');
     if(patch.priority!==undefined&&(!Number.isSafeInteger(patch.priority)||patch.priority<1||patch.priority>5))throw new Error('Invalid objective priority');
     if(patch.checkIn!==undefined&&!CHECK_INS.has(patch.checkIn))throw new Error('Invalid check-in policy');
+    if(patch.sources!==undefined&&!validSources(patch.sources))throw new Error('Invalid watched sources');
     const task=this.get(id);if(task.revision!==revision)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
     this.assertLease(id);Object.assign(task,patch);if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}const result=this.save(task,'CONFIGURED',patch);
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;

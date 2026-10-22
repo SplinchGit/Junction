@@ -39,6 +39,9 @@ const { configureStartup } = require("./nethra-startup");
 let foreman, foremanApi;
 let nethraStore, nethraScheduler, nethraApi, deviceCommands, hostInitialized=false;
 const { DeviceCommandStore, tlsSigner } = require("./device-commands");
+const { CalendarSource, SecretVault } = require("./calendar-source");
+const { NethraAttention } = require("./nethra-attention");
+let calendarSource = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
@@ -192,10 +195,12 @@ async function createWindowImpl() {
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
   let deviceSigner=null;
   deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
-  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands});
+  calendarSource = new CalendarSource({vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)});
+  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource});
   nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options)});
-  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,calendar:calendarSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
   nethraScheduler.start();
+  try{calendarSource.start();}catch(error){recordStartupIssue('Calendar source',error);}
   if(app.isPackaged&&nethraStore.settings().persistentStartup)configureStartup({enabled:true,executable:process.execPath,packaged:true,resourcesPath:process.resourcesPath}).catch(error=>recordStartupIssue('Nethra startup registration',error));
   if (process.platform === "win32") {
     try {
@@ -475,7 +480,7 @@ app.on("before-quit", event => {
   event.preventDefault(); isQuitting = true;
   shutdownPromise = (async () => {
     await nethraScheduler?.stop();
-    nethraStore?.close(); deviceCommands?.close();
+    calendarSource?.stop(); nethraStore?.close(); deviceCommands?.close();
     await foreman?.shutdown();
     foreman?.close();
     await delegation?.shutdown?.();

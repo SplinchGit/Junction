@@ -1,17 +1,17 @@
 "use strict";
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const TYPES = ['nethra.list','nethra.get','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list'];
+const TYPES = ['nethra.list','nethra.get','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
-  constructor({store,scheduler,runtime,onSettings=async()=>{},deviceCommands=null}) { Object.assign(this,{store,scheduler,runtime,onSettings,deviceCommands}); }
+  constructor({store,scheduler,runtime,onSettings=async()=>{},deviceCommands=null,calendar=null}) { Object.assign(this,{store,scheduler,runtime,onSettings,deviceCommands,calendar}); }
   async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop') {
     if(!TYPES.includes(type))throw new Error('Unsupported Nethra operation');
     if(!payload||typeof payload!=='object'||Array.isArray(payload)||Buffer.byteLength(JSON.stringify(payload))>24000)throw new Error('Invalid Nethra payload');
     if(typeof requestId!=='string'||!requestId.length||requestId.length>160)throw new Error('Invalid request ID');
     const s=this.store;
     if(type==='nethra.list'){
-      const objectives=s.list().slice(0,100).map(t=>({id:t.id,goal:String(t.goal||'').slice(0,500),status:t.status,revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
+      const objectives=s.list().slice(0,100).map(t=>({id:t.id,goal:String(t.goal||'').slice(0,500),status:t.status,revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);}
@@ -47,12 +47,12 @@ class NethraApi {
     }
     if(type==='nethra.create') {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');
-      const task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',requestId});
+      const task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],requestId});
       return {task};
     }
     if(type==='nethra.configure'){
-      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn'].includes(key)))throw new Error('Unknown objective configuration');
-      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
+      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources'].includes(key)))throw new Error('Unknown objective configuration');
+      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
     }
     if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
     if(type==='nethra.approve') {
@@ -62,6 +62,15 @@ class NethraApi {
     if(type==='nethra.answer') {
       if(typeof payload.answer!=='string'||!payload.answer.trim()||payload.answer.length>4000)throw new Error('Provide a bounded answer');
       return {task:s.answer(payload.id,payload.answer.trim(),payload.revision,requestId)};
+    }
+    if(type==='nethra.source.calendar'){
+      // Consent happens in the browser on this PC, so connecting is a Windows-only operation.
+      if(source!=='desktop')throw new Error('Connect Google Calendar on the Windows host');
+      if(!this.calendar)throw new Error('Calendar monitoring is unavailable on this host');
+      if(payload.action==='connect')return {calendar:await this.calendar.connect({clientId:payload.clientId,clientSecret:payload.clientSecret||''})};
+      if(payload.action==='disconnect')return {calendar:await this.calendar.disconnect()};
+      if(payload.action==='sync'){const result=await this.calendar.sync();return {calendar:this.calendar.status(),result};}
+      throw new Error('Unknown calendar action');
     }
     if(type.startsWith('nethra.device.')){
       const d=this.deviceCommands;if(!d)throw new Error('Device commands are unavailable on this host');
@@ -88,7 +97,7 @@ class NethraApi {
       return {settings};
     }
     let model={known:false,thinking:false};try{model=await this.runtime.modelCapabilities('qwen3:30b',AbortSignal.timeout(3000));}catch{}
-    return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:{status:'DISCONNECTED'},gmail:{status:'DISCONNECTED'}}};
+    return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:{status:'DISCONNECTED'}}};
   }
 }
 module.exports={NethraApi,NETHRA_TYPES:TYPES};
