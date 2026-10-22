@@ -109,3 +109,5 @@ The 30B model gets `phone_check` (READ kinds only) and `phone_result`. A result 
 **Verification.** Windows `npm test` final group passed 146/146 (5 Gmail tests, 7 Calendar tests). The UI smoke passed. Acceptance passed 29/29 (simulated inference). Android has 173 tests; APK versionCode 100156 has SHA-256 `24be054235a51e98b36061e6cb42bcd581a96218fe64a6fa17fb468692a704dd`. The deployed package matches source.
 
 **Live Gmail consent requires:** the Gmail API enabled in the same Cloud project, and `gmail.metadata` added to the OAuth consent screen scopes. It is a restricted scope, which works in Testing mode for listed test users.
+
+**Version codes.** CI APKs are `101000 + run_number` (build 143 was published as 100143 before this offset, which is below the 1001xx builds installed by hand, so the in-app updater could never offer it). Local manual builds should use codes below the current CI code, or be installed only by ADB, so they never block CI updates. The Play workflow uses its own run counter on a separate track.

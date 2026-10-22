@@ -85,10 +85,12 @@ jobs:
 
       - name: Build Debug APK (capture logs even on failure)
         env:
-          # Gradle maps this into the stable 100000+run-number Android version range.
-          JUNCTION_VERSION_CODE: ${{ github.run_number }}
           JUNCTION_BUILD_NUMBER: ${{ github.run_number }}
         run: |
+          # Gradle maps this into the 100000+ range. The +1000 offset keeps CI builds above
+          # the locally numbered 1001xx builds already installed, so the in-app updater
+          # never sees a downgrade. Must match VERSION_CODE in publish-pages.
+          export JUNCTION_VERSION_CODE=$(( ${{ github.run_number }} + 1000 ))
           ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1 || true
           # Compiler diagnostics first. --stacktrace emits several hundred lines of
           # Gradle internals, which pushed the actual "e: ..." lines off the end of
@@ -215,7 +217,7 @@ jobs:
           VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' apps/android/build.gradle.kts)
           # Must mirror apps/android/build.gradle.kts. The offset puts CI releases above
           # every legacy APK while the run number makes each push strictly newer.
-          VERSION_CODE=$((100000 + ${{ github.run_number }}))
+          VERSION_CODE=$((101000 + ${{ github.run_number }}))
           BUILD_NUMBER=${{ github.run_number }}
           REPO="${GITHUB_REPOSITORY}"
           BASE_URL="https://splinchgit.github.io/Junction"
