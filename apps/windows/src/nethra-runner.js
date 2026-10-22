@@ -46,6 +46,8 @@ function nativeCall(call){
   if(typeof name!=='string'||!args||typeof args!=='object'||Array.isArray(args))throw Error('Malformed native tool call');
   return {name,args};
 }
+// Streaming lets the runtime cap each step's reasoning so one step cannot spend a whole wake thinking.
+const OBJECTIVE_THINKING_BUDGET=1100;
 class NethraRunner {
   constructor({store,runtime,researchCoordinator,deviceCommands=null,calendar=null,gmail=null,now=()=>Date.now()}={}){
     if(!store||!runtime)throw Error('Nethra requires a store and local runtime');
@@ -69,7 +71,7 @@ class NethraRunner {
     const chat=async(messages,child=false)=>{
       check();if(budget.iterations>=MAX_ITERATIONS)throw Error('Nethra iteration budget exhausted');budget.iterations++;if(child)budget.childIterations++;
       // Context is deliberately bounded; durable evidence and progress live in the store.
-      const response=await inference(()=>this.runtime.chat(MODEL,messages,this.tools.definitions({child}),combined,null,null,{thinking:true,num_ctx:4096,num_predict:1536}));
+      const response=await inference(()=>this.runtime.chat(MODEL,messages,this.tools.definitions({child}),combined,null,null,{thinking:true,num_ctx:4096,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET}));
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
       return {role:'assistant',content:cleanText(m.content,3000),...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
     };
