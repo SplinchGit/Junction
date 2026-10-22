@@ -8,7 +8,7 @@ const STATES = new Set(['CREATED','PLANNING','ACTIVE','SLEEPING','WAITING_FOR_US
 const TERMINAL = new Set(['COMPLETED','CANCELLED','FAILED']);
 const AUTONOMY = new Set(['QUIET','BALANCED','ACTIVE']);
 const CHECK_INS = new Set(['DAILY','WEEKLY','MILESTONES','MANUAL']);
-const SOURCES = new Set(['calendar']);
+const SOURCES = new Set(['calendar','gmail']);
 const validSources=value=>Array.isArray(value)&&value.length<=SOURCES.size&&value.every(item=>SOURCES.has(item))&&new Set(value).size===value.length;
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
 const DAY = 86400000;

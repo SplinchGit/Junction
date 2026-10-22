@@ -118,7 +118,7 @@ test('connecting is a Windows-only operation and status is reported honestly to 
   const f=fixture(t),api=new NethraApi({store:f.store,runtime:{modelCapabilities:async()=>({})},calendar:f.source});
   await assert.rejects(api.dispatch('nethra.source.calendar',{action:'connect',clientId},'c','android'),/Windows host/);
   assert.equal((await api.dispatch('nethra.status',{},'s','android')).sources.calendar.status,'DISCONNECTED');
-  await assert.rejects(api.dispatch('nethra.create',{goal:'x',sources:['gmail']},'bad'),/sources/);
+  await assert.rejects(api.dispatch('nethra.create',{goal:'x',sources:['outlook']},'bad'),/sources/);
   const {task}=await api.dispatch('nethra.create',{goal:'Watch',sources:['calendar']},'ok','android');
   assert.deepEqual(task.sources,['calendar']);
   const changed=await api.dispatch('nethra.configure',{id:task.id,revision:task.revision,sources:[]},'cfg','android');

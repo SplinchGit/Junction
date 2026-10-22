@@ -33,6 +33,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     var priority by rememberSaveable { mutableIntStateOf(3) }
     var checkIn by rememberSaveable { mutableStateOf("WEEKLY") }
     var watchCalendar by rememberSaveable { mutableStateOf(false) }
+    var watchGmail by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var objectives by remember { mutableStateOf<List<Map<*, *>>>(emptyList()) }
     var settings by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
@@ -130,13 +131,16 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             val capability = hostStatus["capabilities"] as? Map<*, *>
             if (capability != null && capability["thinking"] != true) Text(if (capability["known"] == true) "This model does not support thinking; it will answer normally." else "Model thinking support could not be confirmed; the PC will use its supported mode.")
             if (hostStatus.isNotEmpty()) {
-                val calendar = (hostStatus["sources"] as? Map<*, *>)?.get("calendar") as? Map<*, *>
-                Text(when (calendar?.get("status")) {
-                    "CONNECTED" -> "PC Google Calendar: connected read-only · last checked ${dateLabel(calendar["lastSyncAt"])}"
-                    "STALE" -> "PC Google Calendar: connected but not checked recently"
-                    "ERROR" -> "PC Google Calendar: ${calendar["error"] ?: "needs attention on Windows"}"
-                    else -> "PC Google Calendar: not connected (connect it on Windows)"
-                } + " · Gmail monitoring: not connected")
+                val sources = hostStatus["sources"] as? Map<*, *>
+                for ((key, label) in listOf("calendar" to "Google Calendar", "gmail" to "Gmail (headers only)")) {
+                    val state = sources?.get(key) as? Map<*, *>
+                    Text(when (state?.get("status")) {
+                        "CONNECTED" -> "PC $label: connected read-only · last checked ${dateLabel(state["lastSyncAt"])}"
+                        "STALE" -> "PC $label: connected but not checked recently"
+                        "ERROR" -> "PC $label: ${state["error"] ?: "needs attention on Windows"}"
+                        else -> "PC $label: not connected (connect it on Windows)"
+                    })
+                }
             }
             if (settings.isNotEmpty()) Text("Windows startup: ${if (settings["persistentStartup"] == true) "enabled" else "disabled"}. Change startup on the PC.")
             if (reunion.isNotEmpty()) {
@@ -171,9 +175,13 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                 Checkbox(checked = watchCalendar, onCheckedChange = { watchCalendar = it }, enabled = !busy)
                 Text("Watch my Google Calendar (read-only, via the PC)", Modifier.padding(top = 12.dp))
             }
+            Row {
+                Checkbox(checked = watchGmail, onCheckedChange = { watchGmail = it }, enabled = !busy)
+                Text("Watch new Gmail inbox mail (headers only, via the PC)", Modifier.padding(top = 12.dp))
+            }
             Text("Your PC must be awake and online to run work. Nethra asks for approval before actions that need your permission.")
             Button(enabled = !busy && goal.isNotBlank(), onClick = {
-                perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); if (watchCalendar) put("sources", listOf("calendar")); if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
+                perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
             if (objectives.isEmpty()) Text("No saved objectives.")
             objectives.forEach { objective ->

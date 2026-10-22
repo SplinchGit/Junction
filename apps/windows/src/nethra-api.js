@@ -1,10 +1,10 @@
 "use strict";
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const TYPES = ['nethra.list','nethra.get','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar'];
+const TYPES = ['nethra.list','nethra.get','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
-  constructor({store,scheduler,runtime,onSettings=async()=>{},deviceCommands=null,calendar=null}) { Object.assign(this,{store,scheduler,runtime,onSettings,deviceCommands,calendar}); }
+  constructor({store,scheduler,runtime,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null}) { Object.assign(this,{store,scheduler,runtime,onSettings,deviceCommands,calendar,gmail}); }
   async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop') {
     if(!TYPES.includes(type))throw new Error('Unsupported Nethra operation');
     if(!payload||typeof payload!=='object'||Array.isArray(payload)||Buffer.byteLength(JSON.stringify(payload))>24000)throw new Error('Invalid Nethra payload');
@@ -63,14 +63,15 @@ class NethraApi {
       if(typeof payload.answer!=='string'||!payload.answer.trim()||payload.answer.length>4000)throw new Error('Provide a bounded answer');
       return {task:s.answer(payload.id,payload.answer.trim(),payload.revision,requestId)};
     }
-    if(type==='nethra.source.calendar'){
+    if(type==='nethra.source.calendar'||type==='nethra.source.gmail'){
+      const key=type.slice('nethra.source.'.length),sourceApi=this[key],label=key==='gmail'?'Gmail':'Google Calendar';
       // Consent happens in the browser on this PC, so connecting is a Windows-only operation.
-      if(source!=='desktop')throw new Error('Connect Google Calendar on the Windows host');
-      if(!this.calendar)throw new Error('Calendar monitoring is unavailable on this host');
-      if(payload.action==='connect')return {calendar:await this.calendar.connect({clientId:payload.clientId,clientSecret:payload.clientSecret||''})};
-      if(payload.action==='disconnect')return {calendar:await this.calendar.disconnect()};
-      if(payload.action==='sync'){const result=await this.calendar.sync();return {calendar:this.calendar.status(),result};}
-      throw new Error('Unknown calendar action');
+      if(source!=='desktop')throw new Error(`Connect ${label} on the Windows host`);
+      if(!sourceApi)throw new Error(`${label} monitoring is unavailable on this host`);
+      if(payload.action==='connect')return {[key]:await sourceApi.connect({clientId:payload.clientId,clientSecret:payload.clientSecret||''})};
+      if(payload.action==='disconnect')return {[key]:await sourceApi.disconnect()};
+      if(payload.action==='sync'){const result=await sourceApi.sync();return {[key]:sourceApi.status(),result};}
+      throw new Error(`Unknown ${label} action`);
     }
     if(type.startsWith('nethra.device.')){
       const d=this.deviceCommands;if(!d)throw new Error('Device commands are unavailable on this host');
@@ -97,7 +98,7 @@ class NethraApi {
       return {settings};
     }
     let model={known:false,thinking:false};try{model=await this.runtime.modelCapabilities('qwen3:30b',AbortSignal.timeout(3000));}catch{}
-    return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:{status:'DISCONNECTED'}}};
+    return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:this.gmail?.status()||{status:'DISCONNECTED'}}};
   }
 }
 module.exports={NethraApi,NETHRA_TYPES:TYPES};
