@@ -91,3 +91,21 @@ The 30B model gets `phone_check` (READ kinds only) and `phone_result`. A result 
 **Verification:** Windows `npm test` passed, final group 141/141. The UI smoke passed. Acceptance passed 29/29 (simulated inference). Android has 173 tests in 31 suites; APK versionCode 100155 has SHA-256 `46d61ed58b083121ca05d03de2cc546aa3aaf348c6930cc56b639e9b7a350b65`.
 
 **Not verified live:** consent against a real Google account. That needs the owner's Desktop OAuth client ID and secret, entered in Objectives → Google Calendar. Also not verified: a phone install of 100154 or 100155, a live phone_check round trip, Gmail monitoring (not implemented) and full master-task acceptance.
+
+## Gmail source and CI emulator smoke
+
+**Push policy.** The repository ruleset `single-branch-only` allows only `main`, so work is pushed by fast-forwarding `main`. A push to `main` runs CI, the web build, the APK build and the Play internal workflow. The Play workflow currently skips every step because no release credentials are configured. When the emulator smoke passes, the APK build job publishes the APK and `latest.json` to GitHub Pages and creates a GitHub release; the phone's in-app updater reads `latest.json`.
+
+**CI fix.** `android-emulator-runner` executes each `script:` line separately under `/bin/sh`, so the inherited multi-line smoke step failed on `set -o pipefail`. The smoke step now runs `scripts/ci/android-emulator-smoke.sh` from a sparse checkout.
+
+**Gmail.** `src/gmail-source.js` shares `src/google-source.js` with Calendar. Each source holds an independent grant and can be disconnected on its own.
+- **Scope:** `gmail.metadata` only. That grants headers and labels and never message bodies, so `gmail.readonly` is not requested.
+- **Baseline:** the first sync records the profile `historyId` and creates no attention.
+- **Polling:** `history.list` (messageAdded, INBOX, at most 3 pages) finds new mail. Spam, trash, drafts, sent, promotions and social are ignored. At most 20 messages per sync are fetched with `format=metadata` (From, Subject, Date).
+- **Expired cursor:** if the history cursor has expired (404), the source re-baselines silently. Mail that arrived during that gap is not reported.
+- **Attention:** each new message becomes `SOURCE_ADDED` attention with revision `received`, only for objectives with `sources: ['gmail']`.
+- **Model access:** the model reads headers through `gmail_message` as untrusted data, with `bodyAvailable: false`. No send tool exists.
+
+**Verification.** Windows `npm test` final group passed 146/146 (5 Gmail tests, 7 Calendar tests). The UI smoke passed. Acceptance passed 29/29 (simulated inference). Android has 173 tests; APK versionCode 100156 has SHA-256 `24be054235a51e98b36061e6cb42bcd581a96218fe64a6fa17fb468692a704dd`. The deployed package matches source.
+
+**Live Gmail consent requires:** the Gmail API enabled in the same Cloud project, and `gmail.metadata` added to the OAuth consent screen scopes. It is a restricted scope, which works in Testing mode for listed test users.
