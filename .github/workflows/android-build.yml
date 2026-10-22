@@ -145,16 +145,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # Checkout cleans the workspace, so it must run before the APK download.
+      - name: Check out the smoke script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+
       - name: Download the APK produced by this run
         uses: actions/download-artifact@v4
         with:
           name: app-debug.apk
           path: smoke-apk
-
-      - name: Check out the smoke script
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: scripts/ci
 
       - name: Enable KVM group permissions
         run: |
