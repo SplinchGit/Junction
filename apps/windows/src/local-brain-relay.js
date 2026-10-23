@@ -6,10 +6,30 @@ const LOCAL_SOURCE = "junction_local_llm_v2";
 const POLL_INTERVAL_MS = 15_000;
 const LEASE_MS = 90_000;
 const OLLAMA_TIMEOUT_MS = 120_000;
-const STREAM_FLUSH_MS = 750;
+// Every relay update is a billed Firestore write (free tier: 20,000/day for the whole project).
+const STREAM_FLUSH_MS = 2_500, LEASE_RENEW_MS = 60_000, PROGRESS_MIN_MS = 5_000;
 const MAX_RESPONSE_CHARS = 48_000;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
+/**
+ * Coalesces progress into at most one write per stage change and per PROGRESS_MIN_MS.
+ * The runtime reports progress per thinking token, so writing each one cost hundreds
+ * of writes per reply and exhausted the project's daily write quota.
+ */
+function progressReporter(write, now = () => Date.now(), minMs = PROGRESS_MIN_MS) {
+  let lastStage = null, lastAt = -Infinity, pending = Promise.resolve(), writes = 0;
+  const report = stage => {
+    const text = String(stage || "Working on your PC").slice(0, 150);
+    if (text === lastStage || now() - lastAt < minMs) return pending;
+    lastStage = text; lastAt = now(); writes++;
+    // Serialized and never awaited by the token stream, so Firestore latency cannot stall generation.
+    pending = pending.then(() => write(text)).catch(() => {});
+    return pending;
+  };
+  report.writes = () => writes;
+  report.settled = () => pending;
+  return report;
+}
 function decode(value) {
   if (!value) return undefined;
   if ("stringValue" in value) return value.stringValue;
@@ -122,7 +142,7 @@ class LocalBrainRelay {
   }
   async run(state, item) {
     const id = item.data.id || item.document.name.split("/").pop();
-    let claimed = false, renewal = null;
+    let claimed = false, renewal = null, reportStage = null;
     try {
       await this.update(item.document, state.session, { status: "running", leaseUntilMs: this.now() + LEASE_MS, error: "" }, item.document.updateTime);
       claimed = true;
@@ -156,7 +176,7 @@ class LocalBrainRelay {
         if (renewing) return; renewing = true;
         try { const fresh = await this.getState(); if (fresh?.session) state.session = fresh.session; await this.heartbeat(state); await this.update(item.document, state.session, { leaseUntilMs: this.now() + 8 * 60_000 }, null); }
         catch (error) { this.lastError = error.message; } finally { renewing = false; }
-      }, 10_000);
+      }, LEASE_RENEW_MS);
       // A language model is not an authority to start coding work. Ordinary
       // phone chat intentionally cannot turn a hallucinated marker into a
       // Codex draft; that requires a future separately-approved request shape.
@@ -183,11 +203,14 @@ class LocalBrainRelay {
           try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
         }, 1_000);
         try {
+          reportStage = progressReporter(stage => this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: stage }, null), this.now);
           const result = await this.runLocalAgent({ surface:'android-relay', conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, forceSearch:payload.forceSearch===true, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
             onProgress: async progress => {
               if (progress.text !== undefined) { answer = progress.text; await flush(); }
-              else await this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: String(progress.stage || "Working on your PC").slice(0, 150) }, null);
+              else reportStage(progress.stage);
             } });
+          // A queued stage write must never land after (and overwrite) the final status.
+          await reportStage.settled();
           answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: result.metrics?.evalMs ? result.metrics.evalMs * 1e6 : 0 };
           telemetry = { model:result.model || payload.model, inputTokens:Number(result.usage?.prompt_tokens || 0), outputTokens:Number(result.usage?.completion_tokens || 0), generatedTokens:Number(result.metrics?.generatedTokens || result.usage?.completion_tokens || 0), tokensPerSecond:Number.isFinite(result.metrics?.tokensPerSecond) ? result.metrics.tokensPerSecond : null, evalMs:Number(result.metrics?.evalMs || 0), loadMs:Number(result.metrics?.loadMs || 0), durationMs:Number(result.durationMs || 0), modelCalls:Number(result.metrics?.modelCalls || result.iterations || 0), toolCalls:Number(result.toolCalls || 0), toolsExecuted:Number(result.toolsExecuted || 0), toolNames:Array.isArray(result.toolNames) ? result.toolNames.slice(0,8) : [], thinkingState:String(result.thinkingState || 'off'), thinkingCharacters:Number(result.thinkingCharacters || 0) };
         } finally { clearInterval(cancellationPoll); }
@@ -208,10 +231,11 @@ class LocalBrainRelay {
       runStats.completedAt = this.now();
     } catch (error) {
       if (!claimed) { this.lastError = error.message; return; }
+      await reportStage?.settled();
       if (error.name === "AbortError" && await this.cancelled(state, item).catch(() => false)) {
         await this.update(item.document, state.session, { status: "cancelled", error: "", leaseUntilMs: 0 }, null).catch(() => {});
       } else await this.markError(state, item, error.name === "AbortError" ? new Error("Local model timed out. Check Ollama and try again.") : error);
     } finally { if (renewal) clearInterval(renewal); }
   }
 }
-module.exports = { LocalBrainRelay, LOCAL_SOURCE, decodeDocument, crypt, readNdjson };
+module.exports = { LocalBrainRelay, LOCAL_SOURCE, decodeDocument, crypt, readNdjson, progressReporter };

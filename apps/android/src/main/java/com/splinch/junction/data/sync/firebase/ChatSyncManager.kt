@@ -28,6 +28,8 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceId = "android-" + Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ANDROID_ID)
     private val outbox = appContext.getSharedPreferences("junction_chat_sync_outbox", Context.MODE_PRIVATE)
+    private val ledgerPrefs = appContext.getSharedPreferences("junction_chat_sync_ledger", Context.MODE_PRIVATE)
+    private val ledger = SyncUploadLedger({ ledgerPrefs.getString(it, null) }, { key, value -> ledgerPrefs.edit().putString(key, value).apply() })
     private var currentUserId: String? = null
     private var activeConversationId: String? = null
     private var authJob: Job? = null
@@ -96,11 +98,12 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
 
     private suspend fun backfillLocal(uid: String) {
         val deleted = pendingTombstones(uid).mapTo(mutableSetOf()) { it.id }
+        // Only what this device has not uploaded yet; an unchanged history costs no reads or writes.
         for (session in chatDao.getAllSessions()) {
             if (session.id in deleted) continue
-            putConversation(uid, session)
+            if (!ledger.conversationCurrent(uid, session.id, session.sharedUpdatedAt)) putConversation(uid, session)
             chatDao.getMessages(session.id)
-                .filterNot { it.sourceRef?.startsWith("shared:") == true }
+                .filterNot { it.sourceRef?.startsWith("shared:") == true || ledger.messageUploaded(uid, it.id) }
                 .forEach { putMessage(uid, session.id, it) }
         }
     }
@@ -172,9 +175,10 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
         val title = (session.title ?: chatDao.lastMessageContent(session.id)?.take(60) ?: "New conversation").take(80)
         val ref = conversationRef(uid, session.id)
         val existing = ref.get().await()
-        if (existing.get("deletedAt") != null) return
+        // A remote deletion or a newer remote copy also means there is nothing to upload.
+        if (existing.get("deletedAt") != null) { ledger.recordConversation(uid, session.id, session.sharedUpdatedAt); return }
         val remoteUpdatedAt = (existing.get("updatedAt") as? Number)?.toLong()
-        if (remoteUpdatedAt != null && remoteUpdatedAt > session.sharedUpdatedAt) return
+        if (remoteUpdatedAt != null && remoteUpdatedAt > session.sharedUpdatedAt) { ledger.recordConversation(uid, session.id, session.sharedUpdatedAt); return }
         val creator = (existing.get("createdByDeviceId") as? String)?.take(160) ?: deviceId.take(160)
         ref.set(mapOf(
             "id" to session.id,
@@ -185,6 +189,7 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
             "schemaVersion" to 1,
             // Never clear a deletion made concurrently on another device.
         ), SetOptions.merge()).await()
+        ledger.recordConversation(uid, session.id, session.sharedUpdatedAt)
     }
 
     private suspend fun putMessage(uid: String, conversationId: String, message: ChatMessageEntity) {
@@ -198,6 +203,7 @@ class ChatSyncManager(context: Context, private val chatDao: ChatDao, private va
             "deviceId" to deviceId,
             "schemaVersion" to 1
         )).await()
+        ledger.recordMessage(uid, message.id)
     }
 
     private suspend fun flushTombstones(uid: String) {

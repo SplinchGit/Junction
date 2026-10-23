@@ -69,6 +69,7 @@ class NethraClient(context: Context) {
                             throw Rejected(response.payload["message"]?.toString() ?: "Junction Windows rejected the request.")
                         }
                         if (mutation) unresolved.clear(binding)
+                        lastTransport = Transport.LAN
                         return@withTimeout response.payload
                     }
                 } catch (_: TimeoutCancellationException) { coroutineContext.ensureActive() }
@@ -82,6 +83,7 @@ class NethraClient(context: Context) {
         }
         coroutineContext.ensureActive()
         val result = exchange(type, payload, requestId)
+        lastTransport = Transport.RELAY
         if (mutation) unresolved.clear(binding)
         result
     } } catch (timeout: TimeoutCancellationException) {
@@ -121,7 +123,15 @@ class NethraClient(context: Context) {
         return objectMap(JSONObject(response))
     }
 
+    enum class Transport { LAN, RELAY }
+
     companion object {
+        /** Which path the last successful request used; relay requests are billed Firestore writes. */
+        @Volatile var lastTransport: Transport? = null
+            private set
+        /** Poll interval for background refreshes: LAN is free, every relay request costs ~3 writes. */
+        fun pollIntervalMs(lanMs: Long): Long = if (lastTransport == Transport.RELAY) maxOf(lanMs, RELAY_MIN_POLL_MS) else lanMs
+        private const val RELAY_MIN_POLL_MS = 120_000L
         private val TYPES = setOf("nethra.list", "nethra.get", "nethra.reunion", "nethra.create", "nethra.configure", "nethra.control", "nethra.approve", "nethra.settings", "nethra.status", "nethra.answer", "nethra.device.pull", "nethra.device.result")
         private fun value(value: Any?): Any? = when (value) {
             is JSONObject -> objectMap(value)

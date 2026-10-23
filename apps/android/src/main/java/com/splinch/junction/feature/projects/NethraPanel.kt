@@ -92,7 +92,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
         while (true) {
             try { deviceSync.runOnce() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {}
             consents = deviceSync.pendingConsents()
-            delay(60_000)
+            delay(NethraClient.pollIntervalMs(60_000))
         }
     }
     LaunchedEffect(selectedId) {
@@ -103,7 +103,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { connected = false; error = failure.message ?: "The paired Windows host is unavailable." }
             }
-            delay(15_000)
+            delay(NethraClient.pollIntervalMs(15_000))
         }
     }
 
