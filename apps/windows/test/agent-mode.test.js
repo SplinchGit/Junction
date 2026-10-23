@@ -64,3 +64,29 @@ test('the scheduler reports settled outcomes so Nethra can answer in the origina
   await scheduler.tick();
   assert.equal(settled.length,1);assert.equal(settled[0].id,task.id);assert.equal(settled[0].status,'COMPLETED');assert.equal(settled[0].conversationId,'conv-3');
 });
+
+function scriptedRuntime(adapter,answers){
+  let calls=0;
+  const fetchImpl=async(url)=>{
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:4096}]})};
+    const content=answers[Math.min(calls++,answers.length-1)];
+    return {ok:true,json:async()=>({message:{role:'assistant',content},eval_count:5,eval_duration:1e8,prompt_eval_count:10})};
+  };
+  return new LocalAgentRuntime({toolRegistry:new LocalAgentToolRegistry({researchCoordinator:{run:async()=>({sources:[]})},objectives:adapter}),fetchImpl});
+}
+
+test('"keep me updated" starts a real objective even when the model never calls the tool',async()=>{
+  const {created,adapter}=objectivesFake();
+  const runtime=scriptedRuntime(adapter,['Here is what I know so far, and I will keep working on it.']);
+  const result=await runtime.run({goal:'Please look into Falkirk council housing plans and keep me updated',model:'qwen3:30b',history:[],surface:'android-relay',conversationId:'conv-k',runId:'run-k'});
+  assert.equal(created.length,1);assert.equal(created[0].conversationId,'conv-k');
+  assert.doesNotMatch(result.content,/Correction/);
+});
+
+test('a promise to monitor with no objective behind it is corrected',async()=>{
+  const {created,adapter}=objectivesFake();
+  const runtime=scriptedRuntime(adapter,['Falkirk has a 2023-2028 strategy. I will monitor this for updates.']);
+  const result=await runtime.run({goal:'What is Falkirk doing about housing?',model:'qwen3:30b',history:[],surface:'android-relay',conversationId:'conv-m',runId:'run-m'});
+  assert.equal(created.length,0);
+  assert.match(result.content,/Correction: I have not set up ongoing tracking/);
+});

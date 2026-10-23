@@ -19,6 +19,15 @@ const DEFAULT_CONTEXT_TOKENS = 4_096;
 const MODEL_KEEP_ALIVE = "2h";
 // Thinking budgets in tokens (~20 tok/s here). Measured: unbounded thinking on a one-word greeting
 // can exhaust the whole 1536-token output cap and return no answer at all.
+// Explicit requests for ongoing work start a durable objective on the host. Live 30B runs answered
+// "I'll monitor for updates" to "keep me updated" without ever calling start_objective.
+const ONGOING_REQUEST = /\b(?:keep (?:me )?(?:updated|posted|informed|in the loop)|keep (?:an eye|track|tabs)|track (?:this|it|that|the)|monitor|follow(?:ing)? up|let me know (?:when|if)|watch (?:for|this|out for)|over the (?:next|coming) (?:days|weeks|months)|on an ongoing basis)\b/i;
+const MONITOR_CLAIM = /\b(?:I(?:'ll| will) (?:keep (?:monitoring|watching|tracking|an eye)|monitor|track|follow up|keep you (?:updated|posted|informed)|let you know)|I(?:'m| am) (?:monitoring|tracking|watching))\b/i;
+/** A promise of ongoing work with no objective behind it is corrected, never left standing. */
+function honestFollowUp(content, executedTools) {
+  if (executedTools.includes("start_objective") || !MONITOR_CLAIM.test(content)) return content;
+  return `${content}\n\n(Correction: I have not set up ongoing tracking for this. Ask me to keep you updated and I will start it as a task.)`;
+}
 const THINKING_BUDGET = Object.freeze({ simple: 256, routing: 384, safety: 1100 });
 const COMPLEX_REQUEST = /\b(?:research|search|look up|find|compare|analy[sz]e|plan|write|draft|summari[sz]e|code|build|fix|debug|why|how (?:do|does|would|can|should))\b/i;
 /** One loaded 30B runner: chats skip queued background work, while bounded
@@ -343,6 +352,16 @@ class LocalAgentRuntime {
       toolCalls++; delegations++; executedTools.push("delegate_to_codex");
       messages.push({role:"assistant",content:"",tool_calls:[{function:{name:"delegate_to_codex",arguments:{task}}}]}, {role:"tool",tool_name:"delegate_to_codex",content:result.content});
     }
+    const objectiveGoal = ownerGoal.replace(/\s+/g, " ").trim().slice(0, 2000);
+    if (ONGOING_REQUEST.test(ownerGoal) && objectiveGoal.length >= 10 && definitions.some(tool => tool.function.name === "start_objective")) {
+      await onProgress?.({ stage: "Starting this as ongoing work" });
+      try {
+        const result = await waitWithSignal(this.tools.execute("start_objective", { goal: objectiveGoal }, { goal: ownerGoal, conversationId, runId, surface, ledgers, allowCodeDelegation, audit: { runId, model, mode: "agent", initiator: "host" } }), runSignal);
+        toolCalls++; executedTools.push("start_objective");
+        messages.push({role:"assistant",content:"",tool_calls:[{function:{name:"start_objective",arguments:{goal:objectiveGoal}}}]}, {role:"tool",tool_name:"start_objective",content:result.content});
+        messages.push({role:"user",content:"Junction has already started this as a durable objective (see the start_objective result). Answer what you can now, then say in one sentence that you will keep working on it in the background and report back here. Do not ask whether to track it."});
+      } catch (error) { if (runSignal.aborted) throw error; this.tools.audit("agent_tool_result", "start_objective", "failure", String(error?.message || error), { runId, model, mode: "agent", initiator: "host" }); }
+    }
     if (hostSearchRequired || decision.action === "search") {
       await onProgress?.({ stage: "Searching the web on your PC" });
       // The host enforces research; tiny models cannot silently skip it.
@@ -394,7 +413,7 @@ class LocalAgentRuntime {
         const metrics = modelMetrics(timings, Date.now() - started);
         const telemetry = { runId, model, mode: "agent", toolsAvailable: definitions.length > 0, iteration, iterations: iteration, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: metrics.durationMs, tokensPerSecond: metrics.tokensPerSecond, evalMs: metrics.evalMs, loadMs: metrics.loadMs };
         this.tools.audit("model_run_completed", "local_model", unverifiedSearch ? "failure" : "success", unverifiedSearch ? "Search failed; returned a bounded verification failure" : toolCalls ? `${toolCalls} native tool request(s); ${executedTools.length} executed` : "No native tools requested", telemetry);
-        return { content: combined ? renderCitations(answer, visibleEvidence) : answer, intent: decision.intent, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: iteration, toolCalls, toolsExecuted: executedTools.length, toolNames: telemetry.toolNames, thinkingCharacters, thinkingState: telemetry.thinkingState, durationMs: telemetry.durationMs, metrics };
+        return { content: honestFollowUp(combined ? renderCitations(answer, visibleEvidence) : answer, executedTools), intent: decision.intent, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: iteration, toolCalls, toolsExecuted: executedTools.length, toolNames: telemetry.toolNames, thinkingCharacters, thinkingState: telemetry.thinkingState, durationMs: telemetry.durationMs, metrics };
       }
       for (const rawCall of assistant.tool_calls) {
         if (runSignal.aborted || await isCancelled?.()) throw abortError();
@@ -440,7 +459,7 @@ class LocalAgentRuntime {
         const combined = mergeResearch(ownerGoal, ledgers), visibleEvidence = compactResearchContext(combined), audit = citationAudit(answer, visibleEvidence);
         if (!audit.hasCitations || audit.invalid.length) continue;
         const metrics = modelMetrics(timings, Date.now() - started);
-        return { content: renderCitations(answer, visibleEvidence), intent: decision.intent, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: this.limits.iterations + attempt + 1, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: metrics.durationMs, metrics };
+        return { content: honestFollowUp(renderCitations(answer, visibleEvidence), executedTools), intent: decision.intent, model, usage: { prompt_tokens: inputTokens, completion_tokens: outputTokens }, research: combined, citationAudit: audit, iterations: this.limits.iterations + attempt + 1, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: metrics.durationMs, metrics };
       }
     }
     this.tools.audit("model_run_completed", "local_model", "failure", "work budget exhausted before a supported final answer", { runId, model, mode: "agent", toolsAvailable: definitions.length > 0, iterations: this.limits.iterations, toolCalls, toolsExecuted: executedTools.length, toolNames: [...new Set(executedTools)], inputTokens, outputTokens, thinkingCharacters, thinkingState: thinkingCharacters ? "reported" : thinkingEnabled ? "enabled_no_output" : "off", durationMs: Date.now() - started });
