@@ -9,7 +9,7 @@ const selfsigned=require('selfsigned');
 const {DeviceCommandStore,tlsSigner}=require('../src/device-commands');
 const {NethraStore}=require('../src/nethra-store');
 const {NethraApi}=require('../src/nethra-api');
-const {allowedSerial}=require('../scripts/junction-ops.cjs');
+const {allowedSerial,parseTailnetEndpoint,assertTailnetPeer}=require('../scripts/junction-ops.cjs');
 
 const tls=(()=>{const generated=selfsigned.generate([{name:'commonName',value:'Junction LAN'}],{keySize:2048,days:1,algorithm:'sha256'});return {key:generated.private,certificate:generated.cert};})();
 function fixture(t){
@@ -94,6 +94,19 @@ test('ADB targets are limited to USB serials and Tailscale addresses',()=>{
   assert.equal(allowedSerial('192.168.1.20:5555'),false);
   assert.equal(allowedSerial('100.128.0.1:5555'),false);
   assert.equal(allowedSerial('adb-R58R-xyz._adb-tls-connect._tcp'),false);
+});
+
+test('wireless ADB requires an explicit port and a live tailnet peer',()=>{
+  assert.deepEqual(parseTailnetEndpoint('100.101.5.9:37123'),{host:'100.101.5.9',port:37123});
+  assert.throws(()=>parseTailnetEndpoint('100.101.5.9'),/host:port/);
+  assert.throws(()=>parseTailnetEndpoint('10.164.57.104:37123'),/Tailscale/);
+  assert.throws(()=>parseTailnetEndpoint('100.101.5.9:0'),/port/);
+  const status={BackendState:'Running',Self:{TailscaleIPs:['100.95.8.42']},Peer:{abc:{TailscaleIPs:['100.101.5.9'],Online:true}}};
+  assert.doesNotThrow(()=>assertTailnetPeer('100.101.5.9',status));
+  assert.throws(()=>assertTailnetPeer('100.101.5.10',status),/peer/);
+  assert.throws(()=>assertTailnetPeer('100.95.8.42',status),/peer/);
+  assert.throws(()=>assertTailnetPeer('100.101.5.9',{...status,BackendState:'Stopped'}),/running/);
+  assert.throws(()=>assertTailnetPeer('100.101.5.9',{...status,Peer:{abc:{TailscaleIPs:['100.101.5.9'],Online:false}}}),/online/);
 });
 
 test('Nethra can request read-only phone checks whose results wake the objective',async t=>{
