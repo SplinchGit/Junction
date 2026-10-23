@@ -111,3 +111,11 @@ The 30B model gets `phone_check` (READ kinds only) and `phone_result`. A result 
 **Live Gmail consent requires:** the Gmail API enabled in the same Cloud project, and `gmail.metadata` added to the OAuth consent screen scopes. It is a restricted scope, which works in Testing mode for listed test users.
 
 **Version codes.** CI APKs are `101000 + run_number` (build 143 was published as 100143 before this offset, which is below the 1001xx builds installed by hand, so the in-app updater could never offer it). Local manual builds should use codes below the current CI code, or be installed only by ADB, so they never block CI updates. The Play workflow uses its own run counter on a separate track.
+
+## Live approval-to-completion: passed (23 October)
+
+The earlier live run did the approved write but ended `WAITING_FOR_USER`. Its event trail showed the cause. The runner executed the approved `write_draft` itself at the start of the wake, and the model then saw only its stale plan ("Request approval to replace review.txt…"). It re-saved that plan and asked for the same approval again.
+
+The runner now puts `approvedActionsCompletedThisWake` (tool, path, SHA-256) and an explicit instruction at the **front** of the briefing, because `bounded()` truncates from the end. The instruction tells the model not to re-request those actions, to mark the steps complete, to check the success criteria and to finish if they are met. Regression test in `test/nethra-runner.test.js`.
+
+Live re-run with real `qwen3:30b` (`scripts/nethra-live-approval-smoke.js`): approval requested, file untouched until approval, approved exact write performed (`amber approval 62`), final status **COMPLETED**, 447 s in total, `success: true`. This is the first end-to-end live completion of the approval workflow. It is a single run, so repeat it before treating it as reliable.

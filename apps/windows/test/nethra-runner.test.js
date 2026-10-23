@@ -208,3 +208,20 @@ test('objective steps stream with a thinking safety budget so one step cannot co
   await new NethraRunner({store,runtime}).execute(claim.task,{token:claim.token,checkpoint:patch=>store.update(task.id,patch,'CHECKPOINT',claim.token)}).catch(()=>{});
   assert.ok(seen.length>0);assert.equal(typeof seen[0].onThinking,'function');assert.equal(seen[0].thinkingBudget,1100);
 });
+
+test('after an approved write the model is told first that it is done and must not be re-requested',async t=>{
+  const {NethraStore}=require('../src/nethra-store');const f=fixture(t);let store=new NethraStore(path.join(f.root,'store-briefing'));
+  let task=store.create({goal:'Update the report',successCriteria:'draft.md says approved new'});const file=path.join(task.workspace,'draft.md');fs.writeFileSync(file,'old');
+  let runtime={withInference:fn=>fn(),chat:async()=>({message:{content:'',tool_calls:[{function:{name:'write_draft',arguments:{path:'draft.md',content:'approved new'}}}]}})};
+  await new NethraRunner({store,runtime}).execute(task);
+  const approval=store.approvals(task.id)[0];store.decideApproval(approval.id,true,'decision-briefing');task=store.get(task.id);
+  let seed=null;
+  runtime={withInference:fn=>fn(),chat:async(_m,messages)=>{seed??=messages[1].content;return {message:{content:'',tool_calls:[{function:{name:'finish_objective',arguments:{summary:'Draft saved'}}}]}};}};
+  await new NethraRunner({store,runtime}).execute(task);
+  assert.ok(seed.startsWith('{"approvedActionsCompletedThisWake":'),'briefing must lead the seed so truncation cannot drop it');
+  const parsed=JSON.parse(seed);
+  assert.equal(parsed.approvedActionsCompletedThisWake[0].tool,'write_draft');
+  assert.match(parsed.approvedActionsCompletedThisWake[0].sha256,/^[0-9a-f]{64}$/);
+  assert.match(parsed.approvedActionsNote,/Do not request approval for them again/);
+  store.close();
+});
