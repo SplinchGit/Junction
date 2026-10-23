@@ -1,10 +1,10 @@
 "use strict";
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const TYPES = ['nethra.list','nethra.get','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
+const TYPES = ['nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
-  constructor({store,scheduler,runtime,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null}) { Object.assign(this,{store,scheduler,runtime,onSettings,deviceCommands,calendar,gmail}); }
+  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail}); }
   async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop') {
     if(!TYPES.includes(type))throw new Error('Unsupported Nethra operation');
     if(!payload||typeof payload!=='object'||Array.isArray(payload)||Buffer.byteLength(JSON.stringify(payload))>24000)throw new Error('Invalid Nethra payload');
@@ -13,7 +13,7 @@ class NethraApi {
     if(type==='nethra.list'){
       // live/step/progress let clients show where Nethra is without fetching each objective.
       const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
-      const objectives=s.list().slice(0,100).map(t=>({live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
+      const objectives=s.list().slice(0,100).map(t=>({live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);}
@@ -36,7 +36,7 @@ class NethraApi {
       const selected=pending.length?pending[0]:null;
       const short=(value,max)=>String(value||'').slice(0,max);
       const briefList=value=>(Array.isArray(value)?value:[]).slice(-8).map(item=>short(item,300));
-      const mobileTask={id:task.id,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
+      const mobileTask={id:task.id,conversationId:task.conversationId||null,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
       const result={task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
       if(Buffer.byteLength(JSON.stringify(result))>50000&&selected){
         const content=String(selected.args?.content||'');
@@ -46,6 +46,15 @@ class NethraApi {
       while(Buffer.byteLength(JSON.stringify(result))>50000&&result.attention.length)result.attention.shift();
       if(Buffer.byteLength(JSON.stringify(result))>50000)throw new Error('Objective detail is too large; inspect local evidence on Windows');
       return result;
+    }
+    if(type==='nethra.openChat') {
+      if(!this.localData)throw new Error('Conversation storage is unavailable on this PC');
+      const task=s.get(payload.id);
+      if(task.conversationId){if(this.localData.isConversationDeleted(task.conversationId))throw new Error('This task chat was deleted. The task remains available in Tasks.');return {conversationId:task.conversationId,created:false};}
+      const conversationId=`nethra_task_${task.id.replaceAll('-','_')}`;
+      this.localData.ensureConversation(conversationId);
+      const linked=s.linkConversation(task.id,conversationId);
+      return {conversationId:linked.conversationId,created:linked.conversationId===conversationId};
     }
     if(type==='nethra.create') {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');

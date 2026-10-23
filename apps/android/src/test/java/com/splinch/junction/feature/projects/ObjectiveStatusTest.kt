@@ -60,4 +60,11 @@ class ObjectiveStatusTest {
         assertEquals(ObjectiveLight.GREEN to 2, ObjectiveStatus.overall(list, now))
         assertNull(ObjectiveStatus.overall(listOf(mapOf("status" to "COMPLETED")), now))
     }
+
+    @Test
+    fun conversationStripOnlyShowsAssignedObjectives() {
+        val tasks = listOf(mapOf("id" to "one", "conversationId" to "chat-a"), mapOf("id" to "two", "conversationId" to "chat-b"), mapOf("id" to "three", "conversationId" to "chat-a"))
+        assertEquals(listOf("one", "three"), ObjectiveStatus.forConversation(tasks, "chat-a").map { it["id"] })
+        assertTrue(ObjectiveStatus.forConversation(tasks, "new-chat").isEmpty())
+    }
 }

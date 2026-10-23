@@ -18,6 +18,8 @@ class LocalDataStore {
   markMilestoneDelivered(taskId,seq) { if(!Number.isSafeInteger(seq)||seq<0)throw new Error('Invalid milestone sequence');this.state.milestoneCursors ||= {};if(seq>this.milestoneCursor(taskId)){this.state.milestoneCursors[taskId]=seq;this.save();} }
   queue(kind,id){const values=this.state.syncOutbox[kind];if(!values.includes(id))values.push(id)}
   createConversation(id = null) { const now=Date.now(); const item={ id:typeof id === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(id) ? id : crypto.randomUUID(), title:"New conversation", createdAt:now, updatedAt:now, messages:[] }; this.state.conversations.push(item);this.queue("conversations",item.id); this.lanEvent("conversation.created", { conversation: item }); this.save(); return item; }
+  ensureConversation(id) {if(typeof id!=="string"||!/^[A-Za-z0-9_-]{1,160}$/.test(id))throw new Error('Invalid conversation ID');if(this.state.conversationTombstones.some(item=>item.id===id))throw new Error('This task chat was deleted');return this.conversation(id)||this.createConversation(id);}
+  isConversationDeleted(id) {return this.state.conversationTombstones.some(item=>item.id===id);}
   // telemetry is local-only run metadata (speed, duration, tools). It is never
   // part of the shared message contract, so it does not leave this PC.
   addMessage(id, role, content, provenance, telemetry = null) {return this.addMessageOnce(id,crypto.randomUUID(),role,content,provenance,telemetry).message;}

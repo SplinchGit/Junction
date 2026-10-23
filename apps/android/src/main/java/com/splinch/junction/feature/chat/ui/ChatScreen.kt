@@ -157,7 +157,10 @@ fun ChatScreen(
     var objectivesOpen by rememberSaveable { mutableStateOf(false) }
     var confirmStop by remember { mutableStateOf(false) }
     val taskList by ObjectiveStatusMonitor.objectives.collectAsState()
+    val currentSessionId by chatManager.sessionId.collectAsState()
+    val linkedTasks = ObjectiveStatus.forConversation(taskList, currentSessionId)
     val taskHostConnected by ObjectiveStatusMonitor.connected.collectAsState()
+    var objectiveFocusId by remember { mutableStateOf<String?>(null) }
     var objectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -185,11 +188,14 @@ fun ChatScreen(
         )
     }
     if (objectivesOpen) {
-        ModalBottomSheet(onDismissRequest = { objectivesOpen = false }) {
+        ModalBottomSheet(onDismissRequest = { objectivesOpen = false; objectiveFocusId = null }) {
             NethraPanel(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
                 initialGoal = objectiveDraft,
-                onInitialGoalConsumed = { objectiveDraft = null }
+                initialTaskId = objectiveFocusId,
+                conversationId = currentSessionId,
+                onInitialGoalConsumed = { objectiveDraft = null },
+                onOpenChat = { id -> scope.launch { chatManager.switchToSession(id); objectivesOpen = false; objectiveFocusId = null } }
             )
         }
     }
@@ -364,6 +370,18 @@ fun ChatScreen(
                             scope.launch { chatManager.clearSession() }
                         }
                     )
+                }
+            }
+        }
+
+        if (linkedTasks.isNotEmpty()) {
+            val task = linkedTasks.first()
+            OutlinedButton(onClick = { objectiveFocusId = task["id"]?.toString(); objectivesOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                StatusDot(ObjectiveStatus.of(task).light)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text((if (linkedTasks.size > 1) "${linkedTasks.size} tasks · " else "") + task["goal"].toString(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(ObjectiveStatus.stepLine(task) ?: ObjectiveStatus.of(task).label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

@@ -13,6 +13,8 @@ enum class ObjectiveLight { GREEN, AMBER, RED, GREY }
 data class ObjectiveStatus(val light: ObjectiveLight, val label: String, val ended: Boolean) {
     companion object {
         private val ENDED = setOf("COMPLETED", "CANCELLED", "FAILED")
+        fun forConversation(objectives: List<Map<*, *>>, conversationId: String): List<Map<*, *>> =
+            objectives.filter { it["conversationId"]?.toString() == conversationId }
 
         fun of(objective: Map<*, *>, now: Long = System.currentTimeMillis()): ObjectiveStatus {
             val status = objective["status"]?.toString().orEmpty()

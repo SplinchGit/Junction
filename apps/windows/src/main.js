@@ -204,7 +204,7 @@ async function createWindowImpl() {
   const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource});
   const reportedOutcomes = new Set();
   nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes)});
-  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,calendar:calendarSource,gmail:gmailSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,deviceCommands,calendar:calendarSource,gmail:gmailSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
   for(const task of nethraStore.list())if(postMilestones(task,nethraStore,localData))scheduleSharedSync();
   nethraScheduler.start();
   for(const [label,item] of [['Calendar source',calendarSource],['Gmail source',gmailSource]])try{item.start();}catch(error){recordStartupIssue(label,error);}

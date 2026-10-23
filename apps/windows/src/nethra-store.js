@@ -68,6 +68,7 @@ class NethraStore {
   /** The objective currently holding the inference lease, if any (at most one runs at a time). */
   liveTaskId() {const lease=this.db.prepare('SELECT taskId,expiresAt FROM lease WHERE singleton=1').get();return lease&&lease.expiresAt>this.now()?lease.taskId:null;}
   get(id) {const row=this.db.prepare('SELECT body FROM tasks WHERE id=?').get(id);if(!row)throw new Error('Unknown Nethra task');return JSON.parse(row.body);}
+  linkConversation(id,conversationId) {return this.transaction(()=>{const task=this.get(id);if(task.conversationId)return structuredClone(task);if(typeof conversationId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(conversationId))throw new Error('Invalid conversation ID');task.conversationId=conversationId;return this.save(task,'CHAT_LINKED',{conversationId});});}
   save(task,kind,detail={}) {task.revision++;task.updatedAt=this.now();this.db.prepare('INSERT INTO tasks VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id,JSON.stringify(task));this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(task.id,this.now(),kind,JSON.stringify(detail));return structuredClone(task);}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {

@@ -8,6 +8,8 @@ import com.splinch.junction.data.database.chat.ChatMessageEntity
 import com.splinch.junction.data.database.chat.ChatSessionEntity
 import com.splinch.junction.data.database.chat.ChatDeletedSessionEntity
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
@@ -22,6 +24,7 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
     private var cycleVersion: String? = null
+    private val syncLock = Mutex()
     var lastError: String? = null
         private set
 
@@ -34,7 +37,7 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
                 try {
                     val pairing = LocalBrainPairingStore.load(context)
                     if (pairing != null) {
-                        cursor = sync(pairing, cursor)
+                        cursor = syncLock.withLock { sync(pairing, cursor) }
                         lastError = null
                     }
                 } catch (error: TimeoutCancellationException) { lastError = "Conversation sync timed out; retrying"; cursor = 0 }
@@ -45,6 +48,19 @@ class PairedConversationSyncManager(context: Context, private val dao: ChatDao) 
                 }
                 delay(if (cursor == 0) retryDelay else 100)
             }
+        }
+    }
+
+    /** Fetch the host's latest chat records before opening a task from its dashboard. */
+    suspend fun syncNow() {
+        val pairing = LocalBrainPairingStore.load(context) ?: error("Pair this phone with your Windows PC first")
+        syncLock.withLock {
+            var cursor = 0
+            repeat(20) {
+                cursor = sync(pairing, cursor)
+                if (cursor == 0) return@withLock
+            }
+            error("Conversation sync needs another pass; try again")
         }
     }
 

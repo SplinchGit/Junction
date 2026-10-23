@@ -56,6 +56,12 @@
 .nethra-task-drawer .panel,.nethra-task-drawer .delegation-card{padding:16px;min-width:0}
 .nethra-task-drawer textarea,.nethra-task-drawer input:not([type=checkbox]){box-sizing:border-box;max-width:100%;width:100%}
 .nethra-task-drawer .objective-policy{display:flex;flex-wrap:wrap;gap:8px}
+#nethra-chat-strip{margin:10px 18px 0;padding:10px 14px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:inherit;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#nethra-chat-strip[hidden]{display:none}
+.task-index-row{display:block;width:100%;padding:8px 0;text-align:left;border:0;background:none;color:var(--text);font:inherit;cursor:pointer}
+.nethra-task-drawer .task-create-details>summary{cursor:pointer;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-weight:600}
+.nethra-task-drawer .task-create-details>form{margin-top:10px}
+.nethra-task-drawer .delegation-card>button:not(.task-index-row){padding:7px 10px;margin:6px 6px 6px 0;border:1px solid #355453;border-radius:8px;background:#182d2b;color:#c4f2e8;font:inherit;cursor:pointer}
 @media(max-width:650px){.nethra-task-drawer{width:100%}}
 @media(prefers-reduced-motion:reduce){.nethra-task-drawer{transition:none}}
 .brand i,.orb{position:relative;background:#10272d;border:1px solid #3bbab0;box-shadow:0 0 28px #32bcb544}

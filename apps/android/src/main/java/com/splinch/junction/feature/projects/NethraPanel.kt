@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.splinch.junction.data.sync.lan.DeviceCommandSync
 import com.splinch.junction.data.sync.lan.NethraClient
+import com.splinch.junction.app.JunctionApplication
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -20,7 +21,7 @@ import java.util.Date
 
 /** The phone controls durable objectives on its paired Windows host. */
 @Composable
-fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onInitialGoalConsumed: () -> Unit = {}) {
+fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, initialTaskId: String? = null, conversationId: String? = null, onInitialGoalConsumed: () -> Unit = {}, onOpenChat: (String) -> Unit = {}) {
     val context = LocalContext.current
     val client = remember(context) { NethraClient(context) }
     val deviceSync = remember(context) { DeviceCommandSync(context) }
@@ -47,12 +48,16 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     var error by remember { mutableStateOf("") }
     var answer by rememberSaveable(selectedId) { mutableStateOf("") }
     var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showCreate by rememberSaveable { mutableStateOf(!initialGoal.isNullOrBlank()) }
+    var showHostDetails by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(initialGoal) {
         if (!initialGoal.isNullOrBlank()) {
             goal = initialGoal
+            showCreate = true
             onInitialGoalConsumed()
         }
     }
+    LaunchedEffect(initialTaskId) { if (initialTaskId != null) selectedId = initialTaskId }
     LaunchedEffect(Unit) {
         ObjectiveStatusMonitor.restore(context)
         objectives = ObjectiveStatusMonitor.objectives.value
@@ -63,7 +68,6 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
         val response = client.request("nethra.list")
         objectives = maps(response["objectives"])
         ObjectiveStatusMonitor.publish(context, objectives)
-        if (selectedId != null && objectives.firstOrNull { it["id"]?.toString() == selectedId }?.get("status") in setOf("COMPLETED", "CANCELLED", "FAILED")) selectedId = null
         settings = response["settings"] as? Map<*, *> ?: emptyMap<String, Any?>()
         selectedId?.let { detail = client.request("nethra.get", mapOf("id" to it)) }
         if (status) {
@@ -130,6 +134,8 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                     finally { busy = false }
                 }
             }) { Text("Refresh objectives") }
+            TextButton(onClick = { showHostDetails = !showHostDetails }) { Text(if (showHostDetails) "Hide PC status" else "PC status and sources") }
+            if (showHostDetails) {
             val thinkingRequired = hostStatus["thinkingRequired"] == true
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
@@ -159,6 +165,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                 val activeCount = objectives.count { it["status"] !in setOf("COMPLETED", "CANCELLED", "FAILED") }
                 Text("${reunion["pendingApprovals"] ?: 0} approval(s) waiting · $activeCount active objective(s)")
             }
+            }
             consents.forEach { consent ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -172,6 +179,8 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                     }
                 }
             }
+            TextButton(onClick = { showCreate = !showCreate }) { Text(if (showCreate) "Hide new objective" else "New objective") }
+            if (showCreate) {
             HorizontalDivider()
             OutlinedTextField(goal, { if (it.length <= 12_000) goal = it }, label = { Text("What should Nethra achieve?") }, minLines = 2, modifier = Modifier.fillMaxWidth(), enabled = !busy)
             OutlinedTextField(criteria, { if (it.length <= 4000) criteria = it }, label = { Text("Success criteria (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
@@ -193,15 +202,33 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             }
             Text("Your PC must be awake and online to run work. Nethra asks for approval before actions that need your permission.")
             Button(enabled = !busy && goal.isNotBlank(), onClick = {
-                perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
+                perform("nethra.create", buildMap { put("goal", goal.trim()); conversationId?.let { put("conversationId", it) }; put("persistent", persistent); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
+            }
             // Open work first (running, then in progress), then the five most recently ended.
             val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
             val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
             val ended = withStatus.filter { it.second.ended }.take(5)
             if (open.isEmpty()) Text("Nethra has no open tasks. Ask her in chat to look after something.")
             (open + ended).forEach { (objective, status) ->
-                OutlinedButton(enabled = !busy, onClick = { selectedId = objective["id"]?.toString() }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(enabled = !busy, onClick = {
+                    val id = objective["id"]?.toString() ?: return@OutlinedButton
+                    selectedId = id
+                    scope.launch {
+                        busy = true
+                        try {
+                            val result = client.request("nethra.openChat", mapOf("id" to id))
+                            val conversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
+                            val app = context.applicationContext as JunctionApplication
+                            if (app.container.database.chatDao().getSessionById(conversationId) == null) app.container.pairedConversationSyncManager.syncNow()
+                            check(app.container.database.chatDao().getSessionById(conversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
+                            refresh()
+                            onOpenChat(conversationId)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
+                        finally { busy = false }
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             StatusDot(status.light)
@@ -214,6 +241,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                         objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3) }
                     }
                 }
+                TextButton(onClick = { selectedId = objective["id"]?.toString() }) { Text("Details and controls") }
             }
             val task = detail?.get("task") as? Map<*, *>
             if (task != null && task["id"]?.toString() == selectedId) {

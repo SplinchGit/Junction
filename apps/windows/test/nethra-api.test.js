@@ -3,7 +3,44 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {NethraStore}=require('../src/nethra-store');
 const {NethraApi}=require('../src/nethra-api');
+const {LocalDataStore}=require('../src/local-data');
 function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-api-'));const store=new NethraStore(dir);t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});return {store,api:new NethraApi({store,runtime:{modelCapabilities:async()=>({known:true,thinking:true})}})};}
+test('opening an objective chat creates one durable association and retries reuse it',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-link-'));
+  const store=new NethraStore(dir),localData=new LocalDataStore(path.join(dir,'local'));
+  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const api=new NethraApi({store,localData,runtime:{}});
+  const task=store.create({goal:'Track coursework'});
+  const first=await api.dispatch('nethra.openChat',{id:task.id},'first','android');
+  const second=await api.dispatch('nethra.openChat',{id:task.id},'second','desktop');
+  assert.equal(first.conversationId,second.conversationId);
+  assert.equal(localData.conversations().length,1);
+  assert.equal((await api.dispatch('nethra.list')).objectives[0].conversationId,first.conversationId);
+  assert.equal((await api.dispatch('nethra.get',{id:task.id},'detail','android')).task.conversationId,first.conversationId);
+  const reopened=new NethraApi({store,localData:new LocalDataStore(path.join(dir,'local')),runtime:{}});
+  assert.equal((await reopened.dispatch('nethra.openChat',{id:task.id})).conversationId,first.conversationId);
+});
+test('a deleted objective chat is not resurrected',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-deleted-'));
+  const store=new NethraStore(dir),localData=new LocalDataStore(path.join(dir,'local'));
+  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const api=new NethraApi({store,localData,runtime:{}}),task=store.create({goal:'Track deadlines'});
+  const first=await api.dispatch('nethra.openChat',{id:task.id});
+  localData.deleteConversation(first.conversationId);
+  await assert.rejects(api.dispatch('nethra.openChat',{id:task.id}),/deleted/i);
+  assert.equal(localData.conversation(first.conversationId),null);
+});
+test('opening after an interrupted JSON-first link reuses the orphan chat',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-recover-'));
+  const store=new NethraStore(dir),localData=new LocalDataStore(path.join(dir,'local'));
+  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const task=store.create({goal:'Stay on top of coursework'});
+  const id=`nethra_task_${task.id.replaceAll('-','_')}`;
+  localData.createConversation(id);
+  const api=new NethraApi({store,localData,runtime:{}});
+  assert.equal((await api.dispatch('nethra.openChat',{id:task.id})).conversationId,id);
+  assert.equal(localData.conversations().length,1);
+});
 test('paired phone creates durable objectives but cannot grant itself PC read roots',async t=>{const {api,store}=fixture(t);await assert.rejects(api.dispatch('nethra.create',{goal:'Research housing',readRoots:['C:/Users']},'bad','android'),/Windows/);const {task}=await api.dispatch('nethra.create',{goal:'Research housing'},'create','android');assert.equal(store.get(task.id).goal,'Research housing');assert.deepEqual(store.get(task.id).readRoots,[]);});
 test('replayed creates preserve a single objective and reject changed goals',async t=>{const {api,store}=fixture(t);const a=await api.dispatch('nethra.create',{goal:'Research housing'},'create');const b=await api.dispatch('nethra.create',{goal:'Research housing'},'create');assert.equal(a.task.id,b.task.id);assert.equal(store.list().length,1);await assert.rejects(api.dispatch('nethra.create',{goal:'Different goal'},'create'));});
 test('thinking preference is persisted and startup remains a Windows setting',async t=>{const {api,store}=fixture(t);await api.dispatch('nethra.settings',{thinking:true},'think','android');assert.equal(store.settings().thinking,true);await assert.rejects(api.dispatch('nethra.settings',{persistentStartup:true},'start','android'),/Windows/);await assert.rejects(api.dispatch('nethra.settings',{thinking:'yes'}),/thinking/);});

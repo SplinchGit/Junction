@@ -44,13 +44,18 @@ app.on("browser-window-created", (_event, window) => {
         await window.junction.deleteConversation(chat.id);
         showView('chat');document.getElementById('objective-status').click();
         const goal=document.querySelector('#nethra-task-drawer textarea[aria-label="Objective"]');
-        goal.value='Offline Nethra objective';goal.form.requestSubmit();
+        goal.closest('details').open=true;goal.value='Offline Nethra objective';goal.form.requestSubmit();
         let objective;
         for(let attempt=0;attempt<100&&!objective;attempt++){
           objective=(await window.junction.nethra('nethra.list')).objectives.find(t=>t.goal==='Offline Nethra objective');
           if(!objective)await new Promise(resolve=>setTimeout(resolve,10));
         }
         if(!objective)throw new Error('Nethra form did not create its objective');
+        const link=await window.junction.nethra('nethra.openChat',{id:objective.id});
+        await openConversation(link.conversationId);
+        for(let attempt=0;attempt<100&&!document.getElementById('nethra-chat-strip')?.textContent.includes('Offline Nethra objective');attempt++)await new Promise(resolve=>setTimeout(resolve,20));
+        const linkedStrip=document.getElementById('nethra-chat-strip')?.textContent.includes('Offline Nethra objective');
+        objective=(await window.junction.nethra('nethra.get',{id:objective.id})).task;
         const paused=await window.junction.nethra('nethra.control',{id:objective.id,action:'pause',revision:objective.revision});
         const resumed=await window.junction.nethra('nethra.control',{id:objective.id,action:'resume',revision:paused.task.revision});
         const cancelled=await window.junction.nethra('nethra.control',{id:objective.id,action:'cancel',revision:resumed.task.revision});
@@ -59,7 +64,7 @@ app.on("browser-window-created", (_event, window) => {
         document.getElementById('objective-status').click();
         document.getElementById('objective-status').click();
         for(let attempt=0;attempt<100&&document.querySelector('#nethra-task-drawer article[data-objective-id="'+objective.id+'"]');attempt++)await new Promise(resolve=>setTimeout(resolve,10));
-        const completedHidden=!document.querySelector('#nethra-task-drawer article[data-objective-id="'+objective.id+'"]');
+        const completedVisible=!!document.querySelector('#nethra-task-drawer article[data-objective-id="'+objective.id+'"]');
         const workControls=['refresh-delegations','plan-delegation','plan-mafioso','delegation-list','foreman-projects'].every(id=>!!document.getElementById(id));
         showView('chat');
         const options=document.getElementById('chat-options');
@@ -77,12 +82,12 @@ app.on("browser-window-created", (_event, window) => {
         const sidebarThreads=conversationList?.parentElement===document.querySelector('.shell>aside');
         const fullWidth=Math.abs(document.querySelector('.conversation').getBoundingClientRect().left-document.querySelector('main').getBoundingClientRect().left)<2;
         showView('audit');const threadsHiddenAway=getComputedStyle(conversationList).display==='none';showView('chat');
-        return {views,created:history.some(item=>item.id===chat.id),removed,nethra,completedHidden,workControls,collapsed,expanded,primaryNavigation,standaloneObjectiveScreen,objectiveStatus,objectivePrefill,thinkingFixed,sidebarThreads,fullWidth,threadsHiddenAway,extracted:!document.getElementById('open-mafioso'),hasPreload:typeof window.junction.audit==='function'};
+        return {views,created:history.some(item=>item.id===chat.id),removed,nethra,completedVisible,linkedStrip,workControls,collapsed,expanded,primaryNavigation,standaloneObjectiveScreen,objectiveStatus,objectivePrefill,thinkingFixed,sidebarThreads,fullWidth,threadsHiddenAway,extracted:!document.getElementById('open-mafioso'),hasPreload:typeof window.junction.audit==='function'};
       })()`);
       assert.deepEqual(result.views, ["chat", "audit", "feed", "projects", "context", "settings"]);
       assert.deepEqual(result.primaryNavigation,["chat","audit"]);
       assert.equal(result.standaloneObjectiveScreen,false,'standalone objective screen removed');
-      for (const key of ["created", "removed", "nethra", "completedHidden", "workControls", "collapsed", "expanded", "objectiveStatus", "objectivePrefill", "thinkingFixed", "sidebarThreads", "fullWidth", "threadsHiddenAway", "extracted", "hasPreload"]) assert.equal(result[key], true, key);
+      for (const key of ["created", "removed", "nethra", "completedVisible", "linkedStrip", "workControls", "collapsed", "expanded", "objectiveStatus", "objectivePrefill", "thinkingFixed", "sidebarThreads", "fullWidth", "threadsHiddenAway", "extracted", "hasPreload"]) assert.equal(result[key], true, key);
       assert.deepEqual(errors, [], "Renderer errors");
       const {NethraStore}=require('../src/nethra-store');
       const waitingStore=new NethraStore(path.join(directory,'nethra'));
@@ -93,7 +98,7 @@ app.on("browser-window-created", (_event, window) => {
         if(document.getElementById('nethra-task-drawer').classList.contains('open'))document.getElementById('objective-status').click();
         document.getElementById('objective-status').click();
         let input;
-        for(let i=0;i<100&&!input;i++){input=document.querySelector('textarea[aria-label="Answer Nethra"]');if(!input)await new Promise(resolve=>setTimeout(resolve,20));}
+        for(let i=0;i<100&&!input;i++){const waiting=document.querySelector('#nethra-task-drawer article[data-objective-id="${waiting.id}"] .task-index-row');if(waiting&&waiting.getAttribute('aria-expanded')==='false')waiting.click();input=document.querySelector('textarea[aria-label="Answer Nethra"]');if(!input)await new Promise(resolve=>setTimeout(resolve,20));}
         if(!input)throw Error('Owner answer field missing');
         input.focus();input.value='Owner answer in progress';
         await new Promise(resolve=>setTimeout(resolve,5500));
