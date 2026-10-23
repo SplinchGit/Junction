@@ -3,12 +3,12 @@ const { normalizeLocalModel } = require("./model-catalog");
 
 const crypto = require("node:crypto");
 const LOCAL_SOURCE = "junction_local_llm_v2";
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS = 15_000;
 const LEASE_MS = 90_000;
 const OLLAMA_TIMEOUT_MS = 120_000;
 const STREAM_FLUSH_MS = 750;
 const MAX_RESPONSE_CHARS = 48_000;
-const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 function decode(value) {
   if (!value) return undefined;

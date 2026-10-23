@@ -150,15 +150,15 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
 
     override suspend fun readUntrusted(content: String, sourceHint: String) = null
     companion object {
-        const val PC_OFFLINE_ERROR_MESSAGE = "Your Junction PC is offline. Junction starts automatically when you sign in to Windows; open it on the PC and try again."
+        const val PC_OFFLINE_ERROR_MESSAGE = "Junction could not confirm a recent PC heartbeat through Firebase. The PC may be online while the relay is unavailable or over quota. Try the paired direct connection, or check Local Nethra Brain status on the PC."
         const val SOURCE = "junction_local_llm_v2"
         const val MAX_CONTEXT_BLOCKS = 8
         const val MAX_BLOCK_CHARS = 2_000
         const val AGENT_REQUEST_TIMEOUT_MS = 480_000L
-        // The desktop relay updates its signed-in heartbeat every 15 seconds.
-        // This generous window tolerates a brief network handover without
-        // making the first phone message wait for the full request timeout.
-        const val PC_ONLINE_WINDOW_MS = 45_000L
+        // The desktop renews presence every minute to stay within the relay's
+        // write budget. Allow a missed renewal and network handover, but do not
+        // treat an hours-old Firestore document as proof that the PC is online.
+        const val PC_ONLINE_WINDOW_MS = 150_000L
         const val LOCAL_AGENT_SIGNAL = "junction_local_agent"
     }
 }
