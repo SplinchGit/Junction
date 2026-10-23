@@ -90,3 +90,15 @@ test('a promise to monitor with no objective behind it is corrected',async()=>{
   assert.equal(created.length,0);
   assert.match(result.content,/Correction: I have not set up ongoing tracking/);
 });
+
+test('re-sending the same request in a conversation continues the active objective',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'agent-dedupe-'));const store=new NethraStore(dir);
+  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+  const goal='Please research Housing First in Falkirk and keep me updated';
+  const first=store.create({goal,conversationId:'conv-d',requestId:'chat-objective-run-1'});
+  const resend=store.create({goal,conversationId:'conv-d',requestId:'chat-objective-run-2'});
+  assert.equal(resend.id,first.id);assert.equal(store.list().length,1);
+  assert.notEqual(store.create({goal,conversationId:'conv-other',requestId:'r3'}).id,first.id);
+  store.control(first.id,'cancel',store.get(first.id).revision,'cancel-1');
+  assert.notEqual(store.create({goal,conversationId:'conv-d',requestId:'r4'}).id,first.id,'a finished objective does not absorb a new request');
+});

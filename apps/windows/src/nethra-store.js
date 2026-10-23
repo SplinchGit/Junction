@@ -78,6 +78,9 @@ class NethraStore {
       const binding=canonical({kind:'create',input}),old=requestId&&this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
       if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
       const existing=this.list();
+      // The same request re-sent in the same conversation (a retry, or a resend while a reply is slow)
+      // continues the active objective instead of starting a duplicate that doubles the inference queue.
+      if(conversationId){const same=existing.find(task=>task.conversationId===conversationId&&!TERMINAL.has(task.status)&&task.goal===goal.trim());if(same){if(requestId)this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(same));return structuredClone(same);}}
       if(existing.length>=this.maxObjectives)throw new Error('Nethra objective storage limit reached; archive or remove completed objectives before creating more.');
       const runnable=existing.filter(task=>!['COMPLETED','CANCELLED','FAILED','PAUSED'].includes(task.status)).length;
       if(runnable>=this.maxRunnableObjectives)throw new Error('Nethra active objective limit reached; pause or finish existing work before creating more.');
