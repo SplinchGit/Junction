@@ -55,7 +55,7 @@ class DeviceCommandRunner(context: Context, private val client: NethraClient) {
         check("relay_pairing", LocalBrainPairingStore.load(context) != null)
         check("notifications", NotificationManagerCompat.from(context).areNotificationsEnabled())
         check("database", context.getDatabasePath("junction.db").exists())
-        runCatching { client.request("nethra.status") }.fold(
+        captureDeviceCommandResult { client.request("nethra.status") }.fold(
             { check("host_round_trip", it["agent"] == "Nethra", "model=${it["model"]}, scheduler=${it["schedulerRunning"]}") },
             { check("host_round_trip", false, it.message.orEmpty()) }
         )

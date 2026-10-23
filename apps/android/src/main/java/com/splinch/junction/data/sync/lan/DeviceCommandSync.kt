@@ -10,9 +10,15 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.splinch.junction.R
 import com.splinch.junction.app.MainActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
+
+internal suspend fun <T> captureDeviceCommandResult(block: suspend () -> T): Result<T> =
+    try { Result.success(block()) }
+    catch (cancelled: CancellationException) { throw cancelled }
+    catch (failure: Exception) { Result.failure(failure) }
 
 /**
  * Pulls signed PC commands over whichever transport NethraClient reaches (LAN
@@ -39,11 +45,14 @@ class DeviceCommandSync(context: Context) {
             when (val outcome = DeviceCommandVerifier.verify(envelope, pairing.certificateSha256, pairing.instanceId, deviceId, now) { seen().has(it) }) {
                 is DeviceCommandVerifier.Outcome.Accepted -> {
                     val command = outcome.command
-                    markSeen(command.id, command.expiresAt)
-                    if (command.tier == "CONFIRM") holdForOwner(command)
+                    if (command.tier == "CONFIRM") {
+                        holdForOwner(command)
+                        markSeen(command.id, command.expiresAt)
+                    }
                     else {
-                        val result = runCatching { DeviceCommandRunner(context, client).execute(command) }
+                        val result = captureDeviceCommandResult { DeviceCommandRunner(context, client).execute(command) }
                         queueResult(command.id, if (result.isSuccess) "SUCCEEDED" else "FAILED", result.getOrElse { JSONObject().put("error", it.message.orEmpty().take(300)) }, command.expiresAt)
+                        markSeen(command.id, command.expiresAt)
                     }
                     handled++
                 }
@@ -72,7 +81,7 @@ class DeviceCommandSync(context: Context) {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_BASE + Math.floorMod(id.hashCode(), 1000))
         val result = JSONObject().put("approved", approved).put("versionCode", consent.getInt("versionCode")).put("sha256", consent.getString("sha256"))
         queueResult(id, if (approved) "SUCCEEDED" else "REJECTED", result, consent.getLong("expiresAt"))
-        runCatching { flush() }
+        captureDeviceCommandResult { flush() }
     }
 
     private fun holdForOwner(command: DeviceCommandVerifier.Command) {
@@ -100,7 +109,7 @@ class DeviceCommandSync(context: Context) {
         for (id in all.keys().asSequence().toList()) {
             val entry = all.getJSONObject(id)
             if (entry.optBoolean("reported")) continue
-            val reported = runCatching {
+            val reported = captureDeviceCommandResult {
                 client.request("nethra.device.result", mapOf("deviceId" to identity.deviceId(), "id" to id, "state" to entry.getString("state"), "result" to entry.getJSONObject("result")))
             }.isSuccess
             if (reported) saveResults(results().also { it.optJSONObject(id)?.put("reported", true) })
