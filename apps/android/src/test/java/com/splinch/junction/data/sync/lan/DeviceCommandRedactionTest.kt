@@ -9,15 +9,15 @@ class DeviceCommandRedactionTest {
     @Test
     fun removesCredentialsAndAddressesFromLogs() {
         val raw = """
-            I/Okhttp: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig
-            D/Auth: token=ya29.a0AfH6SMBxyz-123
-            W/Firebase: key AIzaSyD4f8g9h0j1k2l3m4n5o6p7q8r9s0t
+            I/Okhttp: Authorization: Bearer example-bearer-value
+            D/Auth: token=example-token-value
+            W/Firebase: api_key=example-api-key-value
             I/Sync: signed in as owner.person@example.com
-            D/Relay: ciphertext QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0NTY3ODkw
-            E/Junction: password: hunter2
+            D/Relay: ciphertext AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+            E/Junction: password: example-password-value
         """.trimIndent()
         val clean = DeviceCommandRunner.redact(raw)
-        listOf("eyJhbGci", "ya29.", "AIzaSy", "owner.person@example.com", "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0NTY3ODkw", "hunter2").forEach {
+        listOf("example-bearer-value", "example-token-value", "example-api-key-value", "owner.person@example.com", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "example-password-value").forEach {
             assertFalse("leaked $it", clean.contains(it))
         }
         assertTrue(clean.contains("[email]"))
