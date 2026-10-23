@@ -267,7 +267,7 @@ service cloud.firestore {
           && request.resource.data.ciphertext is string && request.resource.data.ciphertext.size() <= 60000
           && request.resource.data.nonce is string && request.resource.data.nonce.size() <= 64;
         allow update: if isBrainPc()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','thinkingCiphertext','thinkingNonce','tokensPerSecond','partialCiphertext','partialNonce','streamSequence','leaseUntilMs','error'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','responseCiphertext','responseNonce','thinkingCiphertext','thinkingNonce','telemetryCiphertext','telemetryNonce','tokensPerSecond','partialCiphertext','partialNonce','streamSequence','leaseUntilMs','error'])
           && request.resource.data.status in ['running','streaming','done','error','cancelled'];
         allow update: if request.auth != null && request.auth.uid == resource.data.clientUid
           && resource.data.status in ['pending','running','streaming']

@@ -77,7 +77,7 @@ class LocalBrainRelay {
     if (!response.ok) {
       const detail = body?.error || (Array.isArray(body) ? body.find(item => item.error)?.error : null);
       if (response.status === 429 || detail?.status === "RESOURCE_EXHAUSTED") this.retryAfter = this.now() + 5 * 60_000;
-      throw new Error(detail?.message || `Junction relay request failed (${response.status}).`);
+      throw Object.assign(new Error(detail?.message || `Junction relay request failed (${response.status}).`), { status: response.status });
     }
     return body || {};
   }
@@ -227,7 +227,16 @@ class LocalBrainRelay {
       const thought = thinking.trim(), encryptedThinking = thought ? crypt(state.key, `JBP1|${state.brainId}|${id}|thinking`, Buffer.from(thought.slice(0, MAX_RESPONSE_CHARS)), null, true) : null;
       const tokensPerSecond = Number(final?.eval_count) && Number(final?.eval_duration) ? (Number(final.eval_count) / (Number(final.eval_duration) / 1e9)).toFixed(1) : "";
       const encryptedTelemetry = telemetry ? crypt(state.key, `JBP1|${state.brainId}|${id}|telemetry`, Buffer.from(JSON.stringify(telemetry)), null, true) : null;
-      await this.update(item.document, state.session, { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", telemetryCiphertext: encryptedTelemetry?.ciphertext || "", telemetryNonce: encryptedTelemetry?.nonce || "", tokensPerSecond, leaseUntilMs: 0 }, null);
+      const done = { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", tokensPerSecond, leaseUntilMs: 0 };
+      const telemetryFields = encryptedTelemetry && !this.telemetryRejected ? { telemetryCiphertext: encryptedTelemetry.ciphertext, telemetryNonce: encryptedTelemetry.nonce } : {};
+      try { await this.update(item.document, state.session, { ...done, ...telemetryFields }, null); }
+      catch (error) {
+        // Security rules that predate encrypted telemetry reject those two fields. The reply
+        // matters more than its metrics, so deliver it without them and stop sending them.
+        if (error.status !== 403 || !Object.keys(telemetryFields).length) throw error;
+        this.telemetryRejected = true;
+        await this.update(item.document, state.session, done, null);
+      }
       runStats.completedAt = this.now();
     } catch (error) {
       if (!claimed) { this.lastError = error.message; return; }
