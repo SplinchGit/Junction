@@ -10,8 +10,8 @@ test('phone deployment describes actual local tools without inventing phone acce
   assert.match(context,/web_search/);
   assert.match(context,/not connected to this model/);assert.match(context,/never message bodies/);assert.match(context,/Nothing in Junction can send email/);
   assert.match(context,/approval/);
-  assert.match(context,/Nethra is Junction's persistent primary agent/);
-  assert.match(context,/Nethra status/);
+  assert.match(context,/You are one agent/);assert.match(context,/start_objective/);
+  assert.doesNotMatch(context,/Nethra is Junction's persistent primary agent/);
   assert.doesNotMatch(context,/delegate_to_codex/);
 });
 test('deployment rejects arbitrary surface text and bounds project data to this conversation',()=>{

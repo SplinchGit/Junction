@@ -188,7 +188,12 @@ async function createWindowImpl() {
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
   const createCodeDelegation = async (_instruction,owner={}) => {const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content:owner.goal||'',conversationId:owner.conversationId,requestId:crypto.randomUUID()});if(!result?.id||result.status==='NEEDS_SCOPE')throw new Error('Name the local file, folder or repository in the owner coding request.');return result;};
-  const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, auditPath });
+  // Chat is Nethra's front door: it can start and inspect her durable objectives.
+  const objectives = {
+    create: async ({ goal, successCriteria, conversationId, requestId, surface }) => (await nethraApi.dispatch('nethra.create', { goal, successCriteria, conversationId, persistent: true }, requestId, String(surface || '').startsWith('android') ? 'android' : 'desktop')).task,
+    list: async () => (await nethraApi.dispatch('nethra.list', {}, crypto.randomUUID(), 'desktop')).objectives
+  };
+  const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
   localAgent = new LocalAgentRuntime({ toolRegistry });
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
   let deviceSigner=null;
@@ -196,7 +201,8 @@ async function createWindowImpl() {
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
   const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource});
-  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options)});
+  const reportedOutcomes = new Set();
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes)});
   nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,calendar:calendarSource,gmail:gmailSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
   nethraScheduler.start();
   for(const [label,item] of [['Calendar source',calendarSource],['Gmail source',gmailSource]])try{item.start();}catch(error){recordStartupIssue(label,error);}
@@ -336,6 +342,21 @@ async function reconcilePendingDeregistration(){
 async function syncSharedState(){
   if(sharedSyncPromise)return sharedSyncPromise;
   sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};mainWindow?.webContents.send("junction:conversations-changed");return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
+}
+/** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
+function reportObjectiveOutcome(task, reported) {
+  if (!task.conversationId || !localData?.conversation(task.conversationId)) return;
+  const key = `${task.id}:${task.status}:${task.summary || ''}`;
+  if (reported.has(key)) return;
+  reported.add(key);
+  const goal = String(task.goal || '').slice(0, 160), summary = String(task.summary || '').trim().slice(0, 1200);
+  const text = task.status === 'COMPLETED' ? `Done: "${goal}".${summary ? `\n\n${summary}` : ''}`
+    : task.status === 'WAITING_FOR_USER' ? `I need your input on "${goal}".${summary ? `\n\n${summary}` : ''}\n\nAnswer or approve it in Tasks.`
+    : task.status === 'BLOCKED' ? `"${goal}" is blocked.${summary ? `\n\n${summary}` : ''}\n\nOpen Tasks to unblock it.`
+    : `"${goal}" stopped with an error.${summary ? `\n\n${summary}` : ''}`;
+  localData.addMessage(task.conversationId, 'assistant', text, 'JUNCTION');
+  scheduleSharedSync();
+  mainWindow?.webContents.send('junction:conversations-changed');
 }
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 

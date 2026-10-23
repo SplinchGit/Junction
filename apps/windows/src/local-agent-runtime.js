@@ -169,7 +169,7 @@ class LocalAgentRuntime {
     const thinkingOnly = model === "qwen3:30b";
     const requestedThinking = thinkingOnly || (typeof options.thinking === "boolean" ? options.thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
     const thinking = thinkingOnly || (requestedThinking && (await this.modelCapabilities(model, signal)).thinking);
-    const timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), budgetStop = new AbortController(), combined = AbortSignal.any([...(signal ? [signal] : []), timeout, budgetStop.signal]);
+    const streamStarted = Date.now(), timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), budgetStop = new AbortController(), combined = AbortSignal.any([...(signal ? [signal] : []), timeout, budgetStop.signal]);
     const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, ...(tools?.length ? {tools} : {}), ...(format ? {format} : {}), stream: Boolean(onText || options.onThinking), think: thinking, keep_alive: MODEL_KEEP_ALIVE, options: { temperature: 0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: Number.isFinite(options.num_predict) ? Math.max(thinkingOnly ? 1024 : 1,Math.min(3072,Math.floor(options.num_predict))) : thinkingOnly ? 1536 : format ? 160 : 350 } }) });
     if (response.ok && (onText || options.onThinking) && response.body) {
       const decoder = new TextDecoder(); let buffer = "", content = "", thinking = "", final = null, thinkingEvents = 0; const calls = new Map();
@@ -200,7 +200,7 @@ class LocalAgentRuntime {
       try {
         for await (const chunk of response.body) { buffer += decoder.decode(chunk, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); for (const line of lines) { await consume(line); if (budgetStop.signal.aborted) break; } if (budgetStop.signal.aborted) break; }
       } catch (error) { if (!budgetStop.signal.aborted) throw error; }
-      if (budgetStop.signal.aborted) return this.answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingEvents);
+      if (budgetStop.signal.aborted) return this.answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingEvents, Date.now() - streamStarted);
       buffer += decoder.decode(); await consume(buffer);
       if (!final) throw new Error("The local model stream ended before completion. Please retry.");
       return { ...final, message: { role: "assistant", content, thinking, ...(calls.size ? { tool_calls: [...calls.entries()].sort(([a],[b])=>a-b).map(([,call])=>call) } : {}) } };
@@ -241,11 +241,13 @@ class LocalAgentRuntime {
    * <think>...</think> with no end marker, so the model resumes straight into its answer.
    * Ollama reuses the cached prompt prefix, so this costs well under a second of prompt reading.
    */
-  async answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingTokens) {
+  async answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingTokens, thinkingMs = 0) {
     const closed = `${thinking.trim()}\n\nThat is enough reasoning; I will answer now.`;
     const remaining = Math.max(256, (Number.isFinite(options.num_predict) ? options.num_predict : 1536) - thinkingTokens);
     const payload = await this.chatOnce(model, [...messages, { role: "assistant", thinking: closed, content: "" }], tools, signal, onText, format, { ...options, thinkingBudget: undefined, num_predict: remaining });
-    return { ...payload, eval_count: Number(payload.eval_count || 0) + thinkingTokens, thinkingBudgetReached: true, message: { ...payload.message, thinking: `${thinking}${payload.message?.thinking || ""}` } };
+    // The stopped stream sent no final stats, so count its wall time with its tokens; adding the
+    // tokens alone reported ~165 tok/s for a ~20 tok/s model.
+    return { ...payload, eval_count: Number(payload.eval_count || 0) + thinkingTokens, eval_duration: Number(payload.eval_duration || 0) + thinkingMs * 1e6, thinkingBudgetReached: true, message: { ...payload.message, thinking: `${thinking}${payload.message?.thinking || ""}` } };
   }
   async withInference(callback, signal, options) {return inferenceCoordinator.run(callback,signal,options);}
   async run(request) {
@@ -412,7 +414,7 @@ class LocalAgentRuntime {
           if (call.name === "web_search" && ++searches > this.limits.searches) throw new Error("Web-search budget exhausted. Use existing evidence and state uncertainty.");
           if (call.name === "delegate_to_codex" && ++delegations > this.limits.delegations) throw new Error("Codex delegation budget exhausted. Do not delegate again.");
           const publicEvidence = ledgers.flatMap(ledger => ledger.sources || []).flatMap(source => [source.title, source.snippet, ...(source.passages || []).map(p => p.text)]).join(" ");
-          content = (await waitWithSignal(this.tools.execute(call.name, call.args, { goal: ownerGoal, conversationId, ledgers, searches, allowCodeDelegation, audit, validateSearch: query => validateSearchEgress(query, searchGrounding, publicEvidence) }),runSignal)).content;
+          content = (await waitWithSignal(this.tools.execute(call.name, call.args, { goal: ownerGoal, conversationId, runId, surface, ledgers, searches, allowCodeDelegation, audit, validateSearch: query => validateSearchEgress(query, searchGrounding, publicEvidence) }),runSignal)).content;
           executedTools.push(call.name);
         } catch (error) { if(runSignal.aborted)throw runSignal.reason || abortError();if (call.name === "web_search" && !ordinaryGreeting) searchFailed = true; content = JSON.stringify({ ok: false, tool: call.name, error: String(error.message || error).slice(0, 500) }); this.tools.audit("agent_tool_result", call.name, "failure", error.message, audit); }
         if (call.name === "web_search" && /\"ok\":true/.test(String(content))) {

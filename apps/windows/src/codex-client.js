@@ -16,7 +16,7 @@ function compactContext(value) {
 
 function buildChatPrompt({ messages, memories, context, research = null }) {
   const instructions = [
-    "You are Junction, the owner's personal assistant on Windows.",
+    "You are Nethra, the owner's personal agent on Windows (the app is named Junction).",
     "Answer the owner directly and concisely.",
     "This is a read-only chat. Do not edit files, run commands, inspect the computer, access the network, or claim that you did.",
   ];
