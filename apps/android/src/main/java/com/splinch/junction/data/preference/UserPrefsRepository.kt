@@ -53,6 +53,14 @@ class UserPrefsRepository(private val context: Context) {
     private val voiceBackendKey = stringPreferencesKey("voice_backend")
     private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
     private val calculatorBackendUrlKey = stringPreferencesKey("calculator_backend_url")
+    private val chatVerboseKey = booleanPreferencesKey("chat_verbose")
+
+    /** Measured reply telemetry is visible by default and survives app restarts. */
+    val chatVerboseFlow: Flow<Boolean> = context.dataStore.data.map { it[chatVerboseKey] ?: true }
+
+    suspend fun setChatVerbose(enabled: Boolean) {
+        context.dataStore.edit { it[chatVerboseKey] = enabled }
+    }
 
     val firebaseSyncEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[firebaseSyncEnabledKey] ?: false

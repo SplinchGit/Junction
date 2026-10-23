@@ -10,7 +10,7 @@ class NethraScheduler {
   start() {if(this.timer)return;this.stopping=false;const poll=()=>this.tick().catch(error=>{this.lastError=error;});this.timer=setInterval(poll,this.pollMs);this.timer.unref?.();poll();}
   tick() {if(this.stopping)return Promise.resolve();if(this.running)return this.running;this.running=this.run().finally(()=>{this.running=null;});return this.running;}
   async run() {
-    if(this.now()-this.lastAttentionSweep>=15_000){this.lastAttentionSweep=this.now();try{this.attention.reconcileCheckIns();if(this.attention.errors.length)this.lastError=new Error(`Check-in sweep failed for ${this.attention.errors.length} objective(s): ${this.attention.errors[0].message}`);}catch(error){this.lastError=error;}}
+    if(this.now()-this.lastAttentionSweep>=15_000){this.lastAttentionSweep=this.now();try{this.attention.reconcileCheckIns();this.attention.reconcileInitiative();if(this.attention.errors.length)this.lastError=new Error(`Attention sweep failed for ${this.attention.errors.length} objective(s): ${this.attention.errors[0].message}`);}catch(error){this.lastError=error;}}
     const claim=this.store.claim(this.owner,LEASE_MS);if(!claim)return;
     const {task,token}=claim,controller=new AbortController();this.controller=controller;
     const started=this.now(),settings=this.store.settings();
@@ -39,6 +39,20 @@ class NethraScheduler {
       if(['ACTIVE','PLANNING','CREATED'].includes(patch.status))patch.status='SLEEPING';
       if(!task.persistent&&patch.status==='SLEEPING')patch.status='PAUSED';
       patch.retryCount=0;
+      const pending=patch.pendingSteps??live.pendingSteps??[];
+      const progressed=(live.lastMeaningfulProgressAt||0)>(task.lastMeaningfulProgressAt||0)
+        ||(Array.isArray(patch.evidence)&&patch.evidence.length>(live.evidence||[]).length)
+        ||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(live.completedSteps||[]).length);
+      const repeatedShortWake=patch.status==='SLEEPING'&&pending.length>0&&!progressed
+        &&(!Number.isFinite(patch.nextWakeAt)||patch.nextWakeAt<=this.now()+settings.minWakeMs);
+      patch.noProgressCycles=repeatedShortWake?(live.noProgressCycles||0)+1:0;
+      // A source/check-in wake already revisited progress known at claim time.
+      patch.lastInitiativeProgressAt=Math.max(live.lastInitiativeProgressAt||0,task.lastMeaningfulProgressAt||0);
+      patch.lastInitiativeAt=this.now();
+      if(patch.noProgressCycles>=6){
+        patch.status='WAITING_FOR_USER';
+        patch.summary='No meaningful progress after repeated short wake cycles. What should Nethra try next?';
+      }
       patch.nextWakeAt=patch.status==='SLEEPING'?clampWake(patch.nextWakeAt,this.now(),settings.minWakeMs,settings.maxWakeMs):null;
       // Attention observed during this cycle was not claimed; never sleep past it.
       const attentionDue=patch.status==='SLEEPING'?this.store.pendingAttentionDue?.(task.id):null;

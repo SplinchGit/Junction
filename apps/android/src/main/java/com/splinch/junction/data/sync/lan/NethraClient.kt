@@ -40,7 +40,9 @@ class NethraClient(context: Context) {
         // Persist a digest-bound id before sending so a process restart cannot replay a mutation as new.
         val (binding, requestId) = if (mutation) unresolved.getOrCreate(type, payload) else "" to UUID.randomUUID().toString()
         val pairing = identity.loadPairing()
-        if (pairing != null && LanConnectionMode.fromStored(keys.getSecret("lan_mode_v1")) == LanConnectionMode.WIFI) {
+        // The paired LAN path is always attempted first. A saved relay preference
+        // must not strand objectives on an otherwise reachable private network.
+        if (pairing != null) {
             val discovered = mutableListOf<LanEndpoint>()
             val discovery = LanDiscovery(context)
             try {
@@ -51,10 +53,13 @@ class NethraClient(context: Context) {
                 }) }
                 delay(1_500)
             } finally { discovery.stop() }
+            val lanDeadline = android.os.SystemClock.elapsedRealtime() + 9_000L
             for (candidate in lanCandidates(synchronized(discovered) { discovered.toList() }, pairing, keys.getSecret("lan_manual_host_v1")).take(4)) {
+                val remaining = lanDeadline - android.os.SystemClock.elapsedRealtime()
+                if (remaining <= 0) break
                 val transport = LanTransport(identity)
                 try {
-                    val response = withTimeoutOrNull(7_000) {
+                    val response = withTimeoutOrNull(minOf(remaining, 7_000L)) {
                         transport.connect(candidate).getOrThrow()
                         transport.request(type, payload, timeoutMs = 6_000, requestId = requestId)
                     }

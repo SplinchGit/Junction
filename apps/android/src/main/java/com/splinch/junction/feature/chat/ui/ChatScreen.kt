@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -66,6 +68,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -106,6 +109,8 @@ import com.splinch.junction.assistant.provider.ProviderSelection
 import com.splinch.junction.assistant.tools.RiskTier
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
+import com.splinch.junction.data.preference.UserPrefsRepository
+import com.splinch.junction.feature.projects.NethraPanel
 import com.splinch.junction.feature.voice.ui.BluetoothThrower
 import com.splinch.junction.ui.component.JunctionTextField
 import java.time.Instant
@@ -123,13 +128,13 @@ import kotlinx.coroutines.withContext
  */
 private const val BOTTOM_SCROLL_OFFSET = 100_000
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     chatManager: ChatManager,
     onOpenNavigation: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onOpenObjectives: () -> Unit = {},
-    onContinueAsObjective: (String) -> Unit = {},
+    objectivesRequest: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val messages by chatManager.messages.collectAsState()
@@ -143,13 +148,32 @@ fun ChatScreen(
     val voiceSpeaking by chatManager.localVoiceSpeaking.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
+    var forceResearch by rememberSaveable { mutableStateOf(false) }
+    var objectivesOpen by rememberSaveable { mutableStateOf(false) }
+    var objectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val prefs = remember(context) { UserPrefsRepository(context) }
+    val verbose by prefs.chatVerboseFlow.collectAsState(initial = true)
+    val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     var pendingSpeechEnable by remember { mutableStateOf(false) }
     val sendEnabled = input.isNotBlank() || pendingImagePath != null
+
+    LaunchedEffect(objectivesRequest) {
+        if (objectivesRequest > 0) objectivesOpen = true
+    }
+    if (objectivesOpen) {
+        ModalBottomSheet(onDismissRequest = { objectivesOpen = false }) {
+            NethraPanel(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+                initialGoal = objectiveDraft,
+                onInitialGoalConsumed = { objectiveDraft = null }
+            )
+        }
+    }
 
     DisposableEffect(Unit) {
         chatManager.setChatVisible(true)
@@ -209,11 +233,6 @@ fun ChatScreen(
                 modifier = Modifier.weight(1f).padding(start = 8.dp)
             )
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
-                ProviderSwitcher(
-                    providerConfig = providerConfig,
-                    onSwitch = { id, modelId -> scope.launch { chatManager.switchProvider(id, modelId) } }
-                )
                 BluetoothThrower()
                 ConnectionPill(state = connectionState)
                 IconButton(onClick = onOpenSettings) {
@@ -306,14 +325,6 @@ fun ChatScreen(
                     onDismissRequest = { historyMenuOpen = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Nethra objectives") },
-                        onClick = { historyMenuOpen = false; onOpenObjectives() }
-                    )
-                    if (input.isNotBlank()) DropdownMenuItem(
-                        text = { Text("Continue draft as objective") },
-                        onClick = { historyMenuOpen = false; onContinueAsObjective(input.trim()) }
-                    )
-                    DropdownMenuItem(
                         text = { Text("Keep last ${ChatManager.DEFAULT_TRIM_KEEP} messages") },
                         onClick = {
                             historyMenuOpen = false
@@ -395,7 +406,7 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message)
+                    MessageBubble(message, verbose)
                 }
                 streaming?.let { active ->
                     item(key = active.itemId) {
@@ -405,7 +416,8 @@ fun ChatScreen(
                                 timestamp = Instant.now(),
                                 sender = Sender.ASSISTANT,
                                 content = active.content
-                            )
+                            ),
+                            verbose = verbose
                         )
                     }
                 }
@@ -461,8 +473,9 @@ fun ChatScreen(
                 val trimmed = input.trim()
                 if (sendEnabled) {
                     val imagePath = pendingImagePath
-                    scope.launch { chatManager.sendUserMessage(trimmed, imagePath) }
+                    scope.launch { chatManager.sendUserMessage(trimmed, imagePath, forceResearch = forceResearch) }
                     input = ""
+                    forceResearch = false
                     pendingImagePath = null
                     // Emptying the multi-line field returns it to its compact
                     // height; hiding the IME gives the new turn the screen.
@@ -478,7 +491,15 @@ fun ChatScreen(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                 )
             },
-            onRemoveImage = { pendingImagePath = null }
+            onRemoveImage = { pendingImagePath = null },
+            forceResearch = forceResearch,
+            onForceResearchChange = { forceResearch = it },
+            verbose = verbose,
+            onVerboseChange = { enabled -> scope.launch { prefs.setChatVerbose(enabled) } },
+            providerConfig = providerConfig,
+            onSwitchProvider = { id, modelId -> scope.launch { chatManager.switchProvider(id, modelId) } },
+            onOpenObjectives = { objectivesOpen = true },
+            onContinueAsObjective = { objectiveDraft = input.trim(); objectivesOpen = true }
         )
     }
 }
@@ -521,7 +542,7 @@ fun JunctionDrawerContent(
             icon = { Icon(Icons.Default.Build, contentDescription = null) }
         )
         NavigationDrawerItem(
-            label = { Text("Nethra objectives") },
+            label = { Text("Active tasks") },
             selected = false,
             onClick = onOpenObjectives,
             icon = { Icon(Icons.Default.Build, contentDescription = null) }
@@ -599,7 +620,15 @@ fun ChatInputRow(
     sendEnabled: Boolean,
     pendingImagePath: String? = null,
     onAttachImage: () -> Unit = {},
-    onRemoveImage: () -> Unit = {}
+    onRemoveImage: () -> Unit = {},
+    forceResearch: Boolean = false,
+    onForceResearchChange: (Boolean) -> Unit = {},
+    verbose: Boolean = true,
+    onVerboseChange: (Boolean) -> Unit = {},
+    providerConfig: ProviderConfig = ProviderConfig(),
+    onSwitchProvider: (String, String) -> Unit = { _, _ -> },
+    onOpenObjectives: () -> Unit = {},
+    onContinueAsObjective: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -643,8 +672,24 @@ fun ChatInputRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom
         ) {
-            IconButton(onClick = onAttachImage, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Default.Image, contentDescription = "Attach image")
+            var optionsOpen by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { optionsOpen = true }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = "Chat options")
+                }
+                DropdownMenu(expanded = optionsOpen, onDismissRequest = { optionsOpen = false }) {
+                    DropdownMenuItem(text = { Text("Attach image") }, onClick = { optionsOpen = false; onAttachImage() })
+                    DropdownMenuItem(text = { Text(if (forceResearch) "Force research: on" else "Force research: off") },
+                        onClick = { optionsOpen = false; onForceResearchChange(!forceResearch) })
+                    DropdownMenuItem(text = { Text(if (verbose) "Verbose telemetry: on" else "Verbose telemetry: off") },
+                        onClick = { optionsOpen = false; onVerboseChange(!verbose) })
+                    DropdownMenuItem(text = { Text("Thinking on · Qwen3 30B") }, onClick = {}, enabled = false)
+                    DropdownMenuItem(text = { Text("Continue as objective") }, onClick = { optionsOpen = false; onContinueAsObjective() }, enabled = text.isNotBlank())
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("Choose provider and model") }, onClick = {}, enabled = false)
+                    ProviderSwitcher(providerConfig, onSwitchProvider)
+                    DropdownMenuItem(text = { Text("Objectives") }, onClick = { optionsOpen = false; onOpenObjectives() })
+                }
             }
 
             Spacer(Modifier.width(4.dp))
@@ -939,7 +984,7 @@ private fun PlanStepRow(step: Step, showResolvedPayload: Boolean) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, verbose: Boolean = true) {
     val isUser = message.sender == Sender.USER
     val bubbleColor = when (message.sender) {
         Sender.USER -> MaterialTheme.colorScheme.primaryContainer
@@ -999,13 +1044,13 @@ private fun MessageBubble(message: ChatMessage) {
                 // the short "tokens/s" label is only a fallback for providers
                 // that report speed without full run metrics.
                 val metrics = message.telemetry?.takeIf { it.isNotBlank() }
-                if (metrics != null) {
+                if (verbose && metrics != null) {
                     Text(
                         text = metrics,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                     )
-                } else message.tokensPerSecond?.let { speed ->
+                } else if (verbose) message.tokensPerSecond?.let { speed ->
                     Text(
                         text = "${String.format(java.util.Locale.US, "%.1f", speed)} tokens/s",
                         style = MaterialTheme.typography.labelSmall,

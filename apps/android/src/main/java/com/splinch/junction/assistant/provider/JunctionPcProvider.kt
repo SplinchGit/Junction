@@ -18,11 +18,17 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** First-class provider backed by a paired PC Junction brain, never a raw PC URL. */
-class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : LlmProvider {
+class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : LlmProvider, ResearchCapableProvider {
     override val id = "local"
     override val frontierModel: String? = null
 
-    override fun act(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean, conversationId: String?): Flow<LlmEvent> = callbackFlow {
+    override fun act(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean, conversationId: String?): Flow<LlmEvent> =
+        actWithRequestId(context, conversationId, UUID.randomUUID().toString())
+
+    override fun actWithResearch(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean, conversationId: String?, forceResearch: Boolean): Flow<LlmEvent> =
+        actWithRequestId(context, conversationId, UUID.randomUUID().toString(), forceResearch)
+
+    internal fun actWithRequestId(context: List<ContextBlock>, conversationId: String?, requestId: String, forceResearch: Boolean = false): Flow<LlmEvent> = callbackFlow {
         val appContext = FirebaseProvider.applicationContextOrNull()
         val pairing = appContext?.let { LocalBrainPairingStore.load(it) }
         if (appContext == null || pairing == null) {
@@ -40,13 +46,13 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
             ) {
                 error(PC_OFFLINE_ERROR_MESSAGE)
             }
-            val requestId = UUID.randomUUID().toString()
             val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
             val plain = JSONObject().apply {
                 put("model", workhorseModel)
                 put("messages", messages)
                 conversationId?.let { put("conversationId", it) }
                 put("mode", "agent")
+                if (forceResearch) put("forceSearch", true)
             }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)
@@ -94,9 +100,24 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
                             }
                         val tokensPerSecond = snapshot.get("tokensPerSecond")
                             ?.toString()?.toDoubleOrNull()
+                        val metrics = snapshot.getString("telemetryCiphertext")?.takeIf { it.isNotBlank() }?.let { ciphertext ->
+                            val plain = LocalBrainPairingStore.decrypt(
+                                pairing.key, "JBP1|${pairing.brainId}|$requestId|telemetry", ciphertext,
+                                snapshot.getString("telemetryNonce").orEmpty()
+                            )
+                            val json = JSONObject(plain)
+                            json.keys().asSequence().associateWith { key ->
+                                val value = json.get(key)
+                                when (value) {
+                                    is JSONArray -> (0 until value.length()).map { value.get(it).toString() }
+                                    JSONObject.NULL -> null
+                                    else -> value
+                                }
+                            }
+                        }
                         // Persist the authoritative final text after streamed previews.
                         terminal = true
-                        trySend(LlmEvent.TextDone(response, thinking, tokensPerSecond)); trySend(LlmEvent.Done); close()
+                        trySend(LlmEvent.TextDone(response, thinking, HostTelemetry.tokensPerSecond(metrics) ?: tokensPerSecond, telemetry = HostTelemetry.line(metrics))); trySend(LlmEvent.Done); close()
                     }.onFailure { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error("Local Junction returned an invalid encrypted response.")); trySend(LlmEvent.Done); close() }
                     "error" -> { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Error(snapshot.getString("error") ?: "Your Junction PC could not run the local model.")); trySend(LlmEvent.Done); close() }
                     "cancelled" -> { terminal = true; trySend(LlmEvent.Activity("")); trySend(LlmEvent.Done); close() }

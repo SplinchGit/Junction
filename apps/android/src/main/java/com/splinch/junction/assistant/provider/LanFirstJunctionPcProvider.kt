@@ -39,7 +39,7 @@ class LanFirstJunctionPcProvider(
     private val remote: JunctionPcProvider = JunctionPcProvider(workhorseModel),
     private val conversationSync: LanConversationSync? = null,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO)
-) : LlmProvider {
+) : LlmProvider, ResearchCapableProvider {
     private val appContext = context.applicationContext
     override val id: String = "local"
     override val frontierModel: String? = null
@@ -49,18 +49,20 @@ class LanFirstJunctionPcProvider(
         tools: List<ToolDefinition>,
         useFrontier: Boolean,
         conversationId: String?
-    ): Flow<LlmEvent> {
-        val lan = { lanAct(context, tools, useFrontier, conversationId) }
-        return if (LanConnectionMode.fromStored(KeyStorage(appContext).getSecret(LAN_MODE_SECRET)) == LanConnectionMode.FIREBASE) {
-            firebaseWithOfflineLanFallback(remote.act(context, tools, useFrontier, conversationId), lan)
-        } else lan()
+    ): Flow<LlmEvent> = actWithResearch(context, tools, useFrontier, conversationId, false)
+
+    override fun actWithResearch(context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean, conversationId: String?, forceResearch: Boolean): Flow<LlmEvent> {
+        val requestId = UUID.randomUUID().toString()
+        return lanAct(context, tools, useFrontier, conversationId, requestId, forceResearch)
     }
 
     private fun lanAct(
         context: List<ContextBlock>,
         tools: List<ToolDefinition>,
         useFrontier: Boolean,
-        conversationId: String?
+        conversationId: String?,
+        requestId: String,
+        forceResearch: Boolean
     ): Flow<LlmEvent> = callbackFlow {
         val identity = LanIdentityStore(appContext)
         val transport = LanTransport(identity, scope)
@@ -68,6 +70,12 @@ class LanFirstJunctionPcProvider(
         var pairing = identity.loadPairing()
         val damagedTrust = pairing == null && identity.hasPairingRecord()
         val legacy = LocalBrainPairingStore.load(appContext)
+        suspend fun relayFallback() {
+            Log.i(TAG, "Connection stage=relay kind=FALLBACK")
+            trySend(LlmEvent.Activity("Connecting through the encrypted relay"))
+            remote.actWithRequestId(context, conversationId, requestId, forceResearch).collect { trySend(it) }
+            close()
+        }
         Log.i(TAG, "Wi-Fi relay trust: lan=${pairing != null}, legacy=${legacy != null}, damaged=$damagedTrust")
         val discovered = mutableListOf<LanEndpoint>()
         val discovery = LanDiscovery(appContext)
@@ -82,6 +90,7 @@ class LanFirstJunctionPcProvider(
         } finally { discovery.stop() }
         val candidates = synchronized(discovered) { com.splinch.junction.data.sync.lan.lanCandidates(discovered.toList(), pairing, KeyStorage(appContext).getSecret("lan_manual_host_v1")) }
         if (candidates.isEmpty() || (pairing == null && legacy == null)) {
+            if (canUseRelayBeforeSend(legacy != null, damagedTrust, null)) { relayFallback(); return@callbackFlow }
             val error = when {
                 damagedTrust -> "Saved PC trust could not be read. Verify the pairing in Settings."
                 legacy == null -> "Pair this phone with your Junction PC in Settings."
@@ -115,19 +124,22 @@ class LanFirstJunctionPcProvider(
             }
             if (attempt.isSuccess) {
                 authenticated = true
-                Log.i(TAG, "LAN stage=connect kind=CONNECTED address=${candidate.host}:${candidate.port}")
+                Log.i(TAG, "LAN stage=connect kind=CONNECTED")
                 break
             }
             val error = attempt.exceptionOrNull()!!
             if (error is CancellationException && error !is TimeoutCancellationException) throw error
             connectionError = error
             val kind = (error as? LanFailure)?.kind?.name ?: if (error is TimeoutCancellationException) "TIMEOUT" else "UNREACHABLE"
-            Log.w(TAG, "LAN stage=$stage kind=$kind address=${candidate.host}:${candidate.port} cause=${error.cause?.javaClass?.simpleName ?: error.javaClass.simpleName}")
+            Log.w(TAG, "LAN stage=$stage kind=$kind cause=${error.cause?.javaClass?.simpleName ?: error.javaClass.simpleName}")
             // Another NIC/address is useful only for network failure. Never retry rejected trust.
             if (!com.splinch.junction.data.sync.lan.canTryAnotherLanAddress(error)) break
         }
         if (!authenticated) {
             val error = connectionError ?: LanFailure(LanFailureKind.UNREACHABLE, "PC unreachable")
+            if (canUseRelayBeforeSend(legacy != null, damagedTrust, error)) {
+                relayFallback(); return@callbackFlow
+            }
             val missingDiscovery = synchronized(discovered) { discovered.isEmpty() }
             val message = if (missingDiscovery && com.splinch.junction.data.sync.lan.canTryAnotherLanAddress(error))
                 "Your paired PC was not discovered on this Wi-Fi, and its saved address could not be reached. Open Junction on the PC."
@@ -137,7 +149,6 @@ class LanFirstJunctionPcProvider(
         conversationSync?.reconcile(transport)
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
 
-        val requestId = UUID.randomUUID().toString()
         val collector: Job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             transport.events.collect { event ->
                 if (event.requestId != requestId) return@collect
@@ -179,6 +190,7 @@ class LanFirstJunctionPcProvider(
                 "conversationId" to conversationId,
                 "content" to content,
                 "model" to workhorseModel,
+                "forceSearch" to forceResearch,
                 "context" to context.takeLast(MAX_CONTEXT_BLOCKS).map { mapOf("role" to it.role, "content" to it.content.take(MAX_BLOCK_CHARS)) }
             ), requestId)
         } catch (error: Exception) {
@@ -218,6 +230,10 @@ class LanFirstJunctionPcProvider(
         private const val TAG = "JunctionLanProvider"
     }
 }
+
+/** Never retry a request over a second transport once LAN might have received it. */
+internal fun canUseRelayBeforeSend(pairedRelay: Boolean, damagedLanTrust: Boolean, connectionError: Throwable?): Boolean =
+    pairedRelay && !damagedLanTrust && (connectionError == null || com.splinch.junction.data.sync.lan.canTryAnotherLanAddress(connectionError))
 
 internal fun firebaseWithOfflineLanFallback(
     firebase: Flow<LlmEvent>,

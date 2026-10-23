@@ -6,9 +6,19 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.splinch.junction.data.sync.lan.LanFailure
+import com.splinch.junction.data.sync.lan.LanFailureKind
 import org.junit.Test
 
 class LanFirstJunctionPcProviderTest {
+    @Test
+    fun `relay fallback is only allowed before sending and with sound trust`() {
+        assertTrue(canUseRelayBeforeSend(true, false, null))
+        assertTrue(canUseRelayBeforeSend(true, false, LanFailure(LanFailureKind.UNREACHABLE, "unreachable")))
+        assertFalse(canUseRelayBeforeSend(false, false, null))
+        assertFalse(canUseRelayBeforeSend(true, true, null))
+        assertFalse(canUseRelayBeforeSend(true, false, LanFailure(LanFailureKind.AUTHENTICATION, "rejected")))
+    }
     @Test
     fun `stale Firebase offline response retries over LAN`() = runBlocking {
         var lanAttempts = 0

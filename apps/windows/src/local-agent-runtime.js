@@ -21,7 +21,33 @@ const MODEL_KEEP_ALIVE = "2h";
 // can exhaust the whole 1536-token output cap and return no answer at all.
 const THINKING_BUDGET = Object.freeze({ simple: 256, routing: 384, safety: 1100 });
 const COMPLEX_REQUEST = /\b(?:research|search|look up|find|compare|analy[sz]e|plan|write|draft|summari[sz]e|code|build|fix|debug|why|how (?:do|does|would|can|should))\b/i;
-let inferenceQueue = Promise.resolve();
+/** One loaded 30B runner: chats skip queued background work, while bounded
+ * fairness keeps objectives from starving under sustained conversation. */
+class InferenceCoordinator {
+  constructor() {this.pending=[];this.active=false;this.interactiveStreak=0;}
+  run(callback,signal,{priority='interactive'}={}) {
+    if(signal?.aborted)return Promise.reject(signal.reason || new Error('Inference cancelled'));
+    if(typeof callback!=='function')return Promise.reject(new TypeError('Inference callback required'));
+    if(!['interactive','background'].includes(priority))return Promise.reject(new Error('Invalid inference priority'));
+    return new Promise((resolve,reject)=>{
+      const entry={callback,signal,priority,resolve,reject};
+      const cancel=()=>{const index=this.pending.indexOf(entry);if(index<0)return;this.pending.splice(index,1);signal.removeEventListener('abort',cancel);reject(signal.reason || new Error('Inference cancelled'));};
+      entry.cancel=cancel;signal?.addEventListener('abort',cancel,{once:true});
+      this.pending.push(entry);queueMicrotask(()=>this.drain());
+    });
+  }
+  drain() {
+    if(this.active||!this.pending.length)return;
+    const background=this.pending.findIndex(item=>item.priority==='background');
+    const interactive=this.pending.findIndex(item=>item.priority==='interactive');
+    const index=background>=0&&(interactive<0||this.interactiveStreak>=3)?background:interactive;
+    const [entry]=this.pending.splice(index,1);entry.signal?.removeEventListener('abort',entry.cancel);
+    if(entry.priority==='interactive')this.interactiveStreak++;else this.interactiveStreak=0;
+    this.active=true;
+    Promise.resolve().then(()=>{entry.signal?.throwIfAborted();return entry.callback();}).then(entry.resolve,entry.reject).finally(()=>{this.active=false;queueMicrotask(()=>this.drain());});
+  }
+}
+const inferenceCoordinator=new InferenceCoordinator();
 
 function searchVocabulary(value) { return new Set(String(value || "").toLowerCase().match(/[a-z0-9][a-z0-9-]{2,}/g) || []); }
 function validateSearchEgress(query, goal, publicEvidence = "") {
@@ -207,7 +233,7 @@ class LocalAgentRuntime {
       await loaded.json().catch(() => null);
       this.preparedModel = model;
       return loaded.ok;
-    }).catch(() => false).finally(() => { this.prewarming = null; });
+    },undefined,{priority:'background'}).catch(() => false).finally(() => { this.prewarming = null; });
     return this.prewarming;
   }
   /**
@@ -221,18 +247,7 @@ class LocalAgentRuntime {
     const payload = await this.chatOnce(model, [...messages, { role: "assistant", thinking: closed, content: "" }], tools, signal, onText, format, { ...options, thinkingBudget: undefined, num_predict: remaining });
     return { ...payload, eval_count: Number(payload.eval_count || 0) + thinkingTokens, thinkingBudgetReached: true, message: { ...payload.message, thinking: `${thinking}${payload.message?.thinking || ""}` } };
   }
-  async withInference(callback, signal) {
-    const previous = inferenceQueue;
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
-    inferenceQueue = previous.then(() => gate);
-    try {
-      await waitWithSignal(previous, signal);
-      signal?.throwIfAborted();
-      return await callback();
-    }
-    finally { release(); }
-  }
+  async withInference(callback, signal, options) {return inferenceCoordinator.run(callback,signal,options);}
   async run(request) {
     await request.onProgress?.({ stage: "Waiting for the PC model" });
     return this.withInference(async()=>{await this.prepareModel(request.model,request.signal);return this.runNow(request);},request.signal);
@@ -431,4 +446,4 @@ class LocalAgentRuntime {
   }
 }
 
-module.exports = { LocalAgentRuntime, normalizeToolCall, validateSearchEgress, claimsSuccessfulWebSearch, isResourceFailure, resourceFailureMessage, newTimings, addTimings, modelMetrics, MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_SEARCHES };
+module.exports = { LocalAgentRuntime, InferenceCoordinator, normalizeToolCall, validateSearchEgress, claimsSuccessfulWebSearch, isResourceFailure, resourceFailureMessage, newTimings, addTimings, modelMetrics, MAX_ITERATIONS, MAX_TOOL_CALLS, MAX_SEARCHES };

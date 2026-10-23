@@ -42,6 +42,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     var detail by remember { mutableStateOf<Map<*, *>?>(null) }
     var busy by remember { mutableStateOf(false) }
     var connected by remember { mutableStateOf(false) }
+    var lastSyncedAt by remember { mutableStateOf<Long?>(null) }
     var error by remember { mutableStateOf("") }
     var answer by rememberSaveable(selectedId) { mutableStateOf("") }
     var showHistory by rememberSaveable { mutableStateOf(false) }
@@ -55,6 +56,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     suspend fun refresh(status: Boolean = false) {
         val response = client.request("nethra.list")
         objectives = maps(response["objectives"])
+        if (selectedId != null && objectives.firstOrNull { it["id"]?.toString() == selectedId }?.get("status") in setOf("COMPLETED", "CANCELLED", "FAILED")) selectedId = null
         settings = response["settings"] as? Map<*, *> ?: emptyMap<String, Any?>()
         selectedId?.let { detail = client.request("nethra.get", mapOf("id" to it)) }
         if (status) {
@@ -62,6 +64,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             reunion = client.request("nethra.reunion", mapOf("since" to System.currentTimeMillis() - 86_400_000L))
         }
         connected = true
+        lastSyncedAt = System.currentTimeMillis()
     }
     fun perform(type: String, payload: Map<String, Any?>) {
         if (busy) return
@@ -106,9 +109,9 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
 
     OutlinedCard(modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Nethra", style = MaterialTheme.typography.titleLarge)
-            Text("Give your paired PC an objective. It saves its plan, evidence and progress between runs.")
-            Text(if (connected) "Connected to your Windows host" else "Waiting for your paired Windows host")
+            Text("Objectives", style = MaterialTheme.typography.titleLarge)
+            Text("Active commitments and decisions from your paired PC.")
+            Text(if (connected) "Connected to your Windows host" else if (lastSyncedAt != null) "Offline · last synced ${dateLabel(lastSyncedAt)}. This view may be stale." else "Offline · connect to your Windows host to load objectives.")
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             OutlinedButton(enabled = !busy, onClick = {
                 scope.launch {
@@ -145,8 +148,8 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             if (settings.isNotEmpty()) Text("Windows startup: ${if (settings["persistentStartup"] == true) "enabled" else "disabled"}. Change startup on the PC.")
             if (reunion.isNotEmpty()) {
                 Text("Since you were away", style = MaterialTheme.typography.titleMedium)
-                Text("${reunion["pendingApprovals"] ?: 0} approval(s) waiting · ${maps(reunion["objectives"]).size} saved objective(s)")
-                maps(reunion["events"]).take(5).forEach { event -> Text("${dateLabel(event["at"])} · ${event["kind"]}") }
+                val activeCount = objectives.count { it["status"] !in setOf("COMPLETED", "CANCELLED", "FAILED") }
+                Text("${reunion["pendingApprovals"] ?: 0} approval(s) waiting · $activeCount active objective(s)")
             }
             consents.forEach { consent ->
                 OutlinedCard(Modifier.fillMaxWidth()) {
@@ -183,8 +186,9 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             Button(enabled = !busy && goal.isNotBlank(), onClick = {
                 perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
-            if (objectives.isEmpty()) Text("No saved objectives.")
-            objectives.forEach { objective ->
+            val visibleObjectives = objectives.filterNot { it["status"] in setOf("COMPLETED", "CANCELLED", "FAILED") }
+            if (visibleObjectives.isEmpty()) Text("No active objectives. Completed work remains in Audit on the PC.")
+            visibleObjectives.forEach { objective ->
                 OutlinedButton(enabled = !busy, onClick = { selectedId = objective["id"]?.toString() }, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth()) {
                         Text(objective["goal"]?.toString().orEmpty())

@@ -23,7 +23,7 @@ const { LocalAgentRuntime, validateSearchEgress } = require("./local-agent-runti
 const { LocalAgentToolRegistry } = require("./local-agent-tools");
 const { PairedConversationSync } = require("./paired-conversation-sync");
 const { LanRelayLifecycle } = require("./lan-relay-lifecycle");
-const { WorldBridge, WorldAuditStore, WorldControlStore, WorldChatStore, WORLD_MODEL, buildWorldInferencePayload } = require("./world-bridge");
+const { WorldBridge, WorldAuditStore, WorldControlStore, WorldChatStore, WORLD_MODEL } = require("./world-bridge");
 const { WorldHostRelay } = require("./world-host-relay");
 const { Foreman } = require("./foreman");
 const { ForemanExecutor } = require("./foreman-executor");
@@ -169,17 +169,14 @@ async function createWindowImpl() {
         if(!localAgent)throw new Error('Local inference is starting');
         return localAgent.withInference(async()=>{
         const started = Date.now();
-        const response = await fetch("http://127.0.0.1:11434/api/chat", {
-          method: "POST", signal, headers: { "content-type": "application/json" },
-          body: JSON.stringify(buildWorldInferencePayload(messages, maxOutputTokens))
+        // Use the same native thinking parser and bounded continuation as chat.
+        // Raw think:false on this model can put reasoning in visible content.
+        const payload = await localAgent.chat(WORLD_MODEL,messages,[],signal,null,'json',{
+          thinking:true,num_predict:Math.min(2048,maxOutputTokens+768),thinkingBudget:384,onThinking:()=>{}
         });
-        if (!response.ok) throw new Error("Local Qwen service unavailable.");
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > 256 * 1024) throw new Error("Local Qwen response exceeded its limit.");
-        const payload = JSON.parse(Buffer.from(bytes).toString("utf8"));
-        if (payload.model !== WORLD_MODEL || typeof payload.message?.content !== "string") throw new Error("Local Qwen response did not match the configured model.");
+        if(typeof payload.message?.content!=='string'||payload.message.content.length>16_000)throw new Error('Local Qwen response was invalid.');
         return { content: payload.message.content, durationMs: Date.now() - started };
-        },signal);
+        },signal,{priority:'background'});
       }
     });
     worldHostRelay = new WorldHostRelay({ bridge: worldBridge, auditStore: worldAuditStore, controlStore: worldControlStore, chatStore: worldChatStore });

@@ -56,7 +56,7 @@ class NethraRunner {
   async execute(task,{signal,token,checkpoint,inference=callback=>callback()}={}){
     if(typeof this.runtime.withInference!=='function')throw Error('Shared inference lock is required');
     task={...task,thinking:true};
-    return this.runtime.withInference(()=>this._execute(task,{signal,token,checkpoint,inference}),signal);
+    return this.runtime.withInference(()=>this._execute(task,{signal,token,checkpoint,inference}),signal,{priority:'background'});
   }
   async _execute(task,{signal,token,checkpoint,inference}){
     const timeout=AbortSignal.timeout(MAX_MS);const combined=signal?AbortSignal.any([signal,timeout]):timeout;

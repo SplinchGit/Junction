@@ -161,7 +161,7 @@ class LocalBrainRelay {
       // phone chat intentionally cannot turn a hallucinated marker into a
       // Codex draft; that requires a future separately-approved request shape.
       const allowCodeDelegation = payload.mode === "code_delegation" && payload.ownerApproved === true;
-      let answer = "", thinking = "", final = null, sequence = 0, lastFlush = 0;
+      let answer = "", thinking = "", final = null, telemetry = null, sequence = 0, lastFlush = 0;
       const flush = async (force = false) => {
         if (!answer || (!force && this.now() - lastFlush < STREAM_FLUSH_MS)) return;
         const partial = crypt(state.key, `JBP1|${state.brainId}|${id}|partial`, Buffer.from(answer), null, true);
@@ -183,12 +183,13 @@ class LocalBrainRelay {
           try { if (await this.cancelled(state, item)) controller.abort(); } catch {} finally { checkingCancellation = false; }
         }, 1_000);
         try {
-          const result = await this.runLocalAgent({ surface:'android-relay', conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
+          const result = await this.runLocalAgent({ surface:'android-relay', conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, forceSearch:payload.forceSearch===true, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
             onProgress: async progress => {
               if (progress.text !== undefined) { answer = progress.text; await flush(); }
               else await this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: String(progress.stage || "Working on your PC").slice(0, 150) }, null);
             } });
-          answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: 0 };
+          answer = result.content; final = { eval_count: result.usage?.completion_tokens, eval_duration: result.metrics?.evalMs ? result.metrics.evalMs * 1e6 : 0 };
+          telemetry = { model:result.model || payload.model, inputTokens:Number(result.usage?.prompt_tokens || 0), outputTokens:Number(result.usage?.completion_tokens || 0), generatedTokens:Number(result.metrics?.generatedTokens || result.usage?.completion_tokens || 0), tokensPerSecond:Number.isFinite(result.metrics?.tokensPerSecond) ? result.metrics.tokensPerSecond : null, evalMs:Number(result.metrics?.evalMs || 0), loadMs:Number(result.metrics?.loadMs || 0), durationMs:Number(result.durationMs || 0), modelCalls:Number(result.metrics?.modelCalls || result.iterations || 0), toolCalls:Number(result.toolCalls || 0), toolsExecuted:Number(result.toolsExecuted || 0), toolNames:Array.isArray(result.toolNames) ? result.toolNames.slice(0,8) : [], thinkingState:String(result.thinkingState || 'off'), thinkingCharacters:Number(result.thinkingCharacters || 0) };
         } finally { clearInterval(cancellationPoll); }
       }
       answer = answer.trim();
@@ -202,7 +203,8 @@ class LocalBrainRelay {
       const response = crypt(state.key, `JBP1|${state.brainId}|${id}|response`, Buffer.from(answer.slice(0, MAX_RESPONSE_CHARS)), null, true);
       const thought = thinking.trim(), encryptedThinking = thought ? crypt(state.key, `JBP1|${state.brainId}|${id}|thinking`, Buffer.from(thought.slice(0, MAX_RESPONSE_CHARS)), null, true) : null;
       const tokensPerSecond = Number(final?.eval_count) && Number(final?.eval_duration) ? (Number(final.eval_count) / (Number(final.eval_duration) / 1e9)).toFixed(1) : "";
-      await this.update(item.document, state.session, { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", tokensPerSecond, leaseUntilMs: 0 }, null);
+      const encryptedTelemetry = telemetry ? crypt(state.key, `JBP1|${state.brainId}|${id}|telemetry`, Buffer.from(JSON.stringify(telemetry)), null, true) : null;
+      await this.update(item.document, state.session, { status: "done", responseCiphertext: response.ciphertext, responseNonce: response.nonce, thinkingCiphertext: encryptedThinking?.ciphertext || "", thinkingNonce: encryptedThinking?.nonce || "", telemetryCiphertext: encryptedTelemetry?.ciphertext || "", telemetryNonce: encryptedTelemetry?.nonce || "", tokensPerSecond, leaseUntilMs: 0 }, null);
       runStats.completedAt = this.now();
     } catch (error) {
       if (!claimed) { this.lastError = error.message; return; }

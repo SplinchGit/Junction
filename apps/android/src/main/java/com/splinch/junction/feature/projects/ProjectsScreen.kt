@@ -14,13 +14,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun ProjectsScreen(modifier: Modifier = Modifier, objectivesOnly: Boolean = false, initialObjectiveGoal: String? = null, onObjectiveGoalConsumed: () -> Unit = {}) {
-    if (objectivesOnly) {
-        LazyColumn(modifier.fillMaxSize().padding(16.dp)) {
-            item { NethraPanel(initialGoal = initialObjectiveGoal, onInitialGoalConsumed = onObjectiveGoalConsumed) }
-        }
-        return
-    }
+fun ProjectsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val client = remember { ForemanClient(context) }
     val scope = rememberCoroutineScope()

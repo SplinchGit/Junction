@@ -46,6 +46,18 @@
 .compose .chat-options-panel #new-objective{background:#244a48;border-color:#3d7772;color:#ddfffa;font-weight:700}
 #objective-status{flex:none;margin-left:0;margin-right:10px;min-height:36px;padding:0 12px;border:1px solid #355453;border-radius:20px;background:#152724;color:#a9ddd4;font:600 11px "Segoe UI Variable",Segoe UI,system-ui,sans-serif;cursor:pointer}
 #objective-status.has-active{background:#1e3e37;color:#dbfff3;border-color:#418a75}
+.chat-layout{position:relative}
+.nethra-task-drawer{position:absolute;z-index:25;top:0;right:0;bottom:0;width:min(420px,100%);display:flex;flex-direction:column;overflow:hidden;background:#111924;border-left:1px solid #365051;box-shadow:-20px 0 50px #0009;transform:translateX(105%);visibility:hidden;transition:transform .18s ease,visibility .18s}
+.nethra-task-drawer.open{transform:translateX(0);visibility:visible}
+.nethra-task-drawer>header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid #2a3a43}
+.nethra-task-drawer>header h2{margin:0;font-size:17px}
+.nethra-task-drawer>header button{border:0;background:transparent;color:#b9cbd2;font-size:25px;cursor:pointer}
+.nethra-task-drawer .foreman-area{overflow:auto;padding:16px;display:flex;flex-direction:column;gap:13px}
+.nethra-task-drawer .panel,.nethra-task-drawer .delegation-card{padding:16px;min-width:0}
+.nethra-task-drawer textarea,.nethra-task-drawer input:not([type=checkbox]){box-sizing:border-box;max-width:100%;width:100%}
+.nethra-task-drawer .objective-policy{display:flex;flex-wrap:wrap;gap:8px}
+@media(max-width:650px){.nethra-task-drawer{width:100%}}
+@media(prefers-reduced-motion:reduce){.nethra-task-drawer{transition:none}}
 .brand i,.orb{position:relative;background:#10272d;border:1px solid #3bbab0;box-shadow:0 0 28px #32bcb544}
 .brand i b,.orb b{display:none}
 .brand i:before,.orb:before{content:"";position:absolute;width:59%;height:36%;border:2px solid #65e5d5;border-radius:75% 12%;transform:rotate(45deg)}

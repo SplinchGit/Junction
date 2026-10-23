@@ -44,3 +44,15 @@ test('research waiting between model calls is excluded from inference usage',asy
   const runner=new NethraRunner({store:f.store,runtime,researchCoordinator,now:f.now});await new NethraScheduler({...f,execute:(task,options)=>runner.execute(task,options)}).tick();
   assert.equal(f.store.usage(task.id).taskMs,20);assert.equal(calls,2);
 });
+
+test('repeated short wakes without progress stop and request direction',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Investigate',autonomy:'ACTIVE'});
+  let runs=0;
+  const scheduler=new NethraScheduler({...f,execute:async()=>{runs++;return {status:'SLEEPING',pendingSteps:['Find a source'],nextWakeAt:f.now()+300000};}});
+  for(let i=0;i<6;i++){await scheduler.tick();if(i<5)f.advance(300001);}
+  const live=f.store.get(task.id);
+  assert.equal(runs,6);
+  assert.equal(live.status,'WAITING_FOR_USER');
+  assert.match(live.summary,/no meaningful progress/i);
+  f.advance(3600000);await scheduler.tick();assert.equal(runs,6);
+});

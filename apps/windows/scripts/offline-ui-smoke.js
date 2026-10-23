@@ -42,7 +42,8 @@ app.on("browser-window-created", (_event, window) => {
         await window.junction.deleteMemory(memory.find(item=>item.content==='Offline fixture fact').id);
         const removed = !(await window.junction.memories()).some(item=>item.content==='Offline fixture fact');
         await window.junction.deleteConversation(chat.id);
-        const goal=document.querySelector('#view-nethra textarea[aria-label="Objective"]');
+        showView('chat');document.getElementById('objective-status').click();
+        const goal=document.querySelector('#nethra-task-drawer textarea[aria-label="Objective"]');
         goal.value='Offline Nethra objective';goal.form.requestSubmit();
         let objective;
         for(let attempt=0;attempt<100&&!objective;attempt++){
@@ -55,6 +56,10 @@ app.on("browser-window-created", (_event, window) => {
         const cancelled=await window.junction.nethra('nethra.control',{id:objective.id,action:'cancel',revision:resumed.task.revision});
         const detail=await window.junction.nethra('nethra.get',{id:objective.id});
         const nethra=paused.task.status==='PAUSED'&&resumed.task.status==='ACTIVE'&&cancelled.task.status==='CANCELLED'&&detail.task.status==='CANCELLED'&&detail.events.some(e=>e.kind==='CANCEL');
+        document.getElementById('objective-status').click();
+        document.getElementById('objective-status').click();
+        for(let attempt=0;attempt<100&&document.querySelector('#nethra-task-drawer article[data-objective-id="'+objective.id+'"]');attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+        const completedHidden=!document.querySelector('#nethra-task-drawer article[data-objective-id="'+objective.id+'"]');
         const workControls=['refresh-delegations','plan-delegation','plan-mafioso','delegation-list','foreman-projects'].every(id=>!!document.getElementById(id));
         showView('chat');
         const options=document.getElementById('chat-options');
@@ -62,17 +67,18 @@ app.on("browser-window-created", (_event, window) => {
         options.querySelector('summary').click();
         const expanded=options.open&&options.contains(document.querySelector('#chat-options button[aria-pressed]'));
         const primaryNavigation=[...document.querySelectorAll('nav > .nav')].map(node=>node.dataset.view);
-        const secondaryNavigation=document.querySelector('.nav-more-menu')?.contains(document.querySelector('[data-view="nethra"]'));
+        const standaloneObjectiveScreen=document.getElementById('view-nethra')!=null;
         const objectiveStatus=document.getElementById('objective-status')?.closest('#view-chat header')!=null;
         const input=document.getElementById('message-input');input.value='Draft a persistent research objective';
         document.querySelector('#chat-options #new-objective').click();
-        const objectivePrefill=document.querySelector('#view-nethra textarea[aria-label="Objective"]').value===input.value&&document.getElementById('view-nethra').classList.contains('active');
+        const objectivePrefill=document.querySelector('#nethra-task-drawer textarea[aria-label="Objective"]').value===input.value&&document.getElementById('nethra-task-drawer').classList.contains('open');
         const thinkingFixed=document.querySelector('#chat-options #chat-thinking')?.getAttribute('aria-disabled')==='true';
-        return {views,created:history.some(item=>item.id===chat.id),removed,nethra,workControls,collapsed,expanded,primaryNavigation,secondaryNavigation,objectiveStatus,objectivePrefill,thinkingFixed,extracted:!document.getElementById('open-mafioso'),hasPreload:typeof window.junction.audit==='function'};
+        return {views,created:history.some(item=>item.id===chat.id),removed,nethra,completedHidden,workControls,collapsed,expanded,primaryNavigation,standaloneObjectiveScreen,objectiveStatus,objectivePrefill,thinkingFixed,extracted:!document.getElementById('open-mafioso'),hasPreload:typeof window.junction.audit==='function'};
       })()`);
-      assert.deepEqual(result.views, ["chat", "audit", "nethra", "feed", "projects", "context", "settings"]);
+      assert.deepEqual(result.views, ["chat", "audit", "feed", "projects", "context", "settings"]);
       assert.deepEqual(result.primaryNavigation,["chat","audit"]);
-      for (const key of ["created", "removed", "nethra", "workControls", "collapsed", "expanded", "secondaryNavigation", "objectiveStatus", "objectivePrefill", "thinkingFixed", "extracted", "hasPreload"]) assert.equal(result[key], true, key);
+      assert.equal(result.standaloneObjectiveScreen,false,'standalone objective screen removed');
+      for (const key of ["created", "removed", "nethra", "completedHidden", "workControls", "collapsed", "expanded", "objectiveStatus", "objectivePrefill", "thinkingFixed", "extracted", "hasPreload"]) assert.equal(result[key], true, key);
       assert.deepEqual(errors, [], "Renderer errors");
       const {NethraStore}=require('../src/nethra-store');
       const waitingStore=new NethraStore(path.join(directory,'nethra'));
@@ -80,7 +86,8 @@ app.on("browser-window-created", (_event, window) => {
       waitingStore.update(waiting.id,{status:'WAITING_FOR_USER',summary:'Please answer'});
       waitingStore.close();
       const answerPersists=await window.webContents.executeJavaScript(`(async()=>{
-        document.querySelector('[data-view="nethra"]').click();
+        if(document.getElementById('nethra-task-drawer').classList.contains('open'))document.getElementById('objective-status').click();
+        document.getElementById('objective-status').click();
         let input;
         for(let i=0;i<100&&!input;i++){input=document.querySelector('textarea[aria-label="Answer Nethra"]');if(!input)await new Promise(resolve=>setTimeout(resolve,20));}
         if(!input)throw Error('Owner answer field missing');
@@ -91,9 +98,10 @@ app.on("browser-window-created", (_event, window) => {
       assert.equal(answerPersists,true,'owner answer survives background refresh');
       await window.webContents.executeJavaScript(`(async()=>{
         await window.junction.nethra('nethra.create',{goal:'Review local research tomorrow',persistent:true});
-        document.querySelector('[data-view="nethra"]').click();
+        if(document.getElementById('nethra-task-drawer').classList.contains('open'))document.getElementById('objective-status').click();
+        document.getElementById('objective-status').click();
         for(let attempt=0;attempt<100;attempt++){
-          if(document.querySelector('#view-nethra').textContent.includes('Review local research tomorrow'))return;
+          if(document.querySelector('#nethra-task-drawer').textContent.includes('Review local research tomorrow'))return;
           await new Promise(resolve=>setTimeout(resolve,10));
         }
         throw new Error('Nethra objective controls did not render');

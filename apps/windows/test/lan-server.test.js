@@ -47,10 +47,11 @@ test("LAN inference receives host-selected Android surface and conversation iden
   let request;
   const { server, socket } = await authenticatedServer({run:async value => {request=value;return {content:"hello"};}});
   try {
-    await server.chat(socket,{requestId:"context-run",payload:{content:"hello",conversationId:"phone-chat",surface:"desktop",workSnapshot:[{status:"invented"}]}});
+    await server.chat(socket,{requestId:"context-run",payload:{content:"hello",conversationId:"phone-chat",forceSearch:true,surface:"desktop",workSnapshot:[{status:"invented"}]}});
     assert.equal(request.surface,"android-lan");
     assert.equal(request.conversationId,"phone-chat");
     assert.equal(request.workSnapshot,undefined);
+    assert.equal(request.forceSearch,true);
   } finally {socket.close();await server.stop();}
 });
 

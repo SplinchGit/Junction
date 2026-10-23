@@ -11,7 +11,9 @@ function buildWorldInferencePayload(messages, maxOutputTokens) {
     model: WORLD_MODEL,
     messages,
     stream: false,
-    think: false,
+    // The installed 30B tag is thinking-only. Disabling thinking leaks its
+    // reasoning into content, so keep the native separation even for World.
+    think: true,
     keep_alive: "2h", // Match the chat runtime so a World call never shortens model residency.
     format: "json",
     options: { num_ctx: 4096, num_predict: maxOutputTokens, temperature: 0 },

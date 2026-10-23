@@ -22,6 +22,27 @@ class NethraAttention {
     }
     return queued;
   }
+  /** A profile can revisit verified, unfinished work once per new progress checkpoint. */
+  reconcileInitiative() {
+    let queued=0;
+    for(const task of this.store.list()){
+      if(task.status!=='SLEEPING'||!task.persistent)continue;
+      const interval=task.autonomy==='ACTIVE'?15*60_000:task.autonomy==='BALANCED'?60*60_000:null;
+      if(!interval||!Array.isArray(task.pendingSteps)||!task.pendingSteps.length)continue;
+      const progress=task.lastMeaningfulProgressAt;
+      if(!Number.isSafeInteger(progress)||progress<=(task.lastInitiativeProgressAt||0))continue;
+      const dueAttention=this.store.pendingAttentionDue(task.id);
+      if(Number.isSafeInteger(dueAttention)&&dueAttention<=this.now())continue;
+      if(this.now()<Math.max(progress,task.lastExecutionAt||0,task.lastInitiativeAt||0)+interval)continue;
+      if((task.dependencies||[]).some(id=>{try{return this.store.get(id).status!=='COMPLETED';}catch{return true;}}))continue;
+      try{
+        const result=this.observe({taskId:task.id,source:'objective',sourceId:'initiative',revision:`${progress}-${task.autonomy}`,kind:'INITIATIVE_REVIEW',evidenceRef:`objective:${task.id}`,priority:task.priority||3});
+        this.store.update(task.id,{lastInitiativeProgressAt:progress,lastInitiativeAt:this.now()},'INITIATIVE_ELIGIBLE');
+        if(result.created)queued++;
+      }catch(error){this.errors.push({taskId:task.id,message:String(error?.message||error).slice(0,400)});}
+    }
+    return queued;
+  }
   reconcileTask(task) {
     const count=(task.completedSteps||[]).length;
     const milestone=task.checkIn==='MILESTONES'&&count>(task.lastMilestoneCount||0);

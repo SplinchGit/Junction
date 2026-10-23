@@ -277,6 +277,7 @@ class ChatManager(
     suspend fun sendUserMessage(
         raw: String,
         imagePath: String? = null,
+        forceResearch: Boolean = false,
         /**
          * Fires exactly once per call, on every exit path, with a coarse summary of how
          * the turn ended. Optional and additive -- omitted by the voice/chat-UI callers
@@ -420,7 +421,9 @@ class ChatManager(
                 var laneError: String? = null
                 try {
                     val frontierRequested = useFrontier && currentProvider.frontierModel != null
-                    currentProvider.act(contextBlocks, tools, frontierRequested, session.sessionId).collect { event ->
+                    (if (forceResearch && currentProvider is com.splinch.junction.assistant.provider.ResearchCapableProvider)
+                        currentProvider.actWithResearch(contextBlocks, tools, frontierRequested, session.sessionId, true)
+                    else currentProvider.act(contextBlocks, tools, frontierRequested, session.sessionId)).collect { event ->
                         if (!turnEpoch.isCurrent(turnId)) return@collect
                         when (event) {
                             is LlmEvent.Activity -> _turnActivity.value = event.label.takeIf { it.isNotBlank() }

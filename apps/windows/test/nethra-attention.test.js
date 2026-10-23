@@ -177,3 +177,58 @@ test('newest claimed attention remains visible after many journaled events',t=>{
   const rows=store.attention(task.id);
   assert.equal(rows.length,500);assert.equal(rows.at(-1).sourceId,'newest');
 });
+
+test('profile initiative needs actionable progress and respects its cooldown',t=>{
+  const f=fixture(t),store=f.open(),attention=new NethraAttention(store,{now:f.now});
+  const quiet=store.create({goal:'Quiet',autonomy:'QUIET'});
+  const balanced=store.create({goal:'Balanced',autonomy:'BALANCED'});
+  const active=store.create({goal:'Active',autonomy:'ACTIVE'});
+  const idle=store.create({goal:'Idle',autonomy:'ACTIVE'});
+  for(const task of [quiet,balanced,active])store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,pendingSteps:['Inspect the new finding'],evidence:[{source:'verified'}]});
+  store.update(idle.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,pendingSteps:['No evidence yet']});
+  f.advance(15*60_000+1);
+  assert.equal(attention.reconcileInitiative(),1);
+  assert.equal(store.attention(active.id).filter(item=>item.kind==='INITIATIVE_REVIEW').length,1);
+  assert.equal(store.attention(quiet.id).length,0);
+  assert.equal(store.attention(balanced.id).length,0);
+  assert.equal(store.attention(idle.id).length,0);
+  assert.equal(attention.reconcileInitiative(),0);
+  f.advance(45*60_000);
+  assert.equal(attention.reconcileInitiative(),1);
+  assert.equal(store.attention(balanced.id).filter(item=>item.kind==='INITIATIVE_REVIEW').length,1);
+  assert.equal(attention.reconcileInitiative(),0);
+});
+
+test('changing autonomy applies the new initiative interval without losing progress',t=>{
+  const f=fixture(t),store=f.open(),attention=new NethraAttention(store,{now:f.now});
+  const task=store.create({goal:'Research',autonomy:'QUIET'});
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,pendingSteps:['Review evidence'],evidence:[{source:'verified'}]});
+  f.advance(15*60_000+1);assert.equal(attention.reconcileInitiative(),0);
+  const live=store.get(task.id);store.configure(task.id,{autonomy:'ACTIVE'},live.revision,'active-now');
+  assert.equal(attention.reconcileInitiative(),1);
+  assert.deepEqual(store.get(task.id).evidence,[{source:'verified'}]);
+});
+
+test('initiative observation survives restart and does not re-run without new evidence',async t=>{
+  const f=fixture(t),store=f.open(),task=store.create({goal:'Review research',autonomy:'ACTIVE'});
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,pendingSteps:['Compare sources'],evidence:[{source:'verified'}]});
+  f.advance(15*60_000+1);
+  let calls=0;
+  const scheduler=new NethraScheduler({store,now:f.now,execute:async()=>{calls++;return {status:'SLEEPING',nextWakeAt:f.now()+86_400_000};}});
+  await scheduler.tick();assert.equal(calls,1);
+  assert.equal(f.open().get(task.id).lastInitiativeProgressAt,store.get(task.id).lastMeaningfulProgressAt);
+  f.advance(15*60_000+1);
+  await scheduler.tick();assert.equal(calls,1);
+  assert.equal(f.open().attention(task.id).filter(item=>item.kind==='INITIATIVE_REVIEW').length,1);
+});
+
+test('a due source event coalesces an initiative review into the same reasoning wake',async t=>{
+  const f=fixture(t),store=f.open(),task=store.create({goal:'Follow source',autonomy:'ACTIVE'});
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,pendingSteps:['Analyze change'],evidence:[{source:'verified'}]});
+  f.advance(15*60_000+1);
+  new NethraAttention(store,{now:f.now}).observe({taskId:task.id,source:'calendar',sourceId:'new-date',revision:'v2'});
+  let runs=0;const scheduler=new NethraScheduler({store,now:f.now,execute:async()=>{runs++;return {status:'SLEEPING',nextWakeAt:f.now()+86_400_000};}});
+  await scheduler.tick();assert.equal(runs,1);
+  assert.equal(store.attention(task.id).filter(item=>item.kind==='INITIATIVE_REVIEW').length,0);
+  f.advance(15*60_000+1);await scheduler.tick();assert.equal(runs,1);
+});

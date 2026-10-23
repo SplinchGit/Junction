@@ -55,3 +55,11 @@ interface LlmProvider {
      */
     suspend fun describeImage(imageBase64: String, mimeType: String): String? = null
 }
+
+/** A per-turn research request. The Windows host still validates and performs the search. */
+interface ResearchCapableProvider {
+    fun actWithResearch(
+        context: List<ContextBlock>, tools: List<ToolDefinition>, useFrontier: Boolean,
+        conversationId: String?, forceResearch: Boolean
+    ): Flow<LlmEvent>
+}
