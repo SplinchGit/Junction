@@ -23,6 +23,21 @@ class DeviceCommandRedactionTest {
         assertTrue(clean.contains("[email]"))
     }
 
+    /**
+     * Google key and OAuth token shapes are assembled at runtime so no credential-shaped
+     * literal ever appears in source (secret scanners flag those even when fake).
+     */
+    @Test
+    fun removesGoogleKeyAndOAuthTokenShapes() {
+        val filler = "x".repeat(30)
+        val googleKey = listOf("AI", "za", filler).joinToString("")
+        val oauthToken = listOf("ya", "29.", filler).joinToString("")
+        val clean = DeviceCommandRunner.redact("W/Firebase: key $googleKey\nD/Auth: access $oauthToken")
+        assertFalse("leaked Google key shape", clean.contains(filler))
+        assertTrue(clean.contains("[redacted-key]"))
+        assertTrue(clean.contains("[redacted-token]"))
+    }
+
     @Test
     fun keepsOrdinaryDiagnostics() {
         val line = "E/LanTransport: connect failed after 7000 ms (timeout)"
