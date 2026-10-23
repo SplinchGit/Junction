@@ -1,10 +1,12 @@
 "use strict";
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash}=require('node:crypto');
 const {NethraTools,ApprovalRequired,draftReceiptIsCurrent}=require('./nethra-tools');
+const {monitorWakeAt}=require('./nethra-scheduler');
 const MODEL='qwen3:30b';
 const MAX_ITERATIONS=12,MAX_TOOLS=10,MAX_MS=10*60_000;
 function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\S]*?(?:<\/think>|$)/gi,'').slice(0,max);}
 function bounded(value,max=4000){const text=JSON.stringify(value);return text.length<=max?text:JSON.stringify({truncated:true,data:text.slice(0,max-100)});}
+function evidenceFingerprint(evidence){return createHash('sha256').update(JSON.stringify([...new Set(evidence.map(item=>JSON.stringify(item)))].sort())).digest('hex');}
 // Fail closed for explicit unsupported work and claimed external outcomes. This
 // is a capability check, not a general semantic verifier of model prose.
 function unsupportedOutcome(text){return /(?:^|[.!?;]\s*)(?:please\s+)?(?:send|publish|deploy|purchase|transfer|upload)\b|\b(?:email|e-mail|message|mail)\b[^.!?]{0,80}\b(?:sent|delivered)\b|\b(?:sent|delivered)\b[^.!?]{0,80}\b(?:email|e-mail|message|mail)\b/i.test(text);}
@@ -62,7 +64,7 @@ class NethraRunner {
     const timeout=AbortSignal.timeout(MAX_MS);const combined=signal?AbortSignal.any([signal,timeout]):timeout;
     let state={status:'ACTIVE',plan:task.plan||[],summary:task.summary||'',evidence:task.evidence||[],completedSteps:task.completedSteps||[],pendingSteps:task.pendingSteps||[],nextWakeAt:null};
     const persist=async(patch,event='nethra_checkpoint')=>{
-      state={...state,...patch};const saved=checkpoint?await checkpoint(patch):await this.store.update(task.id,patch,event,token);
+      state={...state,...patch};const saved=checkpoint?await checkpoint(patch,event):await this.store.update(task.id,patch,event,token);
       if(saved===null||saved===false)throw Error('Objective lease was lost');
       return state;
     };
@@ -139,6 +141,10 @@ class NethraRunner {
               if(!state.plan.length||!state.evidence.some(e=>['web_search','read_file','write_draft','list_directory'].includes(e.tool)))throw Error('Completion requires a saved plan and actual tool evidence relevant to the objective and success criteria');
               if(state.pendingSteps.length)throw Error('Mark completed plan steps with update_plan before finishing');
               const problem=completionError(task,state,cleanText(args.summary),this.store);if(problem)throw Error(problem);
+              if(task.mode==='ONGOING'){
+                const fingerprint=evidenceFingerprint(state.evidence),changed=fingerprint!==task.lastMilestoneEvidenceFingerprint;
+                await persist({status:'SLEEPING',summary:changed?cleanText(args.summary):'No new verified evidence since the previous milestone.',completedSteps:state.plan,pendingSteps:[],nextWakeAt:monitorWakeAt(task,this.now()),...(changed?{lastMilestoneAt:this.now(),lastMilestoneEvidenceFingerprint:fingerprint}:{})},changed?'MILESTONE_VERIFIED':'MONITOR_UNCHANGED');return state;
+              }
               await persist({status:'COMPLETED',summary:cleanText(args.summary),completedSteps:state.plan,pendingSteps:[],nextWakeAt:null},'nethra_completed');return state;
             }else if(name==='schedule_wake'){
               if(args.at<=this.now()||args.at>this.now()+365*24*60*60_000)throw Error('Wake must be within the next year');

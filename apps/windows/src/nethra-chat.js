@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const {isOngoingRequest}=require('./local-agent-tools');
 
 function parseNethraChat(content) {
   const message = String(content || "").trim();
@@ -15,7 +16,7 @@ function parseNethraChat(content) {
     const verb = goal[0].trim().split(/\s+/).at(-1);
     objective = `${verb} ${objective}`.trim();
   }
-  return objective ? { action: "create", goal: objective } : { action: "help" };
+  return objective ? { action: "create", goal: objective, mode:isOngoingRequest(message)||/\btrack\b/i.test(goal[0])?'ONGOING':'FINITE' } : { action: "help" };
 }
 
 async function handleNethraChat({ api, content, conversationId = null, requestId = crypto.randomUUID(), source = "desktop" }) {
@@ -27,7 +28,7 @@ async function handleNethraChat({ api, content, conversationId = null, requestId
     return objectives.length ? objectives.slice(0, 10).map(task => `${task.id} — ${task.status}: ${task.goal}${task.nextWakeAt ? ` (next wake ${new Date(task.nextWakeAt).toLocaleString()})` : ""}`).join("\n") : "Nethra has no saved objectives yet. Say ‘Start a Nethra goal: <objective>’ to begin.";
   }
   if (instruction.action === "create") {
-    const { task } = await api.dispatch("nethra.create", { goal: instruction.goal, successCriteria: instruction.goal, persistent: true, conversationId }, requestId, source);
+    const { task } = await api.dispatch("nethra.create", { goal: instruction.goal, successCriteria: instruction.goal, mode:instruction.mode, persistent: true, conversationId }, requestId, source);
     return `Nethra saved objective ${task.id}: ${task.goal}. Status: ${task.status}. I’ll continue it on the Windows host; open Nethra to review the plan, progress and any approval requests.`;
   }
   const { task: current } = await api.dispatch("nethra.get", { id: instruction.id }, `${requestId}:get`, source);

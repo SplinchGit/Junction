@@ -29,6 +29,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     var goal by rememberSaveable { mutableStateOf("") }
     var criteria by rememberSaveable { mutableStateOf("") }
     var persistent by rememberSaveable { mutableStateOf(true) }
+    var mode by rememberSaveable { mutableStateOf("FINITE") }
     var autonomy by rememberSaveable { mutableStateOf("BALANCED") }
     var priority by rememberSaveable { mutableIntStateOf(3) }
     var checkIn by rememberSaveable { mutableStateOf("WEEKLY") }
@@ -52,10 +53,16 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             onInitialGoalConsumed()
         }
     }
+    LaunchedEffect(Unit) {
+        ObjectiveStatusMonitor.restore(context)
+        objectives = ObjectiveStatusMonitor.objectives.value
+        lastSyncedAt = ObjectiveStatusMonitor.lastSyncedAt.value
+    }
 
     suspend fun refresh(status: Boolean = false) {
         val response = client.request("nethra.list")
         objectives = maps(response["objectives"])
+        ObjectiveStatusMonitor.publish(context, objectives)
         if (selectedId != null && objectives.firstOrNull { it["id"]?.toString() == selectedId }?.get("status") in setOf("COMPLETED", "CANCELLED", "FAILED")) selectedId = null
         settings = response["settings"] as? Map<*, *> ?: emptyMap<String, Any?>()
         selectedId?.let { detail = client.request("nethra.get", mapOf("id" to it)) }
@@ -83,7 +90,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             catch (failure: Exception) {
                 error = failure.message ?: "The PC did not confirm the request. Refresh to check its saved state."
                 // Refresh is read-only; retrying this same request keeps its identity.
-                try { refresh() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { connected = false }
+                try { refresh() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { connected = false; ObjectiveStatusMonitor.disconnected() }
             } finally { busy = false }
         }
     }
@@ -98,12 +105,13 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
     LaunchedEffect(selectedId) {
         detail = null
         while (true) {
+            var refreshFailed = false
             if (!busy) {
                 try { refresh(status = hostStatus.isEmpty()); error = "" }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { connected = false; error = failure.message ?: "The paired Windows host is unavailable." }
+                catch (failure: Exception) { refreshFailed = true; connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "The paired Windows host is unavailable." }
             }
-            delay(NethraClient.pollIntervalMs(15_000))
+            delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) 60_000L else 180_000L)
         }
     }
 
@@ -118,7 +126,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                     busy = true
                     try { refresh(status = true); error = "" }
                     catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { connected = false; error = failure.message ?: "Refresh failed" }
+                    catch (failure: Exception) { connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "Refresh failed" }
                     finally { busy = false }
                 }
             }) { Text("Refresh objectives") }
@@ -171,6 +179,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                 Checkbox(checked = persistent, onCheckedChange = { persistent = it }, enabled = !busy)
                 Text("Keep this objective active between runs", Modifier.padding(top = 12.dp))
             }
+            PolicyChoice("Objective type", mode, listOf("FINITE" to "Finish when achieved", "ONGOING" to "Keep monitoring after each result"), !busy) { mode = it }
             PolicyChoice("Autonomy", autonomy, listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy) { autonomy = it }
             PolicyChoice("Priority", priority.toString(), (1..5).map { it.toString() to "$it · ${if (it == 1) "Highest" else if (it == 5) "Lowest" else "Priority"}" }, !busy) { priority = it.toInt() }
             PolicyChoice("Direction check-in", checkIn, listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MILESTONES" to "At milestones or blockers", "MANUAL" to "Manual only"), !busy) { checkIn = it }
@@ -184,16 +193,25 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
             }
             Text("Your PC must be awake and online to run work. Nethra asks for approval before actions that need your permission.")
             Button(enabled = !busy && goal.isNotBlank(), onClick = {
-                perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
+                perform("nethra.create", buildMap { put("goal", goal.trim()); put("persistent", persistent); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
-            val visibleObjectives = objectives.filterNot { it["status"] in setOf("COMPLETED", "CANCELLED", "FAILED") }
-            if (visibleObjectives.isEmpty()) Text("No active objectives. Completed work remains in Audit on the PC.")
-            visibleObjectives.forEach { objective ->
+            // Open work first (running, then in progress), then the five most recently ended.
+            val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
+            val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
+            val ended = withStatus.filter { it.second.ended }.take(5)
+            if (open.isEmpty()) Text("Nethra has no open tasks. Ask her in chat to look after something.")
+            (open + ended).forEach { (objective, status) ->
                 OutlinedButton(enabled = !busy, onClick = { selectedId = objective["id"]?.toString() }, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(objective["goal"]?.toString().orEmpty())
-                        Text("${objective["status"]} · ${wakeLabel(objective["nextWakeAt"])}")
-                        objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            StatusDot(status.light)
+                            Spacer(Modifier.width(8.dp))
+                            Text(status.label, style = MaterialTheme.typography.labelLarge)
+                        }
+                        Text(objective["goal"]?.toString().orEmpty(), maxLines = 2)
+                        if (objective["mode"] == "ONGOING") Text("Ongoing monitoring", style = MaterialTheme.typography.labelSmall)
+                        ObjectiveStatus.stepLine(objective)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3) }
                     }
                 }
             }
@@ -209,6 +227,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, onIn
                 val id = task["id"].toString()
                 val revision = (task["revision"] as? Number)?.toLong() ?: -1L
                 val terminal = task["status"] in setOf("COMPLETED", "CANCELLED", "FAILED")
+                PolicyChoice("Objective type", task["mode"]?.toString() ?: "FINITE", listOf("FINITE" to "Finish when achieved", "ONGOING" to "Keep monitoring after each result"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "mode" to it)) }
                 PolicyChoice("Autonomy", task["autonomy"]?.toString() ?: "BALANCED", listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "autonomy" to it)) }
                 PolicyChoice("Priority", task["priority"]?.toString() ?: "3", (1..5).map { it.toString() to "$it · Priority" }, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "priority" to it.toInt())) }
                 PolicyChoice("Direction check-in", task["checkIn"]?.toString() ?: "WEEKLY", listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MILESTONES" to "At milestones or blockers", "MANUAL" to "Manual only"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "checkIn" to it)) }

@@ -11,7 +11,9 @@ class NethraApi {
     if(typeof requestId!=='string'||!requestId.length||requestId.length>160)throw new Error('Invalid request ID');
     const s=this.store;
     if(type==='nethra.list'){
-      const objectives=s.list().slice(0,100).map(t=>({id:t.id,goal:String(t.goal||'').slice(0,500),status:t.status,revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
+      // live/step/progress let clients show where Nethra is without fetching each objective.
+      const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
+      const objectives=s.list().slice(0,100).map(t=>({live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);}
@@ -34,7 +36,7 @@ class NethraApi {
       const selected=pending.length?pending[0]:null;
       const short=(value,max)=>String(value||'').slice(0,max);
       const briefList=value=>(Array.isArray(value)?value:[]).slice(-8).map(item=>short(item,300));
-      const mobileTask={id:task.id,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
+      const mobileTask={id:task.id,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
       const result={task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
       if(Buffer.byteLength(JSON.stringify(result))>50000&&selected){
         const content=String(selected.args?.content||'');
@@ -47,12 +49,12 @@ class NethraApi {
     }
     if(type==='nethra.create') {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');
-      const task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],requestId});
+      const task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',requestId});
       return {task};
     }
     if(type==='nethra.configure'){
-      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources'].includes(key)))throw new Error('Unknown objective configuration');
-      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
+      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode'].includes(key)))throw new Error('Unknown objective configuration');
+      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
     }
     if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
     if(type==='nethra.approve') {

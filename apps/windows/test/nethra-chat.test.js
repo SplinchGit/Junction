@@ -21,7 +21,7 @@ test("explicit chat objective creates one durable Nethra task with conversation 
   const api = { dispatch: async (...args) => { calls.push(args); return { task: { id: "task-1", goal: args[1].goal, status: "CREATED" } }; } };
   const response = await handleNethraChat({ api, content: "Nethra, research university housing options", conversationId: "chat-1", requestId: "run-1", source: "android" });
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0], ["nethra.create", { goal: "research university housing options", successCriteria: "research university housing options", persistent: true, conversationId: "chat-1" }, "run-1", "android"]);
+  assert.deepEqual(calls[0], ["nethra.create", { goal: "research university housing options", successCriteria: "research university housing options", mode: "FINITE", persistent: true, conversationId: "chat-1" }, "run-1", "android"]);
   assert.match(response, /task-1/);
 });
 

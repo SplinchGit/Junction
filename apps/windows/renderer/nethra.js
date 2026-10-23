@@ -11,10 +11,11 @@
  const roots=el('input');roots.placeholder='Optional approved read folder on this PC';roots.setAttribute('aria-label','Approved read folder');
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
+ const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');
  const priority=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],'3');
  const checkIn=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],'WEEKLY');
- const policyFields=el('div');policyFields.className='objective-policy';policyFields.append(autonomy.wrapper,priority.wrapper,checkIn.wrapper);
+ const policyFields=el('div');policyFields.className='objective-policy';policyFields.append(mode.wrapper,autonomy.wrapper,priority.wrapper,checkIn.wrapper);
  const checkbox=(text,checked=false)=>{const input=el('input');input.type='checkbox';input.checked=checked;const label=el('label',text);label.prepend(input);return {label,input};};
  const watchCalendar=checkbox(' Watch my Google Calendar (read-only)'),watchGmail=checkbox(' Watch new Gmail inbox mail (headers only)');
  const create=el('button','Create objective');create.type='submit';form.append(goal,roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label,create);area.append(form);
@@ -51,12 +52,15 @@
    const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;updateObjectiveStatus(result.objectives);
    const answerDrafts=new Map([...list.querySelectorAll('article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
    list.replaceChildren();const activeRows=result.objectives.filter(visible);if(!activeRows.length)list.append(el('p','No active tasks. Start one from the chat draft. Completed work remains in Audit.'));
-   for(const row of activeRows){const {task,approvals,events,attention}=await api('nethra.get',{id:row.id});const card=el('article');card.className='delegation-card';card.dataset.objectiveId=task.id;card.append(el('h2',task.goal),el('strong',task.status.replaceAll('_',' ')),el('p',task.summary||'Waiting for a useful next action'),el('p',`Next wake: ${time(task.nextWakeAt)}`),el('p',`Direction review: ${time(task.nextDirectionCheckAt)}`));
+   for(const row of activeRows){const {task,approvals,events,attention}=await api('nethra.get',{id:row.id});const card=el('article');card.className='delegation-card';card.dataset.objectiveId=task.id;card.append(el('h2',task.goal),el('strong',row.live?'Working now':task.status.replaceAll('_',' ')),el('p',task.summary||'Waiting for a useful next action'),el('p',`Next wake: ${time(task.nextWakeAt)}`),el('p',`Direction review: ${time(task.nextDirectionCheckAt)}`));
+     if(row.progress?.total)card.append(el('p',row.step?`Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}: ${row.step}`:`${row.progress.done} of ${row.progress.total} steps done`));
+     if(task.mode==='ONGOING')card.append(el('p','Ongoing monitoring'));
+     const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
      const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
      const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
      const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');
      const watches=checkbox(' Watch Google Calendar',(task.sources||[]).includes('calendar')),watchesMail=checkbox(' Watch Gmail',(task.sources||[]).includes('gmail'));
-     if(!['COMPLETED','CANCELLED','FAILED'].includes(task.status)){const controls=el('div');controls.className='objective-policy';controls.append(profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));card.append(controls);}
+     if(!['COMPLETED','CANCELLED','FAILED'].includes(task.status)){const controls=el('div');controls.className='objective-policy';controls.append(taskMode.wrapper,profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,mode:taskMode.field.value,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));card.append(controls);}
      card.append(details('Plan',{steps:task.plan,completed:task.completedSteps,pending:task.pendingSteps}),details('Evidence',task.evidence),details('Attention',attention||[]),details('History',events),details('Errors',task.errors));
      if(!['COMPLETED','CANCELLED','FAILED'].includes(task.status)){
        const action=task.status==='PAUSED'||task.status==='BLOCKED'?'resume':'pause';card.append(button(action==='pause'?'Pause':'Resume',()=>api('nethra.control',{id:task.id,action,revision:task.revision})),button('Cancel objective',()=>api('nethra.control',{id:task.id,action:'cancel',revision:task.revision})));
@@ -66,7 +70,7 @@
      list.append(card);
    }
  }catch(e){error.textContent=e.message;}finally{loading=false;if(refreshAgain){refreshAgain=false;refresh();}}}
- form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,persistent:persistent.checked,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=false;});};
+ form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,persistent:persistent.checked,mode:mode.field.value,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=false;});};
  startup.onchange=()=>perform(()=>api('nethra.settings',{persistentStartup:startup.checked}));
  openObjectives.onclick=()=>{const draft=document.getElementById('message-input').value.trim();if(draft)goal.value=draft;document.getElementById('chat-options').open=false;setDrawerOpen(true);goal.focus();};
  objectiveStatus.onclick=()=>setDrawerOpen(!section.classList.contains('open'));

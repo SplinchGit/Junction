@@ -3,7 +3,7 @@
 const { BASELINE, canonicalHistory, contextHistory, relevantMemory } = require("./assistant-context");
 const { ROUTING_SCHEMA, normalizeDecision, decisionAllowsDelegation, routingPrompt, detectSearchRequirement, shouldRunRouting } = require("./intent-router");
 const { citationAudit, mergeResearch, renderCitations } = require("./research-coordinator");
-const { LocalAgentToolRegistry, compactResearchContext } = require("./local-agent-tools");
+const { LocalAgentToolRegistry, compactResearchContext, isOngoingRequest } = require("./local-agent-tools");
 const { providers } = require("./model-catalog");
 const { environmentContext } = require("./assistant-environment");
 
@@ -21,7 +21,6 @@ const MODEL_KEEP_ALIVE = "2h";
 // can exhaust the whole 1536-token output cap and return no answer at all.
 // Explicit requests for ongoing work start a durable objective on the host. Live 30B runs answered
 // "I'll monitor for updates" to "keep me updated" without ever calling start_objective.
-const ONGOING_REQUEST = /\b(?:keep (?:me )?(?:updated|posted|informed|in the loop)|keep (?:an eye|track|tabs)|track (?:this|it|that|the)|monitor|follow(?:ing)? up|let me know (?:when|if)|watch (?:for|this|out for)|over the (?:next|coming) (?:days|weeks|months)|on an ongoing basis)\b/i;
 const MONITOR_CLAIM = /\b(?:I(?:'ll| will) (?:keep (?:monitoring|watching|tracking|an eye)|monitor|track|follow up|keep you (?:updated|posted|informed)|let you know)|I(?:'m| am) (?:monitoring|tracking|watching))\b/i;
 /** A promise of ongoing work with no objective behind it is corrected, never left standing. */
 function honestFollowUp(content, executedTools) {
@@ -353,7 +352,7 @@ class LocalAgentRuntime {
       messages.push({role:"assistant",content:"",tool_calls:[{function:{name:"delegate_to_codex",arguments:{task}}}]}, {role:"tool",tool_name:"delegate_to_codex",content:result.content});
     }
     const objectiveGoal = ownerGoal.replace(/\s+/g, " ").trim().slice(0, 2000);
-    if (ONGOING_REQUEST.test(ownerGoal) && objectiveGoal.length >= 10 && definitions.some(tool => tool.function.name === "start_objective")) {
+    if (isOngoingRequest(ownerGoal) && objectiveGoal.length >= 10 && definitions.some(tool => tool.function.name === "start_objective")) {
       await onProgress?.({ stage: "Starting this as ongoing work" });
       try {
         const result = await waitWithSignal(this.tools.execute("start_objective", { goal: objectiveGoal }, { goal: ownerGoal, conversationId, runId, surface, ledgers, allowCodeDelegation, audit: { runId, model, mode: "agent", initiator: "host" } }), runSignal);

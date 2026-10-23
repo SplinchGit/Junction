@@ -60,6 +60,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import com.splinch.junction.feature.projects.ObjectiveStatus
+import com.splinch.junction.feature.projects.ObjectiveStatusMonitor
+import com.splinch.junction.feature.projects.StatusDot
+import com.splinch.junction.data.sync.lan.NethraClient
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -150,6 +155,9 @@ fun ChatScreen(
     var input by rememberSaveable { mutableStateOf("") }
     var forceResearch by rememberSaveable { mutableStateOf(false) }
     var objectivesOpen by rememberSaveable { mutableStateOf(false) }
+    var confirmStop by remember { mutableStateOf(false) }
+    val taskList by ObjectiveStatusMonitor.objectives.collectAsState()
+    val taskHostConnected by ObjectiveStatusMonitor.connected.collectAsState()
     var objectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -164,6 +172,17 @@ fun ChatScreen(
 
     LaunchedEffect(objectivesRequest) {
         if (objectivesRequest > 0) objectivesOpen = true
+    }
+    // Task lights for the header; polled only while chat is visible.
+    LaunchedEffect(objectivesOpen) { if (!objectivesOpen) ObjectiveStatusMonitor.pollWhileVisible(context, NethraClient(context)) }
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            title = { Text("Stop this reply?") },
+            text = { Text("Nethra will discard the answer she is working on.") },
+            confirmButton = { TextButton(onClick = { confirmStop = false; scope.launch { chatManager.stopResponse() } }) { Text("Stop") } },
+            dismissButton = { TextButton(onClick = { confirmStop = false }) { Text("Keep going") } }
+        )
     }
     if (objectivesOpen) {
         ModalBottomSheet(onDismissRequest = { objectivesOpen = false }) {
@@ -304,7 +323,14 @@ fun ChatScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { scope.launch { chatManager.stopResponse() } }, modifier = Modifier.size(36.dp)) {
+            ObjectiveStatus.overall(taskList)?.let { (light, count) ->
+                TextButton(onClick = { objectivesOpen = true }) {
+                    StatusDot(light)
+                    Spacer(Modifier.width(6.dp))
+                    Text((if (count == 1) "1 task" else "$count tasks") + if (taskHostConnected) "" else " · offline")
+                }
+            }
+            IconButton(onClick = { confirmStop = true }, modifier = Modifier.size(36.dp)) {
                 Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop")
             }
             IconButton(onClick = { scope.launch { chatManager.regenerateResponse() } }, modifier = Modifier.size(36.dp)) {

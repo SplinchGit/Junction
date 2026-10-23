@@ -42,6 +42,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
+const { postMilestones } = require("./nethra-conversation-report");
 let calendarSource = null, gmailSource = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
@@ -190,7 +191,7 @@ async function createWindowImpl() {
   const createCodeDelegation = async (_instruction,owner={}) => {const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content:owner.goal||'',conversationId:owner.conversationId,requestId:crypto.randomUUID()});if(!result?.id||result.status==='NEEDS_SCOPE')throw new Error('Name the local file, folder or repository in the owner coding request.');return result;};
   // Chat is Nethra's front door: it can start and inspect her durable objectives.
   const objectives = {
-    create: async ({ goal, successCriteria, conversationId, requestId, surface }) => (await nethraApi.dispatch('nethra.create', { goal, successCriteria, conversationId, persistent: true }, requestId, String(surface || '').startsWith('android') ? 'android' : 'desktop')).task,
+    create: async ({ goal, successCriteria, mode, conversationId, requestId, surface }) => (await nethraApi.dispatch('nethra.create', { goal, successCriteria, mode, conversationId, persistent: true }, requestId, String(surface || '').startsWith('android') ? 'android' : 'desktop')).task,
     list: async () => (await nethraApi.dispatch('nethra.list', {}, crypto.randomUUID(), 'desktop')).objectives
   };
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
@@ -202,8 +203,9 @@ async function createWindowImpl() {
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
   const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource});
   const reportedOutcomes = new Set();
-  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes)});
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes)});
   nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,deviceCommands,calendar:calendarSource,gmail:gmailSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  for(const task of nethraStore.list())if(postMilestones(task,nethraStore,localData))scheduleSharedSync();
   nethraScheduler.start();
   for(const [label,item] of [['Calendar source',calendarSource],['Gmail source',gmailSource]])try{item.start();}catch(error){recordStartupIssue(label,error);}
   if(app.isPackaged&&nethraStore.settings().persistentStartup)configureStartup({enabled:true,executable:process.execPath,packaged:true,resourcesPath:process.resourcesPath}).catch(error=>recordStartupIssue('Nethra startup registration',error));
@@ -346,6 +348,8 @@ async function syncSharedState(){
 /** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
 function reportObjectiveOutcome(task, reported) {
   if (!task.conversationId || !localData?.conversation(task.conversationId)) return;
+  if(postMilestones(task,nethraStore,localData)){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
+  if(task.status==='SLEEPING')return;
   const key = `${task.id}:${task.status}:${task.summary || ''}`;
   if (reported.has(key)) return;
   reported.add(key);

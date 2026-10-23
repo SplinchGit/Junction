@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');
-const {NethraStore}=require('../src/nethra-store');const {NethraScheduler,clampWake}=require('../src/nethra-scheduler');
+const {NethraStore}=require('../src/nethra-store');const {NethraScheduler,clampWake,monitorWakeAt}=require('../src/nethra-scheduler');
 function fixture(t){const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-scheduler-'));let time=1000000;const store=new NethraStore(directory,{now:()=>time});t.after(()=>{store.close();fs.rmSync(directory,{recursive:true,force:true});});return {store,now:()=>time,advance:n=>time+=n};}
 test('successful runs persist checkpoints and sleeping tasks use no further executions before wake',async t=>{const f=fixture(t),a=f.store.create({goal:'Check later'});let runs=0;const scheduler=new NethraScheduler({...f,execute:async(task,{checkpoint,inference})=>{runs++;checkpoint({evidence:['source']});await inference(async()=>f.advance(5000));return {status:'SLEEPING',nextWakeAt:f.now()+1};}});await scheduler.tick();const task=f.store.get(a.id);assert.equal(task.nextWakeAt,1305000);assert.deepEqual(task.evidence,['source']);assert.equal(task.budget.totalMs,5000);await scheduler.tick();assert.equal(runs,1);});
 test('concurrent schedulers cannot execute two objectives',async t=>{const f=fixture(t);f.store.create({goal:'One'});f.store.create({goal:'Two'});let finish,started;const ready=new Promise(r=>started=r);let runs=0;const execute=()=>{runs++;started();return new Promise(r=>finish=r);};const a=new NethraScheduler({...f,execute}),b=new NethraScheduler({...f,execute});const run=a.tick();await ready;await b.tick();assert.equal(runs,1);finish({status:'COMPLETED'});await run;});
@@ -21,6 +21,15 @@ test('a successful wake resets consecutive retry backoff but retains error histo
   assert.equal(recovered.nextWakeAt,f.now()+300000);
 });
 test('wake bounds prevent a tight loop or a silently lost objective',()=>{assert.equal(clampWake(1,1000),301000);assert.equal(clampWake(9999999999,1000),604801000);});
+test('monitor cadence follows autonomy and an edited profile updates the next check',t=>{
+  const f=fixture(t),task=f.store.create({goal:'Track housing changes',mode:'ONGOING'});
+  assert.equal(monitorWakeAt({autonomy:'ACTIVE'},f.now()),f.now()+6*3600000);
+  assert.equal(monitorWakeAt({autonomy:'QUIET'},f.now()),f.now()+7*86400000);
+  f.store.update(task.id,{status:'SLEEPING',lastMilestoneAt:f.now(),nextWakeAt:monitorWakeAt(task,f.now())},'MILESTONE_VERIFIED');
+  const changed=f.store.configure(task.id,{autonomy:'ACTIVE'},f.store.get(task.id).revision,'change-autonomy');
+  assert.equal(changed.nextWakeAt,f.now()+6*3600000);
+  assert.equal(changed.lastMilestoneAt,f.now());
+});
 test('nonpersistent objectives pause after yielding instead of automatically waking',async t=>{const f=fixture(t),task=f.store.create({goal:'One',persistent:false});const scheduler=new NethraScheduler({...f,execute:async()=>({status:'SLEEPING',nextWakeAt:f.now()+300000})});await scheduler.tick();assert.equal(f.store.get(task.id).status,'PAUSED');});
 test('runner terminal checkpoints survive scheduler result handling and usage accounting',async t=>{const f=fixture(t),task=f.store.create({goal:'One'});const scheduler=new NethraScheduler({...f,execute:async(_task,{checkpoint,inference})=>{await inference(async()=>f.advance(50));const result={status:'COMPLETED',summary:'Verified outcome'};checkpoint(result);return result;}});await scheduler.tick();assert.equal(f.store.get(task.id).status,'COMPLETED');assert.equal(f.store.get(task.id).summary,'Verified outcome');assert.equal(f.store.get(task.id).budget.totalMs,50);assert.equal(scheduler.lastError,undefined);});
 
@@ -55,4 +64,26 @@ test('repeated short wakes without progress stop and request direction',async t=
   assert.equal(live.status,'WAITING_FOR_USER');
   assert.match(live.summary,/no meaningful progress/i);
   f.advance(3600000);await scheduler.tick();assert.equal(runs,6);
+});
+test('ongoing monitoring cannot request unlimited short wakes after clearing its plan',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Track updates',mode:'ONGOING'});
+  let runs=0;
+  const scheduler=new NethraScheduler({...f,execute:async()=>{runs++;return {status:'SLEEPING',pendingSteps:[],nextWakeAt:f.now()+300000};}});
+  for(let i=0;i<6;i++){await scheduler.tick();if(i<5)f.advance(300001);}
+  assert.equal(runs,6);
+  assert.equal(f.store.get(task.id).status,'WAITING_FOR_USER');
+});
+test('healthy unchanged source monitoring reschedules without inference',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Track mail',mode:'ONGOING',sources:['gmail']});
+  f.store.update(task.id,{status:'SLEEPING',lastMilestoneAt:f.now(),nextWakeAt:f.now()},'SETUP');
+  let runs=0;
+  const scheduler=new NethraScheduler({...f,sourceStatus:()=>({status:'CONNECTED'}),execute:async()=>{runs++;return {status:'SLEEPING'};}});
+  await scheduler.tick();
+  assert.equal(runs,0);
+  assert.equal(f.store.get(task.id).status,'SLEEPING');
+  assert.equal(f.store.get(task.id).nextWakeAt,f.now()+86_400_000);
+  assert.equal(f.store.events(task.id).at(-1).kind,'MONITOR_IDLE');
+  f.store.observeAttention({taskId:task.id,source:'gmail',sourceId:'mail-1',revision:'v2',kind:'SOURCE_ADDED',dueAt:f.now()});
+  await scheduler.tick();
+  assert.equal(runs,1);
 });

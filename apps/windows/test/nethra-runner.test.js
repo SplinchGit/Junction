@@ -30,6 +30,45 @@ test('runner uses native messages, explicit completion and never persists thinki
   assert.equal(result.status,'COMPLETED');assert.equal(result.summary,'Report ready');assert.equal(seen[1].at(-1).role,'tool');
   assert.equal(JSON.stringify(f.task).includes('private reasoning'),false);
 });
+test('an ongoing objective saves a verified milestone and sleeps instead of completing',async t=>{
+  const {NethraStore}=require('../src/nethra-store');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-monitor-'));
+  const now=1_800_000_000_000,store=new NethraStore(path.join(root,'store'),{now:()=>now});
+  t.after(()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});
+  const task=store.create({goal:'Track housing updates',mode:'ONGOING'});
+  fs.writeFileSync(path.join(task.workspace,'facts.txt'),'Verified housing updates from the council.');
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[
+    {function:{name:'read_file',arguments:{path:'facts.txt'}}},
+    {function:{name:'update_plan',arguments:{steps:['Read housing updates'],completedSteps:['Read housing updates']}}},
+    {function:{name:'finish_objective',arguments:{summary:'Housing updates checked from the saved council document.'}}}
+  ]}})};
+  const result=await new NethraRunner({store,runtime,now:()=>now}).execute(task);
+  assert.equal(result.status,'SLEEPING');
+  assert.equal(result.nextWakeAt,now+86_400_000);
+  assert.equal(store.get(task.id).status,'SLEEPING');
+  assert.equal(store.events(task.id).filter(event=>event.kind==='MILESTONE_VERIFIED').length,1);
+  const noChange={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[{function:{name:'finish_objective',arguments:{summary:'No new housing updates.'}}}]}})};
+  await new NethraRunner({store,runtime:noChange,now:()=>now+86_400_000}).execute(store.get(task.id));
+  assert.equal(store.events(task.id).filter(event=>event.kind==='MILESTONE_VERIFIED').length,1);
+  assert.equal(store.events(task.id).filter(event=>event.kind==='MONITOR_UNCHANGED').length,1);
+});
+test('a scheduler-run monitoring milestone keeps its journal event for chat delivery',async t=>{
+  const {NethraStore}=require('../src/nethra-store');const {NethraScheduler}=require('../src/nethra-scheduler');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-monitor-scheduled-'));
+  const store=new NethraStore(path.join(root,'store'));
+  t.after(()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});
+  const task=store.create({goal:'Track housing updates',mode:'ONGOING'});
+  fs.writeFileSync(path.join(task.workspace,'facts.txt'),'Verified housing updates from the council.');
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[
+    {function:{name:'read_file',arguments:{path:'facts.txt'}}},
+    {function:{name:'update_plan',arguments:{steps:['Read housing updates'],completedSteps:['Read housing updates']}}},
+    {function:{name:'finish_objective',arguments:{summary:'Housing updates checked from the saved council document.'}}}
+  ]}})};
+  const runner=new NethraRunner({store,runtime});
+  await new NethraScheduler({store,execute:(item,options)=>runner.execute(item,options)}).tick();
+  assert.equal(store.get(task.id).status,'SLEEPING');
+  assert.equal(store.milestoneEvents(task.id).length,1);
+});
 test('plain model prose cannot complete objective and loop is bounded',async t=>{
   const f=fixture(t);let n=0;const runtime={withInference:fn=>fn(),chat:async()=>{n++;return {message:{role:'assistant',content:'Done'}};}};
   const result=await new NethraRunner({store:f.store,runtime}).execute(f.task);assert.equal(n,12);assert.notEqual(result.status,'COMPLETED');

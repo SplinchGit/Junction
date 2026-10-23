@@ -3,12 +3,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {DatabaseSync} = require('node:sqlite');
+const {monitorWakeAt}=require('./nethra-scheduler');
 
 const STATES = new Set(['CREATED','PLANNING','ACTIVE','SLEEPING','WAITING_FOR_USER','BLOCKED','PAUSED','FAILED','CANCELLED','COMPLETED']);
 const TERMINAL = new Set(['COMPLETED','CANCELLED','FAILED']);
 const AUTONOMY = new Set(['QUIET','BALANCED','ACTIVE']);
 const CHECK_INS = new Set(['DAILY','WEEKLY','MILESTONES','MANUAL']);
 const SOURCES = new Set(['calendar','gmail']);
+const MODES = new Set(['FINITE','ONGOING']);
 const validSources=value=>Array.isArray(value)&&value.length<=SOURCES.size&&value.every(item=>SOURCES.has(item))&&new Set(value).size===value.length;
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
 const DAY = 86400000;
@@ -63,16 +65,19 @@ class NethraStore {
   }
   transaction(fn) { this.db.exec('BEGIN IMMEDIATE'); try {const result=fn();this.db.exec('COMMIT');return result;} catch(error){this.db.exec('ROLLBACK');throw error;} }
   list() {return this.db.prepare('SELECT body FROM tasks ORDER BY rowid DESC').all().map(r=>JSON.parse(r.body));}
+  /** The objective currently holding the inference lease, if any (at most one runs at a time). */
+  liveTaskId() {const lease=this.db.prepare('SELECT taskId,expiresAt FROM lease WHERE singleton=1').get();return lease&&lease.expiresAt>this.now()?lease.taskId:null;}
   get(id) {const row=this.db.prepare('SELECT body FROM tasks WHERE id=?').get(id);if(!row)throw new Error('Unknown Nethra task');return JSON.parse(row.body);}
   save(task,kind,detail={}) {task.revision++;task.updatedAt=this.now();this.db.prepare('INSERT INTO tasks VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id,JSON.stringify(task));this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(task.id,this.now(),kind,JSON.stringify(detail));return structuredClone(task);}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {
-    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[]}=input;
+    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE'}=input;
     if(typeof goal!=='string'||!goal.trim()||goal.length>24000)throw new Error('Invalid goal');
     if(!AUTONOMY.has(autonomy))throw new Error('Invalid autonomy profile');
     if(!Number.isSafeInteger(priority)||priority<1||priority>5)throw new Error('Invalid objective priority');
     if(!CHECK_INS.has(checkIn))throw new Error('Invalid check-in policy');
     if(!validSources(sources))throw new Error('Invalid watched sources');
+    if(!MODES.has(mode))throw new Error('Invalid objective mode');
     if(!Array.isArray(readRoots)||readRoots.some(r=>typeof r!=='string'||!path.isAbsolute(r)))throw new Error('Read roots must be absolute paths');
     return this.transaction(()=>{
       const binding=canonical({kind:'create',input}),old=requestId&&this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
@@ -86,14 +91,16 @@ class NethraStore {
       if(runnable>=this.maxRunnableObjectives)throw new Error('Nethra active objective limit reached; pause or finish existing work before creating more.');
       const id=randomUUID(),workspace=path.join(this.directory,'workspaces',id);
       fs.mkdirSync(workspace,{recursive:true});
-      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,revision:0,createdAt:this.now()},'CREATED');
+      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],mode,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,revision:0,createdAt:this.now()},'CREATED');
       if(requestId)this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
     });
   }
   events(id,after=0) {return this.db.prepare('SELECT * FROM events WHERE taskId=? AND seq>? ORDER BY seq LIMIT 500').all(id,after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
+  milestoneEvents(id,after=0) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE taskId=? AND kind=? AND seq>? ORDER BY seq').all(id,'MILESTONE_VERIFIED',after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
   recentEvents(since=0,limit=40) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE at>=? ORDER BY seq DESC LIMIT ?').all(since,limit).map(row=>({seq:row.seq,taskId:row.taskId,at:row.at,kind:row.kind,detail:JSON.parse(row.detail)}));}
   attention(id) {return this.db.prepare('SELECT body,state FROM attention WHERE taskId=? ORDER BY dueAt DESC,id DESC LIMIT 500').all(id).reverse().map(row=>({...JSON.parse(row.body),state:row.state}));}
   pendingAttentionDue(id) {return this.db.prepare('SELECT body FROM attention WHERE taskId=? AND state=\'PENDING\' ORDER BY dueAt LIMIT 100').all(id).map(row=>JSON.parse(row.body)).find(item=>item.reasoningRequired)?.dueAt??null;}
+  hasClaimedReasoningAttention(id,token) {return this.db.prepare('SELECT body FROM attention WHERE taskId=? AND state=\'CLAIMED\' AND leaseToken=?').all(id,token).some(row=>JSON.parse(row.body).reasoningRequired);}
   observeAttention(event) {return this.transaction(()=>{
     const task=this.get(event.taskId);if(TERMINAL.has(task.status))return {created:false,reason:'terminal'};
     const id=require('node:crypto').createHash('sha256').update(canonical([event.taskId,event.source,event.sourceId,event.revision,event.kind])).digest('hex');
@@ -107,19 +114,25 @@ class NethraStore {
     if(!requestId)throw new Error('A request ID is required');
     const binding=canonical({kind:'configure',id,patch,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
     if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
-    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(patch.mode!==undefined&&!MODES.has(patch.mode))throw new Error('Invalid objective mode');
     if(patch.autonomy!==undefined&&!AUTONOMY.has(patch.autonomy))throw new Error('Invalid autonomy profile');
     if(patch.priority!==undefined&&(!Number.isSafeInteger(patch.priority)||patch.priority<1||patch.priority>5))throw new Error('Invalid objective priority');
     if(patch.checkIn!==undefined&&!CHECK_INS.has(patch.checkIn))throw new Error('Invalid check-in policy');
     if(patch.sources!==undefined&&!validSources(patch.sources))throw new Error('Invalid watched sources');
     const task=this.get(id);if(task.revision!==revision)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
-    this.assertLease(id);Object.assign(task,patch);if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}const result=this.save(task,'CONFIGURED',patch);
+    this.assertLease(id);Object.assign(task,patch);if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}
+    if(task.status==='SLEEPING'&&task.mode==='ONGOING'&&task.lastMilestoneAt!=null&&(patch.autonomy!==undefined||patch.mode!==undefined)){
+      task.nextWakeAt=monitorWakeAt(task,this.now());
+      const attentionDue=this.pendingAttentionDue(id);if(Number.isSafeInteger(attentionDue))task.nextWakeAt=Math.min(task.nextWakeAt,attentionDue);
+    }
+    const result=this.save(task,'CONFIGURED',patch);
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}
   settings() {const r=this.db.prepare('SELECT body FROM settings WHERE singleton=1').get();const value={enabled:true,thinking:true,verbose:false,persistentStartup:true,minWakeMs:300000,maxWakeMs:604800000,globalDailyBudgetMs:3600000,objectiveDailyBudgetMs:1200000,...(r?JSON.parse(r.body):{}),thinking:true};return {...value,globalDailyMs:value.globalDailyBudgetMs,objectiveDailyMs:value.objectiveDailyBudgetMs};}
   setSettings(patch) {return this.transaction(()=>{const allowed=['enabled','thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyBudgetMs','objectiveDailyBudgetMs','globalDailyMs','objectiveDailyMs'];if(Object.keys(patch).some(k=>!allowed.includes(k)))throw new Error('Unknown Nethra setting');if(patch.thinking===false)throw new Error('Qwen3 30B always uses thinking');const value={...this.settings(),...patch};if(Object.hasOwn(patch,'globalDailyMs'))value.globalDailyBudgetMs=patch.globalDailyMs;if(Object.hasOwn(patch,'objectiveDailyMs'))value.objectiveDailyBudgetMs=patch.objectiveDailyMs;for(const key of ['globalDailyBudgetMs','objectiveDailyBudgetMs'])if(!Number.isFinite(value[key])||value[key]<0)throw new Error('Invalid budget');if(!Number.isFinite(value.minWakeMs)||value.minWakeMs<300000||!Number.isFinite(value.maxWakeMs)||value.maxWakeMs>604800000||value.maxWakeMs<value.minWakeMs)throw new Error('Invalid wake bounds');for(const key of ['enabled','thinking','verbose','persistentStartup'])if(typeof value[key]!=='boolean')throw new Error('Invalid boolean setting');value.globalDailyMs=value.globalDailyBudgetMs;value.objectiveDailyMs=value.objectiveDailyBudgetMs;this.db.prepare('INSERT INTO settings VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET body=excluded.body').run(JSON.stringify(value));return value;});}
   assertLease(id,token) {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(token){if(!lease||lease.taskId!==id||lease.token!==token||lease.expiresAt<=this.now())throw new Error('Nethra lease expired or fenced');}else if(lease?.taskId===id&&lease.expiresAt>this.now())throw new Error('Nethra task requires its lease token');}
-  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
+  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   control(id,action,revision,requestId) {return this.transaction(()=>{
     if(!['pause','resume','cancel'].includes(action))throw new Error('Invalid Nethra action');
     if(!requestId)throw new Error('A request ID is required');
