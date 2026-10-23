@@ -2,6 +2,20 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {NethraTools}=require('../src/nethra-tools');
+test('watched Google evidence must be fresh and authorized before it can prove progress',async()=>{
+  let reads=0;const state={status:'STALE',lastSyncAt:100};
+  const calendar={status:()=>state,event:()=>{reads++;return {summary:'University coursework deadline'};}};
+  const gmail={status:()=>state,message:()=>{reads++;return {subject:'University coursework reminder'};}};
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},calendar,gmail});
+  const task={id:'coursework',sources:['calendar','gmail']};
+  await assert.rejects(tools.execute('calendar_event',{id:'event-1'},task),/fresh|connected/i);
+  await assert.rejects(tools.execute('gmail_message',{id:'mail-1'},task),/fresh|connected/i);
+  assert.equal(reads,0);
+  state.status='CONNECTED';state.lastSyncAt=Date.now();
+  assert.equal((await tools.execute('calendar_event',{id:'event-1'},task)).untrustedEvent.summary,'University coursework deadline');
+  assert.equal((await tools.execute('gmail_message',{id:'mail-1'},task)).untrustedHeaders.subject,'University coursework reminder');
+  await assert.rejects(tools.execute('calendar_event',{id:'event-1'},{id:'other',sources:[]}),/does not watch/);
+});
 
 function researchTools() {
   const queries=[];

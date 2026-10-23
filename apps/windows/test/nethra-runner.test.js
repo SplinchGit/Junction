@@ -69,9 +69,28 @@ test('a scheduler-run monitoring milestone keeps its journal event for chat deli
   assert.equal(store.get(task.id).status,'SLEEPING');
   assert.equal(store.milestoneEvents(task.id).length,1);
 });
-test('plain model prose cannot complete objective and loop is bounded',async t=>{
+test('plain model prose stops after two attempts and requests direction without claiming progress',async t=>{
   const f=fixture(t);let n=0;const runtime={withInference:fn=>fn(),chat:async()=>{n++;return {message:{role:'assistant',content:'Done'}};}};
-  const result=await new NethraRunner({store:f.store,runtime}).execute(f.task);assert.equal(n,12);assert.notEqual(result.status,'COMPLETED');
+  const result=await new NethraRunner({store:f.store,runtime}).execute(f.task);assert.equal(n,2);assert.equal(result.status,'WAITING_FOR_USER');assert.equal(result.evidence.length,0);
+});
+test('fresh authorized Calendar metadata can prove an ongoing monitoring milestone',async t=>{
+  const {NethraStore}=require('../src/nethra-store');const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-calendar-milestone-'));
+  const now=1_800_000_000_000,store=new NethraStore(root,{now:()=>now});t.after(()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});
+  const task=store.create({goal:'Track university coursework deadlines',mode:'ONGOING',sources:['calendar']});
+  const calendar={status:()=>({status:'CONNECTED',lastSyncAt:now}),event:()=>({id:'coursework-1',summary:'University coursework deadline on Friday',start:'2027-01-30'})};
+  let calls=0;const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[{function:calls++===0?{name:'calendar_event',arguments:{id:'coursework-1'}}:{name:'update_plan',arguments:{steps:['Check university coursework deadlines'],completedSteps:['Check university coursework deadlines']}}},{function:{name:'finish_objective',arguments:{summary:'University coursework deadline found for Friday'}}}]}})};
+  const result=await new NethraRunner({store,runtime,calendar,now:()=>now}).execute(task);
+  assert.equal(result.status,'SLEEPING');assert.equal(store.milestoneEvents(task.id).length,1);
+});
+test('fresh Gmail headers can prove a monitoring milestone without accessing a body or sending mail',async t=>{
+  const {NethraStore}=require('../src/nethra-store');const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-gmail-milestone-'));
+  const now=1_800_000_000_000,store=new NethraStore(root,{now:()=>now});t.after(()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});
+  const task=store.create({goal:'Track university coursework email',mode:'ONGOING',sources:['gmail']});
+  const gmail={status:()=>({status:'CONNECTED',lastSyncAt:now}),message:()=>({id:'mail-1',subject:'University coursework email reminder',from:'course@example.edu'})};
+  let calls=0;const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[{function:calls++===0?{name:'gmail_message',arguments:{id:'mail-1'}}:{name:'update_plan',arguments:{steps:['Check university coursework email'],completedSteps:['Check university coursework email']}}},{function:{name:'finish_objective',arguments:{summary:'University coursework email reminder found'}}}]}})};
+  const result=await new NethraRunner({store,runtime,gmail,now:()=>now}).execute(task);
+  assert.equal(result.status,'SLEEPING');assert.equal(store.milestoneEvents(task.id).length,1);
+  assert.equal(JSON.stringify(result.evidence).includes('bodyAvailable":true'),false);
 });
 test('strict schemas reject extra arguments and sensitive paths',async t=>{
   const f=fixture(t);const tools=new NethraTools({store:f.store});

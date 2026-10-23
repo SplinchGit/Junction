@@ -5,6 +5,11 @@ const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=600000, LEASE_MS=660000;
 function clampWake(at,now=Date.now(),min=MIN_WAKE,max=MAX_WAKE) {return Math.min(now+max,Math.max(now+min,Number.isFinite(at)?at:now+min));}
 const MONITOR_INTERVAL_MS=Object.freeze({QUIET:7*86_400_000,BALANCED:86_400_000,ACTIVE:6*3_600_000});
 function monitorWakeAt(task,now=Date.now()) {return now+(MONITOR_INTERVAL_MS[task.autonomy]||MONITOR_INTERVAL_MS.BALANCED);}
+function safeFailure(error) {
+  const message=String(error?.message||error||'Execution failed');
+  if(/(?:token|secret|password|authorization|credential|api[_-]?key)\s*[:=]/i.test(message))return 'Execution failed; check the local model or source connection.';
+  return message.replace(/[\r\n]/g,' ').slice(0,500);
+}
 
 /** Polling checks durable due dates; inference runs only after a successful claim. */
 class NethraScheduler {
@@ -19,10 +24,12 @@ class NethraScheduler {
     // no changed evidence needs bookkeeping, not a fresh 30B inference.
     if(task.mode==='ONGOING'&&task.lastMilestoneAt!=null&&(task.sources||[]).length>0
       &&!(task.pendingSteps||[]).length&&this.sourceStatus
-      &&task.sources.every(source=>{try{return this.sourceStatus(source)?.status==='CONNECTED';}catch{return false;}})
       &&!this.store.hasClaimedReasoningAttention(task.id,token)
       &&!(Number.isSafeInteger(task.nextDirectionCheckAt)&&task.nextDirectionCheckAt<=this.now())){
-      try{this.store.update(task.id,{status:'SLEEPING',nextWakeAt:monitorWakeAt(task,this.now())},'MONITOR_IDLE',token);}
+      const sources=task.sources.map(source=>{try{return {source,status:this.sourceStatus(source)?.status||'UNKNOWN'};}catch{return {source,status:'ERROR'};}});
+      const unavailable=sources.filter(item=>item.status!=='CONNECTED');
+      const summary=unavailable.length?`Waiting for fresh source access: ${unavailable.map(item=>`${item.source} ${item.status.toLowerCase()}`).join(', ')}. No new check was confirmed.`:task.summary;
+      try{this.store.update(task.id,{status:'SLEEPING',summary,nextWakeAt:monitorWakeAt(task,this.now())},unavailable.length?'MONITOR_SOURCE_UNAVAILABLE':'MONITOR_IDLE',token);}
       finally{this.store.release(task.id,token);this.controller=null;}
       return;
     }
@@ -74,9 +81,11 @@ class NethraScheduler {
       const live=this.store.get(task.id);
       if(['PAUSED','CANCELLED','COMPLETED','FAILED','WAITING_FOR_USER','BLOCKED'].includes(live.status))return;
       try {
-        const errors=[...live.errors,{at:this.now(),message:String(error?.message||error).slice(0,4000)}].slice(-50),retryCount=(Number(live.retryCount)||0)+1;
-        const wake=clampWake(this.now()+MIN_WAKE*2**Math.min(retryCount-1,10),this.now(),settings.minWakeMs,settings.maxWakeMs);
-        this.store.update(task.id,{status:task.persistent?'SLEEPING':'PAUSED',errors,retryCount,summary:abortReason||String(error?.message||error),nextWakeAt:wake},controller.signal.aborted?'INTERRUPTED':'RETRY_SCHEDULED',token);
+        const failure=safeFailure(error),errors=[...live.errors,{at:this.now(),message:failure}].slice(-50),retryCount=(Number(live.retryCount)||0)+1;
+        const exhausted=retryCount>=5;
+        const wake=exhausted?null:clampWake(this.now()+MIN_WAKE*2**Math.min(retryCount-1,10),this.now(),settings.minWakeMs,settings.maxWakeMs);
+        const summary=exhausted?'Nethra could not complete five consecutive wake attempts. Please check the local model or source, then tell me to retry.':abortReason?safeFailure(abortReason):failure;
+        this.store.update(task.id,{status:exhausted?'WAITING_FOR_USER':task.persistent?'SLEEPING':'PAUSED',errors,retryCount,summary,nextWakeAt:wake},exhausted?'RETRY_EXHAUSTED':controller.signal.aborted?'INTERRUPTED':'RETRY_SCHEDULED',token);
       }catch(fenced){if(!/lease/i.test(fenced.message))throw fenced;}
     } finally {
       clearInterval(heartbeat);clearTimeout(deadline);removeAbort();

@@ -105,12 +105,12 @@ class NethraTools {
       return {evidence:compactResearchContext(result),jobId:result.jobId};
     }
     if(name==='calendar_event'){
-      if(!this.calendar||this.calendar.status().status==='DISCONNECTED')throw Error('Google Calendar is not connected on the Windows host');
+      if(!this.calendar||this.calendar.status().status!=='CONNECTED')throw Error('Google Calendar has no fresh connected data on the Windows host');
       if(!(task.sources||[]).includes('calendar'))throw Error('This objective does not watch the calendar');
       const {etag,...event}=this.calendar.event(args.id);return {untrustedEvent:event,source:'google-calendar',freshAsOf:this.calendar.status().lastSyncAt};
     }
     if(name==='gmail_message'){
-      if(!this.gmail||this.gmail.status().status==='DISCONNECTED')throw Error('Gmail is not connected on the Windows host');
+      if(!this.gmail||this.gmail.status().status!=='CONNECTED')throw Error('Gmail has no fresh connected data on the Windows host');
       if(!(task.sources||[]).includes('gmail'))throw Error('This objective does not watch Gmail');
       return {untrustedHeaders:this.gmail.message(args.id),source:'gmail-metadata',bodyAvailable:false,freshAsOf:this.gmail.status().lastSyncAt};
     }

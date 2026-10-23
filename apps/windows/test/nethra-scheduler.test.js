@@ -87,3 +87,37 @@ test('healthy unchanged source monitoring reschedules without inference',async t
   await scheduler.tick();
   assert.equal(runs,1);
 });
+test('an unavailable watched source records an honest idle wake without loading 30B',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Track coursework deadlines',mode:'ONGOING',sources:['calendar']});
+  f.store.update(task.id,{status:'SLEEPING',lastMilestoneAt:f.now(),nextWakeAt:f.now()},'SETUP');
+  let calls=0;const scheduler=new NethraScheduler({...f,sourceStatus:()=>({status:'STALE',lastSyncAt:f.now()-86_400_000}),execute:async()=>{calls++;throw Error('model should not run');}});
+  await scheduler.tick();const sleeping=f.store.get(task.id);
+  assert.equal(calls,0);assert.equal(sleeping.status,'SLEEPING');assert.equal(sleeping.nextWakeAt,f.now()+86_400_000);
+  assert.match(sleeping.summary,/calendar.*stale/i);assert.equal(f.store.events(task.id).at(-1).kind,'MONITOR_SOURCE_UNAVAILABLE');
+});
+test('a real model failure enters durable scheduler backoff instead of a fabricated successful yield',async t=>{
+  const {NethraRunner}=require('../src/nethra-runner');const f=fixture(t),task=f.store.create({goal:'Research coursework'});
+  const runtime={withInference:fn=>fn(),chat:async()=>{throw Error('local model unavailable');}};
+  const runner=new NethraRunner({store:f.store,runtime,now:f.now});
+  await new NethraScheduler({...f,execute:(item,options)=>runner.execute(item,options)}).tick();
+  const retry=f.store.get(task.id);
+  assert.equal(retry.status,'SLEEPING');assert.equal(retry.retryCount,1);assert.equal(retry.errors.length,1);
+  assert.equal(retry.nextWakeAt,f.now()+300000);assert.equal(f.store.events(task.id).at(-1).kind,'RETRY_SCHEDULED');
+});
+test('repeated runtime failures stop after five attempts and ask the owner to retry',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Monitor a source'});let calls=0;
+  const scheduler=new NethraScheduler({...f,execute:async()=>{calls++;throw Error('local model unavailable');}});
+  for(let i=0;i<5;i++){await scheduler.tick();const live=f.store.get(task.id);if(i<4)f.advance(live.nextWakeAt-f.now()+1);}
+  const held=f.store.get(task.id);
+  assert.equal(calls,5);assert.equal(held.status,'WAITING_FOR_USER');assert.equal(held.nextWakeAt,null);
+  assert.equal(held.errors.length,5);assert.match(held.summary,/five|repeated|retry/i);
+  f.advance(30*86_400_000);await scheduler.tick();assert.equal(calls,5);
+});
+test('runtime errors do not save credentials in the objective journal',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Check source health'});
+  const scheduler=new NethraScheduler({...f,execute:async()=>{throw Error('Authorization: private-value');}});
+  await scheduler.tick();
+  const live=f.store.get(task.id);
+  assert.equal(live.errors.length,1);
+  assert.doesNotMatch(JSON.stringify({errors:live.errors,summary:live.summary}),/private-value/);
+});

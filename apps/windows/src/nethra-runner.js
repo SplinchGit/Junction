@@ -16,6 +16,8 @@ function evidenceText(e,store,task){
   if(e.tool==='read_file')return String(e.result?.content||'');
   if(e.tool==='web_search')return JSON.stringify(e.result?.evidence||{});
   if(e.tool==='list_directory')return JSON.stringify(e.result?.entries||[]);
+  if(e.tool==='calendar_event'&&e.result?.source==='google-calendar'&&Number.isFinite(e.result?.freshAsOf))return JSON.stringify(e.result.untrustedEvent||{});
+  if(e.tool==='gmail_message'&&e.result?.source==='gmail-metadata'&&Number.isFinite(e.result?.freshAsOf))return JSON.stringify(e.result.untrustedHeaders||{});
   if(e.tool==='write_draft'){
     const receipt=e.result.actionKey?store.getAction(e.result.actionKey):store.actions?.(task.id).find(a=>a.tool==='write_draft'&&a.result?.sha256===e.result.sha256&&a.args?.path===e.result.path);
     return draftReceiptIsCurrent(receipt,task)?`${receipt.args?.path||''} ${receipt.args?.content||''}`:'';
@@ -124,10 +126,14 @@ class NethraRunner {
       // action was one item in the evidence list. State it first: bounded() truncates from the end.
       const approvedBriefing=approvedNow.length?{approvedActionsCompletedThisWake:approvedNow,approvedActionsNote:'The owner approved these exact actions and Junction has already completed them; the file hashes are in this list. Do not request approval for them again. Mark the related plan steps completed with update_plan, check the success criteria against this evidence, and call finish_objective if they are met.'}:{};
       const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,readRoots:task.readRoots||[],workspace:task.workspace,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-4),ownerInputs:task.ownerInputs||[]};
-      let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,4000)}];
+      let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,4000)}],proseOnlyTurns=0;
       for(;budget.iterations<MAX_ITERATIONS;){
         check();const message=await chat(messages);messages.push(message);
-        if(!message.tool_calls?.length){messages.push({role:'user',content:'Continue using native tools. Prose alone does not complete the objective. Explicitly finish, schedule a wake, or request input.'});continue;}
+        if(!message.tool_calls?.length){
+          if(++proseOnlyTurns>=2)return await persist({status:'WAITING_FOR_USER',summary:'I could not choose a permitted next action. Please give me a more specific next step or an approved source.',nextWakeAt:null},'nethra_direction_required');
+          messages.push({role:'user',content:'Continue using native tools. Prose alone does not complete the objective. Explicitly finish, schedule a wake, or request input.'});continue;
+        }
+        proseOnlyTurns=0;
         for(const call of message.tool_calls){
           check();budget.tools++;const {name,args}=nativeCall(call);let result;
           try{
@@ -138,7 +144,7 @@ class NethraRunner {
               if(completedSteps.some(step=>!args.steps.includes(step)))throw Error('Completed steps must appear in the saved plan');
               await persist({plan:args.steps,completedSteps,pendingSteps:args.steps.filter(s=>!completedSteps.includes(s))});result={saved:true};
             }else if(name==='finish_objective'){
-              if(!state.plan.length||!state.evidence.some(e=>['web_search','read_file','write_draft','list_directory'].includes(e.tool)))throw Error('Completion requires a saved plan and actual tool evidence relevant to the objective and success criteria');
+              if(!state.plan.length||!state.evidence.some(e=>e.result&&!e.result.error&&['web_search','read_file','write_draft','list_directory','calendar_event','gmail_message'].includes(e.tool)))throw Error('Completion requires a saved plan and actual tool evidence relevant to the objective and success criteria');
               if(state.pendingSteps.length)throw Error('Mark completed plan steps with update_plan before finishing');
               const problem=completionError(task,state,cleanText(args.summary),this.store);if(problem)throw Error(problem);
               if(task.mode==='ONGOING'){
@@ -166,9 +172,8 @@ class NethraRunner {
       }
       return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000},'nethra_budget_reached');
     }catch(error){
-      if(signal?.aborted||/lease|fenced/i.test(error.message))throw error;
-      const live=this.store.get(task.id);if(['PAUSED','CANCELLED'].includes(live.status))throw error;
-      return await persist({status:'SLEEPING',summary:cleanText(error.message,500),nextWakeAt:this.now()+60_000},'nethra_yielded');
+      if(/Nethra (?:execution|iteration) budget exhausted/.test(error.message))return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000},'nethra_budget_reached');
+      throw error;
     }
   }
 }
