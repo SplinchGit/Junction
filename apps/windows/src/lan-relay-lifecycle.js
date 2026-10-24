@@ -21,6 +21,7 @@ class LanRelayLifecycle {
     if (!server) throw Object.assign(new Error("LAN service is waiting for an available private network interface."), { code: "LAN_UNAVAILABLE" });
     return server.info();
   }
+  authenticatedClients() { let count = 0; for (const server of this.servers.values()) count += server.authenticatedClients?.() || 0; return count; }
   async start() {
     if (this.running) return;
     this.running = true;

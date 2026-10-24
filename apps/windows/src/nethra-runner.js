@@ -1,7 +1,7 @@
 "use strict";
 const {randomUUID,createHash}=require('node:crypto');
 const {NethraTools,ApprovalRequired,draftReceiptIsCurrent}=require('./nethra-tools');
-const {monitorWakeAt}=require('./nethra-scheduler');
+const {monitorWakeAt,wakeReason}=require('./nethra-scheduler');
 const MODEL='qwen3:30b';
 const MAX_ITERATIONS=12,MAX_TOOLS=10,MAX_MS=10*60_000;
 function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\S]*?(?:<\/think>|$)/gi,'').slice(0,max);}
@@ -60,7 +60,9 @@ class NethraRunner {
   async execute(task,{signal,token,checkpoint,inference=callback=>callback()}={}){
     if(typeof this.runtime.withInference!=='function')throw Error('Shared inference lock is required');
     task={...task,thinking:true};
-    return this.runtime.withInference(()=>this._execute(task,{signal,token,checkpoint,inference}),signal,{priority:'background'});
+    // The shared slot is taken per model call, not per wake: tool work (web fetches, file
+    // reads) never blocks the owner's chat, and an owner message preempts a generating step.
+    return this._execute(task,{signal,token,checkpoint,inference});
   }
   async _execute(task,{signal,token,checkpoint,inference}){
     const timeout=AbortSignal.timeout(MAX_MS);const combined=signal?AbortSignal.any([signal,timeout]):timeout;
@@ -75,7 +77,7 @@ class NethraRunner {
     const chat=async(messages,child=false)=>{
       check();if(budget.iterations>=MAX_ITERATIONS)throw Error('Nethra iteration budget exhausted');budget.iterations++;if(child)budget.childIterations++;
       // Context is deliberately bounded; durable evidence and progress live in the store.
-      const response=await inference(()=>this.runtime.chat(MODEL,messages,this.tools.definitions({child}),combined,null,null,{thinking:true,num_ctx:4096,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET}));
+      const response=await this.runtime.withInference(yielded=>inference(()=>this.runtime.chat(MODEL,messages,this.tools.definitions({child}),yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:4096,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET})),combined,{priority:'background',preemptible:true});
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
       return {role:'assistant',content:cleanText(m.content,3000),...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
     };
@@ -125,7 +127,7 @@ class NethraRunner {
       // Live 30B runs re-requested an approval Junction had already executed, because the completed
       // action was one item in the evidence list. State it first: bounded() truncates from the end.
       const approvedBriefing=approvedNow.length?{approvedActionsCompletedThisWake:approvedNow,approvedActionsNote:'The owner approved these exact actions and Junction has already completed them; the file hashes are in this list. Do not request approval for them again. Mark the related plan steps completed with update_plan, check the success criteria against this evidence, and call finish_objective if they are met.'}:{};
-      const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,readRoots:task.readRoots||[],workspace:task.workspace,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-4),ownerInputs:task.ownerInputs||[]};
+      const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,readRoots:task.readRoots||[],workspace:task.workspace,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-4),ownerInputs:task.ownerInputs||[],...(task.redirectedAt&&(task.ownerInputs||[]).at(-1)?.kind==='redirect'&&!state.pendingSteps.length?{ownerRedirect:{text:task.ownerInputs.at(-1).text,at:new Date(task.redirectedAt).toISOString(),note:'The owner changed direction. Keep verified evidence, then save a revised plan with update_plan before acting. Approvals for the old plan were superseded.'}}:{}),now:new Date(this.now()).toISOString(),nowMs:this.now()};
       let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,4000)}],proseOnlyTurns=0;
       for(;budget.iterations<MAX_ITERATIONS;){
         check();const message=await chat(messages);messages.push(message);
@@ -149,12 +151,12 @@ class NethraRunner {
               const problem=completionError(task,state,cleanText(args.summary),this.store);if(problem)throw Error(problem);
               if(task.mode==='ONGOING'){
                 const fingerprint=evidenceFingerprint(state.evidence),changed=fingerprint!==task.lastMilestoneEvidenceFingerprint;
-                await persist({status:'SLEEPING',summary:changed?cleanText(args.summary):'No new verified evidence since the previous milestone.',completedSteps:state.plan,pendingSteps:[],nextWakeAt:monitorWakeAt(task,this.now()),...(changed?{lastMilestoneAt:this.now(),lastMilestoneEvidenceFingerprint:fingerprint}:{})},changed?'MILESTONE_VERIFIED':'MONITOR_UNCHANGED');return state;
+                await persist({status:'SLEEPING',summary:changed?cleanText(args.summary):'No new verified evidence since the previous milestone.',completedSteps:state.plan,pendingSteps:[],nextWakeAt:monitorWakeAt(task,this.now()),wakeReason:wakeReason('MONITOR','Routine monitoring check after a verified milestone; a source change wakes it sooner',monitorWakeAt(task,this.now())),...(changed?{lastMilestoneAt:this.now(),lastMilestoneEvidenceFingerprint:fingerprint}:{})},changed?'MILESTONE_VERIFIED':'MONITOR_UNCHANGED');return state;
               }
               await persist({status:'COMPLETED',summary:cleanText(args.summary),completedSteps:state.plan,pendingSteps:[],nextWakeAt:null},'nethra_completed');return state;
             }else if(name==='schedule_wake'){
               if(args.at<=this.now()||args.at>this.now()+365*24*60*60_000)throw Error('Wake must be within the next year');
-              await persist({status:'SLEEPING',nextWakeAt:args.at,summary:cleanText(args.reason)},'nethra_sleeping');return state;
+              await persist({status:'SLEEPING',nextWakeAt:args.at,summary:cleanText(args.reason),wakeReason:wakeReason('SCHEDULED',`Nethra scheduled this check: ${cleanText(args.reason,240)}`,args.at)},'nethra_sleeping');return state;
             }else if(name==='request_input'){
               await persist({status:'WAITING_FOR_USER',summary:cleanText(args.question,1000)},'nethra_input_required');return state;
             }else{
@@ -170,9 +172,9 @@ class NethraRunner {
         }
         if(JSON.stringify(messages).length>6000)messages=[messages[0],{role:'user',content:bounded({...seed,plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-3)},4000)}];
       }
-      return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000},'nethra_budget_reached');
+      return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000,wakeReason:wakeReason('CONTINUE','Continue after the per-wake work budget; progress was saved',this.now()+60_000)},'nethra_budget_reached');
     }catch(error){
-      if(/Nethra (?:execution|iteration) budget exhausted/.test(error.message))return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000},'nethra_budget_reached');
+      if(/Nethra (?:execution|iteration) budget exhausted/.test(error.message))return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000,wakeReason:wakeReason('CONTINUE','Continue after the per-wake work budget; progress was saved',this.now()+60_000)},'nethra_budget_reached');
       throw error;
     }
   }

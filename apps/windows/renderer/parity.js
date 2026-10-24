@@ -35,3 +35,32 @@ byId("add-memory").onclick=()=>action(async()=>{await window.junction.addMemory(
 document.querySelector('[data-view="settings"]').addEventListener("click",()=>{loadProvider();loadMemories()});
 document.addEventListener("keydown",event=>{const views=["chat","feed","audit","context","settings"];if(event.ctrlKey&&/^[1-5]$/.test(event.key)){event.preventDefault();showView(views[Number(event.key)-1],{focusHeading:true})}else if(event.ctrlKey&&event.key.toLowerCase()==="n"){event.preventDefault();showView("chat");newChat()}else if(event.ctrlKey&&event.key.toLowerCase()==="b"){event.preventDefault();showView("chat");toggleDrawer()}else if(event.key==="Escape"&&document.querySelector("#view-chat.active")&&!document.querySelector(".chat-layout").classList.contains("drawer-collapsed")){toggleDrawer(true);drawerToggle.focus()}else if(event.key==="/"&&!event.ctrlKey&&!event.metaKey&&document.activeElement?.tagName!=="INPUT"&&document.activeElement?.tagName!=="TEXTAREA"){event.preventDefault();showView("chat");byId("message-input").focus()}});
 loadVerbose().then(()=>loadThreads(true));loadProvider();loadMemories();
+// ── Model readiness and response phases ─────────────────────────────
+// Warming is requested when Chat opens, a conversation is opened or started, and on return to
+// the window; the host deduplicates and never generates text or touches the conversation.
+(()=>{
+  const pill=document.createElement("button");pill.type="button";pill.id="model-pill";pill.className="model-pill";pill.innerHTML="<i></i><span>Checking model…</span>";
+  pill.title="Local model status. Click to load it now.";
+  document.getElementById("new-chat").before(pill);
+  const label=state=>({ready:"Model ready",busy:"Model busy",loading:"Loading model…",cold:"Model not loaded",deferred:"Not loaded (low memory)",failed:"Model load failed",unavailable:"Ollama unavailable",unknown:"Checking model…"})[state]||"Model";
+  const describe=value=>{const parts=[`${value.model||"qwen3:30b"}: ${label(value.state)}`];if(value.keepAlive)parts.push(`kept loaded ${value.keepAlive} after last use`);if(value.lastWarm?.wallMs!=null&&value.lastWarm.outcome==="loaded")parts.push(`last load ${(value.lastWarm.wallMs/1000).toFixed(1)} s (${value.lastWarm.reason})`);if(value.lastError)parts.push(value.lastError);if(value.reason)parts.push(value.reason);return parts.join(" · ");};
+  const show=value=>{if(!value)return;pill.dataset.state=value.state;pill.querySelector("span").textContent=label(value.state);pill.title=`${describe(value)}. Click to load it now.`;};
+  window.junction.onModelState?.(show);
+  let lastWarm=0;
+  const warm=async reason=>{if(Date.now()-lastWarm<5000&&reason!=="manual")return;lastWarm=Date.now();try{show((await window.junction.nethra("nethra.warm",{reason})).model);}catch{}};
+  pill.onclick=()=>warm("manual");
+  const poll=async()=>{try{show(await window.junction.modelState());}catch{}};
+  window.addEventListener("junction:chat-opened",()=>warm("chat_open"));
+  document.getElementById("new-chat")?.addEventListener("click",()=>warm("new_chat"));
+  window.addEventListener("focus",()=>{if(document.getElementById("view-chat").classList.contains("active"))warm("chat_return");});
+  document.querySelector('[data-view="chat"]')?.addEventListener("click",()=>warm("chat_open"));
+  setInterval(poll,15000);poll();warm("chat_open");
+
+  // Phases separate a queue wait or a cold load from reading the prompt, thinking and output.
+  const phaseText={queued:"Waiting for the PC model…",loading_model:"Loading the model on this PC (cold start, about a minute)…",reading_prompt:"Reading your message…",thinking:"Thinking…",responding:"Responding…"};
+  const status=document.getElementById("generation-status");let phaseStarted=0,phase=null,timer=null;
+  const render=()=>{if(!phase)return;const seconds=Math.round((Date.now()-phaseStarted)/1000);status.textContent=`${phaseText[phase]||"Working…"}${seconds>=3?` ${seconds}s`:""}`;};
+  window.junction.onChatPhase?.(value=>{if(!activeRunId||value.runId!==activeRunId)return;if(value.phase!==phase){phase=value.phase;phaseStarted=Date.now();}render();clearInterval(timer);timer=setInterval(render,1000);});
+  const busy=document.querySelector(".conversation");
+  new MutationObserver(()=>{if(busy.getAttribute("aria-busy")!=="true"){phase=null;clearInterval(timer);status.textContent="Nethra is working…";}else if(!phase){status.textContent="Connecting to the local model…";}}).observe(busy,{attributes:true,attributeFilter:["aria-busy"]});
+})();

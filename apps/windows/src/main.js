@@ -4,7 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const QRCode = require("qrcode");
-const { app, BrowserWindow, ipcMain, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, safeStorage, shell, nativeTheme } = require("electron");
 const { DeviceIdentityStore } = require("./device-identity");
 const { nativeGoogleFirebaseSignIn, refreshFirebaseSession, anonymousFirebaseSignIn } = require("./firebase-auth");
 const { registerDevice } = require("./firebase-sync");
@@ -29,7 +29,10 @@ const { Foreman } = require("./foreman");
 const { ForemanExecutor } = require("./foreman-executor");
 const { ForemanApi } = require("./foreman-api");
 const { handleOwnerWorkInstruction: executeOwnerWork } = require("./owner-work-handler");
-const { workSnapshot } = require("./assistant-environment");
+const { workSnapshot, situationContext, sanitizeSession } = require("./assistant-environment");
+const { PresenceTracker } = require("./presence");
+const { progressView } = require("./nethra-progress");
+const { AppearanceStore } = require("./appearance-store");
 const { NethraStore } = require("./nethra-store");
 const { NethraScheduler } = require("./nethra-scheduler");
 const { NethraRunner } = require("./nethra-runner");
@@ -42,14 +45,47 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { postMilestones } = require("./nethra-conversation-report");
-let calendarSource = null, gmailSource = null;
+const { postMilestones, postOutcome } = require("./nethra-conversation-report");
+let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
 const activeAgentRuns = new Map();
 const launchInBackground = process.argv.includes("--background");
 const launchAsHost = process.argv.includes("--agent-host");
 function hasPersistentObjectives(){return nethraStore?.list().some(task=>task.persistent&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status));}
+/** Per-turn host facts for the model: origin, freshness, linked objective, sources, voice state. */
+function situationFor({ surface, conversationId = null, session = null }) {
+  try {
+    const objectives = nethraStore.list(), liveTaskId = nethraStore.liveTaskId();
+    const mine = objectives.filter(task => conversationId && task.conversationId === conversationId);
+    const linkedTask = mine.find(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)) || mine[0] || null;
+    const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
+    const pendingApprovals = objectives.filter(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)).reduce((count, task) => count + nethraStore.approvals(task.id).filter(item => item.status === 'PENDING').length, 0);
+    return situationContext({ surface, objectives, linked, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
+  } catch (error) { recordStartupIssue('situation context', error); return ''; }
+}
+/** Startup warming honours the owner's setting: desktop launches, every launch, or never. */
+function warmForLaunch(reason) {
+  try {
+    const mode = nethraStore?.settings().warmOnStartup || 'desktop';
+    if (mode === 'never' || (mode === 'desktop' && reason !== 'desktop_open')) return;
+    setTimeout(() => { localAgent?.warmer.warm({ reason: `startup:${reason}`, priority: 'background' }).catch(() => {}); }, 2_000).unref?.();
+  } catch (error) { recordStartupIssue('model warm-up', error); }
+}
+/** Deferred outcome reports (quiet hours) are retried here; posting is idempotent. */
+function deliverObjectiveUpdates() {
+  if (!nethraStore || !localData) return;
+  let changed = false;
+  const settings = nethraStore.settings();
+  for (const task of nethraStore.list()) {
+    try {
+      if (postMilestones(task, nethraStore, localData, { settings })) changed = true;
+      if (task.reportPending && postOutcome(task, nethraStore, localData, { settings })) { nethraStore.clearReportPending?.(task.id); changed = true; }
+      else if (task.reportPending && !['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED'].includes(task.status)) nethraStore.clearReportPending?.(task.id);
+    } catch (error) { recordStartupIssue('objective update delivery', error); }
+  }
+  if (changed) { scheduleSharedSync(); mainWindow?.webContents.send('junction:conversations-changed'); }
+}
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
 async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop'){
   const nethraReply=await handleNethraChat({api:nethraApi,content,conversationId,requestId,source});
@@ -195,23 +231,32 @@ async function createWindowImpl() {
     list: async () => (await nethraApi.dispatch('nethra.list', {}, crypto.randomUUID(), 'desktop')).objectives
   };
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
-  localAgent = new LocalAgentRuntime({ toolRegistry });
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
+  // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.
+  const modelProfile = path.join(app.getPath('userData'), 'nethra', 'model-profile.json');
+  localAgent = new LocalAgentRuntime({ toolRegistry, retention: () => nethraStore.settings().idleRetention, profile: { load: () => JSON.parse(fs.readFileSync(modelProfile, 'utf8')), save: value => fs.writeFileSync(modelProfile, JSON.stringify(value)) } });
+  localAgent.warmer.onChange(state => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('junction:model-state', state); });
+  presence = new PresenceTracker({ lanClients: () => lanServer?.authenticatedClients?.() || 0, relayStatus: () => localBrainRelay ? { enabled: true, error: localBrainRelay.lastError || null } : null });
+  appearanceStore = new AppearanceStore(path.join(app.getPath('userData'), 'appearance.json'));
+  // Light/dark choice drives the renderer's existing prefers-color-scheme rules.
+  try { nativeTheme.themeSource = appearanceStore.get().mode; } catch (error) { recordStartupIssue('appearance', error); }
   let deviceSigner=null;
   deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
   const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource});
   const reportedOutcomes = new Set();
-  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes)});
-  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,deviceCommands,calendar:calendarSource,gmail:gmailSource,onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
-  for(const task of nethraStore.list())if(postMilestones(task,nethraStore,localData))scheduleSharedSync();
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes),warmBefore:()=>localAgent.warmer.warm({reason:'objective_due',priority:'background'})});
+  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  deliverObjectiveUpdates();
+  outcomeSweep = setInterval(deliverObjectiveUpdates, 60_000); outcomeSweep.unref?.();
   nethraScheduler.start();
   for(const [label,item] of [['Calendar source',calendarSource],['Gmail source',gmailSource]])try{item.start();}catch(error){recordStartupIssue(label,error);}
   if(app.isPackaged&&nethraStore.settings().persistentStartup)configureStartup({enabled:true,executable:process.execPath,packaged:true,resourcesPath:process.resourcesPath}).catch(error=>recordStartupIssue('Nethra startup registration',error));
   if (process.platform === "win32") {
     try {
-      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: {run:request=>localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId)})}, getBootstrapState: localBrainBootstrapState,
+      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: {run:request=>localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId),situation:situationFor({surface:'android-lan',conversationId:request.conversationId,session:request.session})})}, getBootstrapState: localBrainBootstrapState,
+        onActivity: () => presence.seen('lan'),
         nethraApi,
         worldAuditStore, worldControlStore, worldChatStore, foremanApi,
         onOwnerWork: ({content,conversationId,requestId}) => handleOwnerWorkInstruction(content,conversationId,requestId,'android'),
@@ -247,8 +292,8 @@ async function createWindowImpl() {
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
-    runLocalAgent: async request => {const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android');return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId)});},
-    dispatchAgent: (type,payload,requestId)=>nethraApi.dispatch(type,payload,requestId,'android'),
+    runLocalAgent: async request => {presence.seen('relay','chat');const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android');return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId),situation:situationFor({surface:'android-relay',conversationId:request.conversationId,session:request.session})});},
+    dispatchAgent: (type,payload,requestId)=>{presence.seen('relay',type);return nethraApi.dispatch(type,payload,requestId,'android');},
     syncConversations: payload => new PairedConversationSync(localData, () => {
       scheduleSharedSync(); mainWindow?.webContents.send("junction:conversations-changed");
     }).sync(payload),
@@ -262,7 +307,7 @@ async function createWindowImpl() {
   // entire desktop launch. Ollama stays on its own loopback socket.
   companion = await startCompanion();
   hostInitialized=true;
-  if(launchAsHost)return null;
+  if(launchAsHost){warmForLaunch('host_start');return null;}
   return openDesktopWindow();
 }
 async function openDesktopWindow(){
@@ -285,6 +330,7 @@ async function openDesktopWindow(){
     return mainWindow;
   }
   reconcilePendingDeregistration().catch(()=>{});
+  warmForLaunch(launchInBackground?'background_open':'desktop_open');
   scheduleSharedSync();
   if (!globalThis.junctionSharedPoll) globalThis.junctionSharedPoll = setInterval(() => {
     if (identity?.syncEnabled && identityStore?.getSession()) syncSharedState().catch(() => {});
@@ -348,17 +394,14 @@ async function syncSharedState(){
 /** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
 function reportObjectiveOutcome(task, reported) {
   if (!task.conversationId || !localData?.conversation(task.conversationId)) return;
-  if(postMilestones(task,nethraStore,localData)){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
+  const settings = nethraStore.settings();
+  if(postMilestones(task,nethraStore,localData,{settings})){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
   if(task.status==='SLEEPING')return;
   const key = `${task.id}:${task.status}:${task.summary || ''}`;
   if (reported.has(key)) return;
   reported.add(key);
-  const goal = String(task.goal || '').slice(0, 160), summary = String(task.summary || '').trim().slice(0, 1200);
-  const text = task.status === 'COMPLETED' ? `Done: "${goal}".${summary ? `\n\n${summary}` : ''}`
-    : task.status === 'WAITING_FOR_USER' ? `I need your input on "${goal}".${summary ? `\n\n${summary}` : ''}\n\nAnswer or approve it in Tasks.`
-    : task.status === 'BLOCKED' ? `"${goal}" is blocked.${summary ? `\n\n${summary}` : ''}\n\nOpen Tasks to unblock it.`
-    : `"${goal}" stopped with an error.${summary ? `\n\n${summary}` : ''}`;
-  localData.addMessage(task.conversationId, 'assistant', text, 'JUNCTION');
+  // Quiet hours (or updates switched off) defer the post; the sweep delivers it later.
+  if (!postOutcome(task, nethraStore, localData, { settings })) { if (settings.proactiveUpdates !== 'OFF') nethraStore.markReportPending?.(task.id); return; }
   scheduleSharedSync();
   mainWindow?.webContents.send('junction:conversations-changed');
 }
@@ -438,7 +481,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     if (intent && decisionAllowsDelegation(intent)) {
       reply = {content:"Name the local file, folder or repository for this work. Once the scope is clear, the instruction itself starts the persistent work.",model:config.model};
     } else reply=nativeToolsAvailable
-      ? await localAgent.run({ surface: "desktop", conversationId:conversation.id, thinking:nethraStore.settings().thinking, workSnapshot:workSnapshot(foreman.list(),conversation.id), goal: content, model: config.model || "qwen3:30b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research), onProgress: progress => { if (progress.text !== undefined && !_event.sender.isDestroyed()) _event.sender.send("junction:chat-stream", {runId,provider:"local",model:config.model || "qwen3:30b",text:progress.text}); } })
+      ? await localAgent.run({ surface: "desktop", conversationId:conversation.id, thinking:nethraStore.settings().thinking, workSnapshot:workSnapshot(foreman.list(),conversation.id), goal: content, model: config.model || "qwen3:30b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research), situation: situationFor({ surface: "desktop", conversationId: conversation.id }), onProgress: progress => { if (_event.sender.isDestroyed()) return; if (progress.text !== undefined) _event.sender.send("junction:chat-stream", {runId,provider:"local",model:config.model || "qwen3:30b",text:progress.text}); else if (progress.phase) _event.sender.send("junction:chat-phase", {runId,phase:progress.phase,stage:progress.stage||"",coldStart:progress.coldStart===true}); } })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({
@@ -478,6 +521,9 @@ ipcMain.handle("junction:usage", () => localData.usage());
 ipcMain.handle("junction:delegations",()=>delegation.list());
 ipcMain.handle("junction:foreman",(_event,{type,payload,requestId})=>foremanApi.dispatch(type,payload,requestId));
 ipcMain.handle("junction:nethra",(_event,{type,payload,requestId})=>nethraApi.dispatch(type,payload,requestId));
+ipcMain.handle("junction:model-state",()=>nethraApi.modelState());
+ipcMain.handle("junction:appearance",()=>appearanceStore.get());
+ipcMain.handle("junction:set-appearance",(_event,value)=>{const next=appearanceStore.set(value);nativeTheme.themeSource=next.mode;return next;});
 ipcMain.handle("junction:create-delegation",(_event,value)=>delegation.create(value));
 ipcMain.handle("junction:approve-delegation",(_event,id)=>delegation.approve(id));
 ipcMain.handle("junction:review-delegation",(_event,value)=>delegation.review(value.planId,value.projectId));
@@ -503,6 +549,7 @@ app.on("before-quit", event => {
   if (isQuitting) return;
   event.preventDefault(); isQuitting = true;
   shutdownPromise = (async () => {
+    clearInterval(outcomeSweep);
     await nethraScheduler?.stop();
     calendarSource?.stop(); gmailSource?.stop(); nethraStore?.close(); deviceCommands?.close();
     await foreman?.shutdown();

@@ -1,5 +1,10 @@
 # Junction
 
+Junction now includes the Windows Nethra runtime: local Ollama inference, durable objectives,
+bounded scheduled work, and paired Android access over LAN or an encrypted relay. The phone
+does not need to remain open for authorised Windows objectives to continue. See the
+[24 October continuation report](docs/NETHRA_CONTINUATION_2026-10-24.md) for verification and gaps.
+
 Current verification: [feature catalogue, test results and open findings](docs/audit/2026-09-27-feature-review.md). Music is now [Junction DAW](https://github.com/SplinchGit/Junction-DAW); Mafioso Android is in its [own repository PR](https://github.com/SplinchGit/Mafioso/pull/1).
 
 [![Download APK](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fsplinchgit.github.io%2FJunction%2Flatest.json&query=%24.version&prefix=%E2%AC%87%20&label=DOWNLOAD%20APK&color=4f7cff&style=for-the-badge)](https://splinchgit.github.io/Junction/junction-debug.apk)
@@ -26,9 +31,9 @@ gate between "the model wants to do X" and "X actually happens."
 
 ## What Junction is (and isn't)
 
-- **API-first, no on-device LLM.** You bring a key for Claude, OpenAI, DeepSeek, or any
+- **API providers or a paired Windows model; no phone LLM.** You can use local Ollama on the paired PC, or bring a key for Claude, OpenAI, DeepSeek, or any
   OpenAI-compatible endpoint. Chat and tool-calling run entirely against that provider from the
-  phone — there is no local model and no required backend for text chat.
+  phone for those API providers. Windows inference uses the PC's installed model.
 - **Local-first.** Feed, chat history, the audit log, and durable memory all live in on-device Room
   storage. Firebase sync is opt-in and off by default; the app runs fully without a Google account
   or `google-services.json`.
@@ -210,7 +215,7 @@ Settings > Voice backend chooses:
 - **Realtime** — OpenAI's WebRTC voice API, low latency, needs the Functions/server relay above and sign-in.
 - **On-device** — Android's `SpeechRecognizer`/`TextToSpeech`, routed through your configured text provider. Higher latency, works with any provider, and needs neither Firebase nor the server.
 
-A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. Junction can explain a proposed GitHub change by voice and can read its own source on request, but voice alone never approves a plan, merges a PR, or installs an APK: those remain deliberate on-screen actions.
+A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. A monotonic timer shows active call duration. Supported bounded actions can accept a one-use spoken confirmation after the full disclosure finishes; email sending, notification replies, repository changes and installation still require the screen. Settings shows the actual last-used speech engine/voice and offers previews and optional higher-bitrate Azure audio.
 ## Privacy posture
 
 - Notification ingestion, feed, chat history, memory, and the audit log are local-only by default.

@@ -5,6 +5,13 @@ const {NethraStore}=require('../src/nethra-store');
 const {NethraApi}=require('../src/nethra-api');
 const {LocalDataStore}=require('../src/local-data');
 function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-api-'));const store=new NethraStore(dir);t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});return {store,api:new NethraApi({store,runtime:{modelCapabilities:async()=>({known:true,thinking:true})}})};}
+
+test('desktop status starts model prewarming without waiting for loading',async t=>{
+  const {api}=fixture(t);let warmed=0;
+  api.runtime.prewarm=()=>{warmed++;return new Promise(()=>{});};
+  const result=await api.dispatch('nethra.status',{},'warm-desktop','desktop');
+  assert.equal(result.model,'qwen3:30b');assert.equal(warmed,1);
+});
 test('opening an objective chat creates one durable association and retries reuse it',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-link-'));
   const store=new NethraStore(dir),localData=new LocalDataStore(path.join(dir,'local'));

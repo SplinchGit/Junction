@@ -23,9 +23,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * engine stays as the fallback (see [LocalVoiceSession]) so voice never depends
  * on the network being up or a key being set.
  *
- * Only the *speaking* half is replaced. Android's on-device recognizer is
- * accurate and free, so transcription stays local -- that also means no audio
- * of the owner's voice ever leaves the device, only the assistant's reply text.
+ * Only synthesis is replaced. Android's selected recognition service handles transcription
+ * and may itself use the network. Azure synthesis receives the assistant's reply text.
  *
  * The key is read from [com.splinch.junction.data.secret.KeyStorage] like every
  * other provider credential, and travels only to Azure's endpoint.
@@ -34,10 +33,11 @@ class AzureNeuralVoice(
     private val context: Context,
     private val apiKey: String,
     private val region: String = DEFAULT_REGION,
-    private val voice: String = DEFAULT_VOICE
+    val voice: String = DEFAULT_VOICE,
+    /** Defaults to the format Junction always used, so the owner's voice sounds the same. */
+    val outputFormat: String = DEFAULT_FORMAT
 ) {
 
-    private val client = OkHttpClient()
     private var player: MediaPlayer? = null
 
     /** True when there's a key to authenticate with; callers fall back to on-device TTS otherwise. */
@@ -56,11 +56,11 @@ class AzureNeuralVoice(
      * Junction. Deliberately not called for a [stop]: an interruption is the owner taking
      * their turn, not Junction finishing one.
      */
-    suspend fun speak(text: String, onFinished: () -> Unit = {}): Boolean {
+    suspend fun speak(text: String, onFailed: () -> Unit = {}, onFinished: () -> Unit = {}): Boolean {
         if (text.isBlank() || !isConfigured) return false
 
         val audio = withContext(Dispatchers.IO) { synthesize(text) } ?: return false
-        return withContext(Dispatchers.Main) { play(audio, onFinished) }
+        return withContext(Dispatchers.Main) { play(audio, onFinished, onFailed) }
     }
 
     fun stop() {
@@ -76,9 +76,9 @@ class AzureNeuralVoice(
             .url("https://$region.tts.speech.microsoft.com/cognitiveservices/v1")
             .post(buildSsml(text).toRequestBody("application/ssml+xml".toMediaType()))
             .addHeader("Ocp-Apim-Subscription-Key", apiKey)
-            // MP3 rather than raw PCM: ~10x smaller over a mobile connection,
-            // and MediaPlayer decodes it natively.
-            .addHeader("X-Microsoft-OutputFormat", "audio-24khz-48kbitrate-mono-mp3")
+            // MP3 rather than raw PCM: ~10x smaller over a mobile connection, decoded natively.
+            // The 48 kHz format asks Azure for its high-fidelity rendering of the same voice.
+            .addHeader("X-Microsoft-OutputFormat", outputFormat)
             .addHeader("User-Agent", "Junction")
             .build()
 
@@ -97,7 +97,7 @@ class AzureNeuralVoice(
         }.onFailure { Log.w(TAG, "Azure TTS request failed", it) }.getOrNull()
     }
 
-    private fun play(audio: File, onFinished: () -> Unit): Boolean {
+    private fun play(audio: File, onFinished: () -> Unit, onFailed: () -> Unit): Boolean {
         stop()
         return runCatching {
             player = MediaPlayer().apply {
@@ -117,7 +117,7 @@ class AzureNeuralVoice(
                     // ending, or the caller waits for audio that is never coming.
                     Log.w(TAG, "Playback error (what=$what extra=$extra)")
                     stop()
-                    onFinished()
+                    onFailed()
                     true
                 }
                 prepare()
@@ -146,6 +146,8 @@ class AzureNeuralVoice(
     }
 
     companion object {
+        // Voice instances are resolved each utterance; retain connection pooling.
+        private val client = OkHttpClient()
         private const val TAG = "AzureNeuralVoice"
         private const val CACHE_FILE = "azure_tts.mp3"
 
@@ -154,6 +156,9 @@ class AzureNeuralVoice(
 
         /** A natural-sounding British neural voice; overridable in Settings. */
         const val DEFAULT_VOICE = "en-GB-OllieMultilingualNeural"
+
+        /** The original format; 48 kHz is an owner opt-in in Voice settings. */
+        const val DEFAULT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
 
         /** Provider id this key is stored under in KeyStorage. */
         const val KEY_ID = "azure_speech"

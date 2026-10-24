@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
         lastPrewarmAt = now
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val paired = runCatching { com.splinch.junction.data.sync.lan.LanIdentityStore(applicationContext).loadPairing() != null || com.splinch.junction.data.sync.firebase.LocalBrainPairingStore.load(applicationContext) != null }.getOrDefault(false)
-            if (paired) runCatching { com.splinch.junction.data.sync.lan.NethraClient(applicationContext).request("nethra.status") }
+            if (paired) com.splinch.junction.data.sync.lan.PcModelWarmup.request(applicationContext, "app_open")
         }
     }
     private val prefsRepository by lazy { (application as JunctionApplication).container.prefs }
@@ -113,7 +113,8 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            JunctionTheme {
+            val appearance by prefsRepository.appearanceFlow.collectAsState(initial = com.splinch.junction.data.preference.AppearancePrefs())
+            JunctionTheme(appearance) {
                 val context = LocalContext.current
                 val lifecycle = (context as? ComponentActivity)?.lifecycle
                 val scope = rememberCoroutineScope()

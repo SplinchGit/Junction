@@ -53,6 +53,8 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
                 conversationId?.let { put("conversationId", it) }
                 put("mode", "agent")
                 if (forceResearch) put("forceSearch", true)
+                // Transient voice/text state for this turn; the host validates it again.
+                com.splinch.junction.assistant.runtime.TurnSessionContext.current?.let { put("session", JSONObject(it.toPayload())) }
             }.toString()
             val (ciphertext, nonce) = LocalBrainPairingStore.encrypt(pairing.key, "JBP1|${pairing.brainId}|$requestId|request", plain)
             val document = firestore.collection("local_brains").document(pairing.brainId).collection("commands").document(requestId)

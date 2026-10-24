@@ -15,8 +15,16 @@ data class PlanCallbacks(
     val appendSystemMessage: suspend (String) -> Unit,
     val sendRealtimeResult: suspend (String, String, String) -> Unit,
     val endVoiceTurn: (String, String?) -> Unit,
-    val applyStep: suspend (Step) -> ToolApplyResult
+    val applyStep: suspend (Step) -> ToolApplyResult,
+    /**
+     * Offered a plan parked for approval. Returns true when it took over the spoken side
+     * (a disclosure for voice confirmation, or why the screen is needed).
+     */
+    val voicePrompt: suspend (Plan, Boolean) -> Boolean = { _, _ -> false }
 )
+
+/** What actually happened when an approved plan ran, for a verified spoken result. */
+data class PlanRunResult(val confirmations: List<String>, val failures: List<String>)
 
 /** Coordinates proposal, approval, execution, persistence, and active-plan state. */
 class PlanCoordinator(
@@ -92,11 +100,13 @@ class PlanCoordinator(
             run(plan, speakOutcomes, callbacks)
         } else {
             _activePlan.value = plan
-            callbacks.endVoiceTurn(
-                "plan_awaiting_approval",
-                "I need your approval before I can do that — it's waiting on screen."
-                    .takeIf { speakOutcomes }
-            )
+            if (!callbacks.voicePrompt(plan, speakOutcomes)) {
+                callbacks.endVoiceTurn(
+                    "plan_awaiting_approval",
+                    "I need your approval before I can do that — it's waiting on screen."
+                        .takeIf { speakOutcomes }
+                )
+            }
         }
     }
 
@@ -104,6 +114,18 @@ class PlanCoordinator(
         val plan = _activePlan.value ?: return
         _activePlan.value = null
         run(plan, speakOutcomes = true, callbacks)
+    }
+
+    /**
+     * Approves only if [planId] is still the plan waiting, so a spoken confirmation can
+     * never approve a plan that replaced the one read aloud. Consumed once: the active plan
+     * is cleared before anything runs. The caller speaks the verified result.
+     */
+    suspend fun approveExact(planId: String, callbacks: PlanCallbacks, stillApproved: (Plan) -> Boolean): PlanRunResult? {
+        val plan = _activePlan.value ?: return null
+        if (plan.id != planId || !stillApproved(plan)) return null
+        _activePlan.value = null
+        return run(plan, speakOutcomes = false, callbacks)
     }
 
     suspend fun cancel(callbacks: PlanCallbacks) {
@@ -120,7 +142,7 @@ class PlanCoordinator(
         plan: Plan,
         speakOutcomes: Boolean,
         callbacks: PlanCallbacks
-    ) {
+    ): PlanRunResult {
         executor.approve(plan)
         val outcomes = mutableListOf<String>()
         executor.run(plan) { step ->
@@ -148,6 +170,11 @@ class PlanCoordinator(
                 "Skipped after an earlier step failed or was blocked"
             )
         }
+        return PlanRunResult(
+            confirmations = outcomes,
+            failures = plan.steps.filter { it.status == StepStatus.FAILED || it.status == StepStatus.SKIPPED }
+                .map { "${it.summary}: ${it.outcomeDetail ?: it.blockReason ?: "did not complete"}" }
+        )
     }
 
     companion object {

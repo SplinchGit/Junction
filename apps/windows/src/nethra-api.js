@@ -1,10 +1,16 @@
 "use strict";
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const TYPES = ['nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
+const {progressView}=require('./nethra-progress');
+const TYPES = ['nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
-  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail}); }
+  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact}); }
+  /** Model residency for clients: connecting vs. cold vs. loading vs. ready is shown, not guessed. */
+  modelState(){
+    const state=this.runtime.modelState?.()||{state:'unknown'};
+    return {state:state.state,model:state.model||'qwen3:30b',resident:Boolean(state.resident),warming:Boolean(state.warming),keepAlive:state.keepAlive||null,expiresAt:state.expiresAt||null,checkedAt:state.checkedAt||null,lastWarm:state.lastWarm||null,lastError:state.lastError||null,reason:state.reason||null};
+  }
   async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop') {
     if(!TYPES.includes(type))throw new Error('Unsupported Nethra operation');
     if(!payload||typeof payload!=='object'||Array.isArray(payload)||Buffer.byteLength(JSON.stringify(payload))>24000)throw new Error('Invalid Nethra payload');
@@ -13,10 +19,11 @@ class NethraApi {
     if(type==='nethra.list'){
       // live/step/progress let clients show where Nethra is without fetching each objective.
       const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
-      const objectives=s.list().slice(0,100).map(t=>({live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
+      const brief=t=>{try{const p=progressView(t,s,{liveTaskId:liveId});return {doing:p.doing,next:p.next,wake:p.wake,waitingFor:{kind:p.waitingFor.kind,detail:String(p.waitingFor.detail||'').slice(0,240)},lastAccomplished:p.lastAccomplished};}catch{return null;}};
+      const objectives=s.list().slice(0,100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
-        for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);}
+        for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);if(task.tracking&&length<120)task.tracking={doing:task.tracking.doing,wake:task.tracking.wake,waitingFor:{kind:task.tracking.waitingFor.kind}};}
       }
       if(Buffer.byteLength(JSON.stringify(result))>50000)throw new Error('Objective list exceeds the transport limit');
       return result;
@@ -29,7 +36,8 @@ class NethraApi {
     }
     if(type==='nethra.get') {
       const task=s.get(payload.id),approvals=s.approvals(task.id),events=s.events(task.id,Number.isSafeInteger(payload.after)?payload.after:0);
-      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id)};
+      const progress=progressView(task,s,{liveTaskId:s.liveTaskId?.()??null});
+      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id),progress};
       // Keep the exact actionable payload when it fits. Older approvals and
       // large evidence remain on Windows; the mobile frame is bounded.
       const pending=approvals.filter(item=>item.status==='PENDING');
@@ -37,7 +45,8 @@ class NethraApi {
       const short=(value,max)=>String(value||'').slice(0,max);
       const briefList=value=>(Array.isArray(value)?value:[]).slice(-8).map(item=>short(item,300));
       const mobileTask={id:task.id,conversationId:task.conversationId||null,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
-      const result={task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
+      const mobileProgress={...progress,evidence:progress.evidence.slice(-4),outputs:progress.outputs.slice(-4).map(item=>({...item,path:String(item.path||'').slice(-200)}))};
+      const result={progress:mobileProgress,task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
       if(Buffer.byteLength(JSON.stringify(result))>50000&&selected){
         const content=String(selected.args?.content||'');
         result.approvals=[{...selected,args:{...selected.args,content:content.slice(0,1000)},contentSha256:crypto.createHash('sha256').update(content).digest('hex'),reviewOnWindows:true}];
@@ -66,6 +75,20 @@ class NethraApi {
       return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
     }
     if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
+    if(type==='nethra.redirect'){
+      if(typeof payload.instruction!=='string'||!payload.instruction.trim()||payload.instruction.length>4000)throw new Error('Provide a bounded new direction');
+      return {task:s.redirect(payload.id,payload.instruction.trim(),payload.revision,requestId)};
+    }
+    if(type==='nethra.warm'){
+      // Loading never generates text, appends messages or creates tasks. Respond immediately;
+      // clients poll status (or pass wait:true) rather than holding a request open for a minute.
+      const reason=typeof payload.reason==='string'&&/^[a-z_]{1,40}$/.test(payload.reason)?payload.reason:'client';
+      if('wait' in payload&&typeof payload.wait!=='boolean')throw new Error('Invalid wait flag');
+      const priority=['chat_open','new_chat','chat_return','voice','manual'].includes(reason)?'interactive':'background';
+      const warming=this.runtime.warmer?this.runtime.warmer.warm({reason:`${source}:${reason}`,priority,force:reason==='manual'&&source==='desktop'}):Promise.resolve(this.runtime.prewarm?.());
+      if(payload.wait===true)await warming;else warming?.catch?.(()=>{});
+      return {model:this.modelState()};
+    }
     if(type==='nethra.approve') {
       if(typeof payload.approved!=='boolean')throw new Error('Choose Approve or Reject');
       return {approval:s.decideApproval(payload.id,payload.approved,requestId)};
@@ -87,7 +110,7 @@ class NethraApi {
     if(type.startsWith('nethra.device.')){
       const d=this.deviceCommands;if(!d)throw new Error('Device commands are unavailable on this host');
       // The phone is authenticated by pinned TLS or the paired relay key; deviceId only selects its queue.
-      if(type==='nethra.device.pull'){if(!DEVICE_ID.test(payload.deviceId||''))throw new Error('Invalid device');return {commands:d.pull(payload.deviceId,{limit:5})};}
+      if(type==='nethra.device.pull'){if(!DEVICE_ID.test(payload.deviceId||''))throw new Error('Invalid device');try{this.onPhoneContact?.();}catch{}return {commands:d.pull(payload.deviceId,{limit:5})};}
       if(type==='nethra.device.result'){if(!DEVICE_ID.test(payload.deviceId||''))throw new Error('Invalid device');const command=d.result(payload.deviceId,{id:payload.id,state:payload.state,result:payload.result??null});
         // A result for an objective's check wakes that objective; the result itself stays untrusted data.
         if(command.taskId)try{new NethraAttention(s,{now:s.now}).observe({taskId:command.taskId,source:'device',sourceId:command.id,revision:command.state,evidenceRef:`device:${command.id}`,priority:2});}catch(error){if(!/Unknown Nethra task/.test(error.message))throw error;}
@@ -97,9 +120,9 @@ class NethraApi {
       return {commands:d.list(payload.limit||20)};
     }
     if(type==='nethra.settings') {
-      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs'];
+      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates'];
       if(Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Unknown Nethra setting');
-      if('persistentStartup' in payload&&source!=='desktop')throw new Error('Change Windows startup on this PC');
+      if(('persistentStartup' in payload||'warmOnStartup' in payload)&&source!=='desktop')throw new Error('Change Windows startup on this PC');
       if('thinking' in payload&&typeof payload.thinking!=='boolean')throw new Error('Invalid thinking preference');
       if(payload.thinking===false)throw new Error('Qwen3 30B always uses thinking');
       if('verbose' in payload&&typeof payload.verbose!=='boolean')throw new Error('Invalid verbose preference');
@@ -108,10 +131,11 @@ class NethraApi {
       try{await this.onSettings(settings,payload);}catch(error){s.setSettings(before);throw error;}
       return {settings};
     }
-    // A status check means a client just opened; load the model while the owner types.
-    if(source!=='desktop')this.runtime.prewarm?.();
+    // A status check from an opening client loads the model while the owner types. Newer
+    // clients send warm:false for diagnostics (phone STATUS checks) and call nethra.warm.
+    if(payload.warm!==false)this.runtime.prewarm?.('qwen3:30b',{reason:`${source}:status`,priority:'background'});
     let model={known:false,thinking:false};try{model=await this.runtime.modelCapabilities('qwen3:30b',AbortSignal.timeout(3000));}catch{}
-    return {agent:'Nethra',model:'qwen3:30b',capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:this.gmail?.status()||{status:'DISCONNECTED'}}};
+    return {agent:'Nethra',model:'qwen3:30b',modelState:this.modelState(),presence:this.presence?.()||null,capabilities:model,thinkingRequired:true,settings:{...s.settings(),thinking:true},host:'Windows',schedulerRunning:Boolean(this.scheduler?.timer),activeObjectives:s.list().filter(t=>['PLANNING','ACTIVE'].includes(t.status)).length,sources:{calendar:this.calendar?.status()||{status:'DISCONNECTED'},gmail:this.gmail?.status()||{status:'DISCONNECTED'}}};
   }
 }
 module.exports={NethraApi,NETHRA_TYPES:TYPES};

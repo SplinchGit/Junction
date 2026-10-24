@@ -100,6 +100,8 @@ class ChatManager(
 
         /** Messages kept by a default /trim or the chat menu's trim action. */
         const val DEFAULT_TRIM_KEEP = 20
+
+        private const val APPROVAL_TAG_PREFIX = "approval:"
     }
 
     private val appContext = context.applicationContext
@@ -183,6 +185,16 @@ class ChatManager(
 
     val localVoiceListening: StateFlow<Boolean> = voiceCoordinator.localListening
     val localVoiceSpeaking: StateFlow<Boolean> = voiceCoordinator.localSpeaking
+    /** Live call state with a monotonic start, for the visible call timer. */
+    val voiceCallStatus: StateFlow<com.splinch.junction.feature.voice.model.VoiceCallStatus> = voiceCoordinator.callStatus
+    /** The voice that actually produced the most recent speech. */
+    val ttsIdentity: StateFlow<com.splinch.junction.feature.voice.model.TtsIdentity?> = voiceCoordinator.ttsIdentity
+    fun installedDeviceVoices() = voiceCoordinator.installedDeviceVoices()
+    suspend fun setVoicePrefs(value: com.splinch.junction.data.preference.VoicePrefs) = voiceCoordinator.setVoicePrefs(value)
+    fun previewVoice(value: com.splinch.junction.data.preference.VoicePrefs, cloud: Boolean): Boolean = voiceCoordinator.previewVoice(value, cloud)
+
+    /** One spoken approval offer at a time, bound to the exact plan that was read aloud. */
+    private val voiceApproval = VoiceApprovalGate()
 
     private val _lastUndo = MutableStateFlow<UndoAction?>(null)
     val lastUndo: StateFlow<UndoAction?> = _lastUndo.asStateFlow()
@@ -278,6 +290,8 @@ class ChatManager(
         raw: String,
         imagePath: String? = null,
         forceResearch: Boolean = false,
+        /** Spoken (from a live call) or typed; reported to the model as transient session state. */
+        inputMode: InputMode = InputMode.TYPED,
         /**
          * Fires exactly once per call, on every exit path, with a coarse summary of how
          * the turn ended. Optional and additive -- omitted by the voice/chat-UI callers
@@ -321,6 +335,13 @@ class ChatManager(
         turnAdmissionMutex.lock()
         try {
             val turnId = turnEpoch.begin()
+            // Rebuilt every turn and never stored: a call that has ended stops here.
+            TurnSessionContext.current = TurnSessionContext.of(
+                voiceCoordinator.callStatus.value,
+                speechOutputOn = voiceCoordinator.speechModeEnabled.value,
+                input = inputMode,
+                nowElapsedMs = android.os.SystemClock.elapsedRealtime()
+            )
             activeTextTurnJob.get()?.cancelAndJoin()
             activeTextTurnJob.set(null)
             _streamingAssistant.value = null
@@ -714,8 +735,120 @@ class ChatManager(
         appendSystemMessage = ::appendSystemMessage,
         sendRealtimeResult = ::sendRealtimeResult,
         endVoiceTurn = ::endVoiceTurn,
-        applyStep = ::applyStepAndReport
+        applyStep = ::applyStepAndReport,
+        voicePrompt = ::offerVoiceApproval
     )
+
+    private fun stepHash(step: Step): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val canonical = step.tool + ":" + canonicalJson(step.arguments)
+        return digest.digest(canonical.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun canonicalJson(value: Any?): String = when (value) {
+        null, JSONObject.NULL -> "null"
+        is JSONObject -> value.keys().asSequence().toList().sorted().joinToString(",", "{", "}") { JSONObject.quote(it) + ":" + canonicalJson(value.opt(it)) }
+        is org.json.JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonicalJson(value.opt(it)) }
+        is String -> JSONObject.quote(value)
+        else -> value.toString()
+    }
+
+    private fun disclosureFor(plan: Plan) = VoiceApprovalPolicy.disclose(plan, toolExecutor::draftDisclosure, ::stepHash)
+
+    /**
+     * Called when a plan is parked for approval. During an owner-started local call, reads an
+     * exact disclosure aloud and offers spoken confirmation for eligible actions; otherwise
+     * says why it needs the screen. Returns false when there is no live call.
+     */
+    private suspend fun offerVoiceApproval(plan: Plan, speakOutcomes: Boolean): Boolean {
+        val callSession = voiceCoordinator.activeLocalCallSession() ?: return false
+        when (val disclosure = disclosureFor(plan)) {
+            is VoiceApprovalPolicy.Disclosure.Eligible -> {
+                voiceApproval.offer(plan.id, disclosure.digest, disclosure.verb, disclosure.spoken, disclosure.summary, callSession, android.os.SystemClock.elapsedRealtime())
+                appendSystemMessage("Read aloud for spoken confirmation: ${disclosure.spoken}")
+                voiceCoordinator.speakTagged(disclosure.spoken, APPROVAL_TAG_PREFIX + plan.id, afterCurrent = !speakOutcomes)
+            }
+            is VoiceApprovalPolicy.Disclosure.ScreenOnly -> {
+                voiceApproval.clear()
+                voiceCoordinator.speakTagged("I need your approval for that on screen, because ${disclosure.reason}.", "screen:" + plan.id, afterCurrent = !speakOutcomes)
+            }
+        }
+        return true
+    }
+
+    override fun onTaggedSpeechCompleted(tag: String) {
+        val pending = voiceApproval.pending ?: return
+        if (tag == APPROVAL_TAG_PREFIX + pending.planId) voiceApproval.promptCompleted(android.os.SystemClock.elapsedRealtime())
+    }
+
+    /** Routes one recognised utterance through a pending spoken approval, if there is one. */
+    private suspend fun handleSpokenApproval(text: String): Boolean {
+        if (voiceApproval.pending == null) return false
+        val plan = activePlan.value
+        val approvalSession = voiceCoordinator.activeLocalCallSession()
+        val digest = plan?.let { (disclosureFor(it) as? VoiceApprovalPolicy.Disclosure.Eligible)?.digest }
+        val decision = voiceApproval.handle(text, android.os.SystemClock.elapsedRealtime(), voiceCoordinator.activeLocalCallSession(), plan?.id, digest)
+        when (decision) {
+            VoiceApprovalGate.Decision.PassThrough -> return false
+            is VoiceApprovalGate.Decision.Approve -> {
+                appendMessage(ChatMessage(sender = Sender.USER, content = text, provenance = Provenance.OWNER, sourceRef = "voice_approval:${decision.planId}"))
+                val current = activePlan.value
+                if (current?.id != decision.planId) {
+                    voiceCoordinator.speak("That proposal is no longer waiting, so nothing was done.")
+                    return true
+                }
+                val at = java.time.LocalTime.now().withNano(0)
+                appendSystemMessage("Approved by voice at $at: ${decision.summary}. (Spoken confirmation during your active call; speech recognition does not verify who is speaking.)")
+                recordVoiceApproval(current, decision.utterance, decision.digest)
+                // Runs once, then reports what the tools themselves confirmed, not the plan.
+                val result = planCoordinator.approveExact(decision.planId, planCallbacks()) { candidate ->
+                    approvalSession != null && voiceCoordinator.activeLocalCallSession() == approvalSession &&
+                        (disclosureFor(candidate) as? VoiceApprovalPolicy.Disclosure.Eligible)?.digest == decision.digest
+                }
+                val spoken = when {
+                    result == null -> "That proposal is no longer waiting, so nothing was done."
+                    result.failures.isNotEmpty() -> "That didn't fully complete. ${result.failures.first().take(200)}"
+                    result.confirmations.isNotEmpty() -> result.confirmations.joinToString(" ").take(400)
+                    else -> "Done, but the action didn't report a confirmation. Check the chat for details."
+                }
+                voiceCoordinator.speak(spoken)
+            }
+            is VoiceApprovalGate.Decision.Cancel -> {
+                appendMessage(ChatMessage(sender = Sender.USER, content = text, provenance = Provenance.OWNER, sourceRef = "voice_approval:${decision.planId}"))
+                if (activePlan.value?.id == decision.planId) planCoordinator.cancel(planCallbacks())
+                voiceCoordinator.speak("Cancelled. Nothing was sent.")
+            }
+            is VoiceApprovalGate.Decision.Say -> {
+                val pending = voiceApproval.pending
+                if (decision.promptAgain && pending != null) voiceCoordinator.speakTagged(decision.text, APPROVAL_TAG_PREFIX + pending.planId, afterCurrent = false)
+                else voiceCoordinator.speak(decision.text)
+            }
+        }
+        return true
+    }
+
+    /** Audit row for the approval itself, alongside TrustGate's per-step rows. */
+    private suspend fun recordVoiceApproval(plan: Plan, utterance: String, digest: String) {
+        runCatching {
+            actionLogDao.insert(com.splinch.junction.data.database.audit.ActionLogEntity(
+                id = UUID.randomUUID().toString(),
+                timestamp = System.currentTimeMillis(),
+                sessionId = session.sessionId,
+                planId = plan.id,
+                toolName = "voice_approval",
+                argumentsJson = JSONObject().put("utterance", utterance).put("disclosureDigest", digest)
+                    .put("callSession", voiceCoordinator.callStatus.value.sessionId ?: "").toString(),
+                planText = plan.steps.joinToString("; ") { it.summary },
+                riskTier = plan.steps.maxByOrNull { it.riskTier.ordinal }?.riskTier?.name ?: "INAPP",
+                effectiveTier = plan.steps.maxByOrNull { it.riskTier.ordinal }?.riskTier?.name ?: "INAPP",
+                triggerProvenance = Provenance.OWNER.name,
+                tainted = plan.tainted,
+                taintSource = plan.taintSource,
+                decision = "confirmed",
+                outcomeDetail = "Owner confirmed by voice during an active local call; not speaker-verified."
+            ))
+        }
+    }
 
     private suspend fun applyStepAndReport(step: Step): ToolApplyResult {
         val call = PendingToolCall(step.callId, step.tool, step.arguments, step.summary)
@@ -778,13 +911,14 @@ class ChatManager(
                 "or error messages that may appear elsewhere in this conversation." +
                 // Told explicitly rather than inferred, so replies are shaped for
                 // the ear when they're going to be spoken aloud.
-                if (voiceCoordinator.speechModeEnabled.value) {
-                    "\n\nRight now the owner is talking to you by voice and your reply will be read " +
-                        "aloud. Answer in one or two spoken sentences. Use no markdown, no lists, and " +
+                (if (voiceCoordinator.speechModeEnabled.value) {
+                    "\n\nYour reply will be read aloud. Answer in one or two spoken sentences. Use no markdown, no lists, and " +
                         "no URLs. If the full answer is long, give the headline and offer to go deeper."
                  } else {
                      "\n\nThe owner is typing to you and reading your reply on screen."
-                 } + "\n\n" + AssistantPrompt.androidCapabilityContext(exposedTools.map { it.name }),
+                 }) + (TurnSessionContext.current?.let { "\n\nSession (transient, this turn only): " + it.promptLine() } ?: "") +
+                    "\n\nLocal time: " + java.time.ZonedDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("EEE d MMM yyyy, HH:mm")) + " (" + java.time.ZoneId.systemDefault().id + ")." +
+                    "\n\n" + AssistantPrompt.androidCapabilityContext(exposedTools.map { it.name }),
             provenance = Provenance.JUNCTION,
             sourceRef = "junction:actor-policy"
         )
@@ -1219,10 +1353,14 @@ class ChatManager(
 
     override fun onLocalUtterance(text: String) {
         if (text.isBlank()) return
-        scope.launch { sendUserMessage(text) }
+        scope.launch {
+            if (handleSpokenApproval(text)) return@launch
+            sendUserMessage(text, inputMode = InputMode.SPOKEN)
+        }
     }
 
     override fun onVoiceCallEnded() {
+        voiceApproval.clear()
         scope.launch {
             conversationCoordinator.setSpeechMode(false)
         }

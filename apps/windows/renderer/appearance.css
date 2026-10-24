@@ -1,0 +1,83 @@
+/* Appearance system: palettes recolour the shared tokens, artwork sits on its own layer behind
+   the views, and petals are a separate canvas. Light/dark follows Electron's nativeTheme, so the
+   existing prefers-color-scheme rules apply to an explicit choice as well as to "system". */
+
+/* ── Palettes (dark) ───────────────────────────────────────────── */
+:root[data-palette="sakura"]{--brand-blue:#c97a8f;--brand-violet:#9a7aa8;--blue:#d89aab;--md-primary:#ecbccb;--md-primary-container:#5c3443;--md-on-primary-container:#ffd9e2;--md-secondary:#d8bfd9;--md-secondary-container:#4d3a52;--accent-soft:#3a2530}
+:root[data-palette="moss"]{--brand-blue:#7f9f86;--brand-violet:#8f9a76;--blue:#9cc0a4;--md-primary:#b6d4bb;--md-primary-container:#2f4636;--md-on-primary-container:#d2ecd6;--md-secondary:#c9d0b0;--md-secondary-container:#3d4530;--accent-soft:#1f2b23}
+:root[data-palette="sakura"] .primary,:root[data-palette="moss"] .primary{background:var(--brand-blue)}
+:root[data-palette="sakura"] .compose .research-toggle.active,:root[data-palette="moss"] .compose .research-toggle.active,
+:root[data-palette="sakura"] .compose .chat-options[open]>summary,:root[data-palette="moss"] .compose .chat-options[open]>summary{background:var(--md-primary-container);color:var(--md-on-primary-container)}
+:root[data-palette="sakura"] .message .bubble a,:root[data-palette="moss"] .message .bubble a{color:var(--md-primary)}
+:root[data-palette="sakura"] .generation-status,:root[data-palette="moss"] .generation-status{color:var(--md-primary)}
+:root[data-palette="sakura"] .message.user .bubble{background:#2a1f27;border-color:#4a3340}
+:root[data-palette="moss"] .message.user .bubble{background:#1d2620;border-color:#34463a}
+
+@media(prefers-color-scheme:light){
+  :root[data-palette="sakura"]{--brand-blue:#b0566f;--brand-violet:#8a5d93;--blue:#b0566f;--md-primary:#a14a63;--md-primary-container:#ffd9e2;--md-on-primary-container:#3e0019;--md-secondary:#7d5585;--md-secondary-container:#f6dcf8;--accent-soft:#fbeef2}
+  :root[data-palette="moss"]{--brand-blue:#4c6b53;--brand-violet:#5f6a45;--blue:#4c6b53;--md-primary:#3f6248;--md-primary-container:#d2ecd6;--md-on-primary-container:#0b2013;--md-secondary:#5c6440;--md-secondary-container:#e1e8c8;--accent-soft:#eef4ee}
+  :root[data-palette="sakura"] .message.user .bubble{background:#fbeef2;border-color:#ecc9d4;color:#3a2a30}
+  :root[data-palette="moss"] .message.user .bubble{background:#eef4ee;border-color:#cbdccc;color:#1f2b23}
+}
+
+/* ── Artwork layer ─────────────────────────────────────────────── */
+main{isolation:isolate}
+#ambient{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;opacity:0;transition:opacity .6s ease}
+:root[data-artwork="sakura-mountain"] #ambient{opacity:1}
+#ambient .art{position:absolute;top:0;right:0;height:100%;aspect-ratio:941/1672;max-width:62%;background:url("assets/sakura-mountain.webp") right bottom/cover no-repeat;
+  /* Fade the scene into the page so it frames the edge and never sits under message text. */
+  -webkit-mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%);mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%);
+  opacity:calc(var(--art-intensity,.55) * .9);filter:saturate(.85)}
+#ambient .wash{position:absolute;inset:0;background:radial-gradient(ellipse at 85% 100%,rgba(196,120,146,.10),transparent 55%)}
+#ambient canvas{position:absolute;inset:0;width:100%;height:100%}
+@media(prefers-color-scheme:light){#ambient .art{opacity:calc(var(--art-intensity,.55) * .45);filter:saturate(.7) brightness(1.35)}}
+main>.view,main>#toast,main>#error{position:relative;z-index:1}
+/* Keep reading surfaces solid enough over the scene. */
+:root[data-artwork="sakura-mountain"] .view.active{background:transparent}
+:root[data-artwork="sakura-mountain"] #view-chat .conversation{background:linear-gradient(to right,rgba(9,11,16,.82),rgba(9,11,16,.55) 70%,rgba(9,11,16,.25))}
+:root[data-artwork="sakura-mountain"] .threads{background:rgba(12,15,21,.92)}
+:root[data-artwork="sakura-mountain"] .compose .composer-row{background:rgba(18,23,32,.94)}
+@media(prefers-color-scheme:light){
+  :root[data-artwork="sakura-mountain"] #view-chat .conversation{background:linear-gradient(to right,rgba(249,249,255,.9),rgba(249,249,255,.7) 70%,rgba(249,249,255,.35))}
+  :root[data-artwork="sakura-mountain"] .threads{background:rgba(242,242,250,.95)}
+  :root[data-artwork="sakura-mountain"] .compose .composer-row{background:rgba(255,255,255,.95)}
+}
+
+/* ── Model status pill ─────────────────────────────────────────── */
+.model-pill{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:20px;font:600 11px inherit;color:var(--muted);background:transparent;cursor:pointer;white-space:nowrap}
+.model-pill i{width:8px;height:8px;border-radius:50%;background:#6b7280}
+.model-pill[data-state="ready"] i,.model-pill[data-state="busy"] i{background:var(--green,#66d8a2)}
+.model-pill[data-state="loading"] i{background:#e3b65c;animation:pill-pulse 1.6s ease-in-out infinite}
+.model-pill[data-state="failed"] i,.model-pill[data-state="unavailable"] i{background:#ef8a8a}
+.model-pill[data-state="deferred"] i,.model-pill[data-state="cold"] i{background:#8b93a3}
+@keyframes pill-pulse{50%{opacity:.35}}
+:root[data-motion="reduced"] .model-pill i{animation:none}
+@media(prefers-reduced-motion:reduce){.model-pill i{animation:none}}
+
+/* ── Objective tracking block ──────────────────────────────────── */
+.tracking{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:12px}
+.tracking dt{color:var(--muted);font-weight:600}
+.tracking dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+.tracking .needs{color:#e8b86b}
+.redirect-row{display:flex;gap:8px;margin-top:8px}
+.redirect-row textarea{flex:1;min-height:36px}
+
+/* ── Appearance settings ───────────────────────────────────────── */
+.appearance-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:10px}
+.appearance-grid label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted)}
+.appearance-grid select,.appearance-grid input[type=time]{height:32px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;padding:0 8px}
+.appearance-grid .inline{flex-direction:row;align-items:center;gap:8px}
+.swatches{display:flex;gap:8px}
+.swatches button{width:28px;height:28px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.swatches button[aria-pressed="true"]{border-color:var(--md-primary,#b9c5ff)}
+
+/* The closed task drawer sits off-canvas; never let it create a horizontal scrollbar. */
+#view-chat .chat-layout{overflow:clip}
+
+/* Appearance and readiness panels stack their controls under the heading. */
+.settings #appearance-settings{display:block}
+.settings #appearance-settings>div{display:block;width:100%}
+.settings #appearance-settings h2{margin:0 0 6px}
+@media(prefers-color-scheme:light){.square{background:#fff;color:#4a5263;border-color:var(--line)}}
+.settings article>.appearance-grid,.settings #appearance-settings .appearance-grid{display:grid;justify-content:stretch}
+.settings article.panel:has(>.appearance-grid){display:block}

@@ -46,7 +46,11 @@ class AndroidVoiceEngine(
      * Settings takes effect immediately instead of after an app restart.
      */
     private val cloudVoiceProvider: () -> AzureNeuralVoice? = { null },
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main),
+    /** The owner's on-device voice choice; the engine default unless they picked one. */
+    private val deviceVoicePreference: () -> String = { com.splinch.junction.data.preference.VoicePrefs.DEVICE_ENGINE_DEFAULT },
+    /** Reports the voice that actually spoke each utterance. */
+    private val onIdentity: (TtsIdentity) -> Unit = {}
 ) : VoiceEngine {
 
     private var events: VoiceEngineEvents? = null
@@ -96,6 +100,7 @@ class AndroidVoiceEngine(
             VoiceTrace.ttsReady(ttsReady)
             if (ttsReady) {
                 tts?.language = Locale.getDefault()
+                applyDeviceVoicePreference()
                 // Speak anything that arrived while the engine was still starting.
                 pendingUtterance.take()?.let { queued -> speakOnDevice(queued) }
             } else {
@@ -112,7 +117,7 @@ class AndroidVoiceEngine(
             override fun onDone(utteranceId: String?) = reportFinished(utteranceId)
 
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) = reportFinished(utteranceId)
+            override fun onError(utteranceId: String?) = reportFailed(utteranceId)
 
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
                 // Deliberately silent. Every stop that matters goes through stopSpeaking,
@@ -169,11 +174,12 @@ class AndroidVoiceEngine(
         if (cloud?.isConfigured == true) {
             VoiceTrace.speakRequested(text.length, "cloud")
             activeCloudVoice = cloud
+            onIdentity(TtsIdentity("Azure AI Speech", null, cloud.voice, "en-GB", network = true, format = azureFormatLabel(cloud.outputFormat)))
             speakJob = scope.launch {
                 // Returns once playback has *started*; completion arrives on the callback,
                 // which is what actually ends the turn. Treating the start as the end put
                 // the microphone live underneath Junction's own voice for the whole reply.
-                val spoke = cloud.speak(text) { reportFinished(utteranceId) }
+                val spoke = cloud.speak(text, onFailed = { reportFailed(utteranceId) }) { reportFinished(utteranceId) }
                 if (spoke) {
                     events?.onSpeechStarted(utteranceId)
                 } else {
@@ -181,7 +187,8 @@ class AndroidVoiceEngine(
                     // engine rather than going silent.
                     Log.w(TAG, "Cloud voice unavailable; falling back to on-device TTS")
                     activeCloudVoice = null
-                    if (!speakOnDevice(text)) reportFinished(utteranceId)
+                    reportDeviceIdentity(fallbackFrom = "Azure ${cloud.voice}")
+                    if (!speakOnDevice(text)) reportFailed(utteranceId)
                 }
             }
             return true
@@ -202,9 +209,60 @@ class AndroidVoiceEngine(
         }
         VoiceTrace.speakRequested(text.length, "device")
         val id = currentUtteranceId ?: return false
+        if (activeCloudVoice == null) reportDeviceIdentity()
         val accepted = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
         if (accepted != TextToSpeech.SUCCESS) Log.w(TAG, "TTS refused the utterance")
         return accepted == TextToSpeech.SUCCESS
+    }
+
+    /**
+     * Applies the owner's on-device voice choice. The default leaves the engine's own voice
+     * untouched, which is what Junction always used; automatic best-offline selection and
+     * named voices are opt-in. A missing named voice falls back to the engine default.
+     */
+    private fun applyDeviceVoicePreference() {
+        val choice = deviceVoicePreference()
+        if (choice == com.splinch.junction.data.preference.VoicePrefs.DEVICE_ENGINE_DEFAULT) return
+        runCatching {
+            val voices = tts?.voices.orEmpty()
+            val name = if (choice == com.splinch.junction.data.preference.VoicePrefs.DEVICE_BEST_OFFLINE) {
+                preferredSpeechVoice(voices.map {
+                    SpeechVoice(it.name, it.locale, it.quality, it.latency, it.isNetworkConnectionRequired,
+                        !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))
+                }, Locale.getDefault())
+            } else choice
+            voices.firstOrNull { it.name == name }?.let { tts?.voice = it }
+        }.onFailure { Log.w(TAG, "Voice selection unavailable; using engine default") }
+    }
+
+    private fun reportDeviceIdentity(fallbackFrom: String? = null) {
+        val engine = tts ?: return
+        val voice = runCatching { engine.voice }.getOrNull()
+        onIdentity(TtsIdentity(
+            provider = "Android TextToSpeech",
+            engine = runCatching { engine.defaultEngine }.getOrNull(),
+            voice = voice?.name ?: "engine default",
+            locale = (voice?.locale ?: Locale.getDefault()).toLanguageTag(),
+            network = voice?.isNetworkConnectionRequired == true,
+            quality = voice?.quality,
+            fallbackFrom = fallbackFrom
+        ))
+    }
+
+    /** Installed on-device voices for the owner's picker (name, locale, network, quality). */
+    fun installedVoices(): List<SpeechVoice> = runCatching {
+        tts?.voices.orEmpty().map {
+            SpeechVoice(it.name, it.locale, it.quality, it.latency, it.isNetworkConnectionRequired,
+                !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))
+        }.filter { it.installed }.sortedWith(compareBy({ it.locale.toLanguageTag() }, { it.name }))
+    }.getOrDefault(emptyList())
+
+    /** Re-reads the owner's choice, e.g. after it changes in Settings. */
+    fun refreshDeviceVoice() {
+        if (!ttsReady) return
+        // Reset to the engine default first so "engine default" really restores it.
+        runCatching { tts?.defaultVoice?.let { tts?.voice = it } }
+        applyDeviceVoicePreference()
     }
 
     override fun stopSpeaking() {
@@ -238,6 +296,14 @@ class AndroidVoiceEngine(
         tts = null
         ttsReady = false
         events = null
+    }
+
+    /** Failed audio ends the turn without claiming a tagged disclosure was heard. */
+    private fun reportFailed(utteranceId: String?) {
+        if (utteranceId != null && utteranceId != currentUtteranceId) return
+        currentUtteranceId = null
+        events?.onSpeechStopped()
+        events?.onSpeechFinished(null)
     }
 
     /** Report a reply reaching its end, unless it has already been overtaken or stopped. */

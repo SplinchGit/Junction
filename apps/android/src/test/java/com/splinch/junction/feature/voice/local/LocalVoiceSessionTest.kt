@@ -29,6 +29,19 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class LocalVoiceSessionTest {
 
+    @Test fun `stopped disclosure cannot later report successful tagged completion`() = runTest {
+        val h = onACall()
+        h.session.speak("Send the exact proposal?", "approval:plan")
+        runCurrent()
+        val oldId = h.engine.lastUtteranceId
+        h.engine.events.onSpeechStopped()
+        h.engine.events.onSpeechFinished(oldId)
+        runCurrent()
+        assertFalse(h.listener.completedTags.contains("approval:plan"))
+        h.session.stop()
+        runCurrent()
+    }
+
     // ── Doubles ─────────────────────────────────────────────────────────────
 
     private class FakeVoiceEngine(private val clock: () -> Long) : VoiceEngine {
@@ -94,6 +107,8 @@ class LocalVoiceSessionTest {
     }
 
     private class RecordingListener : LocalVoiceListener {
+        val completedTags = mutableListOf<String?>()
+        override fun onSpeechCompleted(tag: String?) { completedTags += tag }
         val heard = mutableListOf<String>()
         val errors = mutableListOf<String>()
         var listening = false

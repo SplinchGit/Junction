@@ -1,5 +1,14 @@
 # Junction for Windows
 
+Nethra includes local Ollama inference and a persistent objective scheduler, store, approvals,
+checkpoints and evidence tracking. Android can use this runtime over paired LAN or the encrypted
+relay; closing the phone UI does not stop authorised host objectives.
+
+The October continuation adds shared model warming, readiness states, startup/retention settings,
+interactive priority, structured situation context, objective progress and controls, quiet-hour
+reporting, and persistent appearance choices (system/light/dark, Junction/Sakura/Moss and optional
+Sakura Mountain artwork). See [verification and remaining gaps](../../docs/NETHRA_CONTINUATION_2026-10-24.md).
+
 This Electron app packages the local PC companion as a native Windows install and
 adds the first same-owner account-linking foundation. The local companion starts
 inside the app on an ephemeral loopback port with a random in-memory bearer token;
@@ -14,8 +23,8 @@ it is never exposed to the LAN.
 - Firebase refresh tokens encrypted with Electron `safeStorage` (Windows DPAPI).
 - One-click, explicit foreground-app UI Automation inspection through the existing
   typed OWNER-provenance proposal and audit pipeline.
-- Local-only default. No polling, screenshot capture, continuous context upload,
-  raw UI metadata sync, or desktop mutation capability.
+- Local-only default. No continuous screen capture or raw UI metadata upload. Authorised
+  persistent objectives may poll connected sources and use scoped execution tools.
 - Local desktop Chat, Feed, Audit, Context & devices, Settings, memory, provider
   routing/usage, and a keyboard-accessible conversation drawer.
 - Built-in Junction Search with no API key or companion service: guarded public-HTTPS
@@ -23,7 +32,7 @@ it is never exposed to the LAN.
   jobs, and passage citations.
 - An always-available local tool runtime for Ollama. Its schema-constrained loop may search up
   to three times across seven bounded model passes; deterministic egress and citation validation sit
-  outside the model, and no mutation tools are exposed.
+  outside the model. Tool availability and execution scope depend on the approved workflow.
 - **Codex on this PC** is a selectable chat workflow. It invokes the locally
   installed, ChatGPT-signed-in Codex CLI in read-only, ephemeral mode, so it
   uses the subscription attached to that CLI login instead of storing an API

@@ -513,12 +513,16 @@ fun SettingsScreen(
         }
 
         item {
+            AppearanceSettings(userPrefs)
+        }
+
+        item { VoiceIdentitySettings(userPrefs, chatManager) }
+
+        item {
             Text(text = "Voice quality", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "This phone's built-in voice is free but sounds robotic. Add an Azure Speech key " +
-                    "for natural neural voices — Azure's free tier covers 500,000 characters a month, " +
-                    "far more than normal use. Your speech is still recognised on-device either way, so " +
-                    "no recording of your voice ever leaves the phone.",
+                text = "Add an Azure Speech key to use the configured neural voice. Reply text is sent to Azure for synthesis and usage may be billed. " +
+                    "Speech recognition uses your selected backend and the phone's recognition service, which may require a network connection.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

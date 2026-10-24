@@ -1,4 +1,5 @@
 "use strict";
+const {isSelfCapabilityQuestion} = require('./self-capabilities');
 const INTENTS=['conversation','question','research','code_discussion','inspect','modify','planning','troubleshoot','tool'];
 const ROUTING_SCHEMA={type:"object",additionalProperties:false,required:["intent","action","authorization","query"],properties:{intent:{type:"string",enum:INTENTS},action:{type:"string",enum:["answer","search","delegate"]},authorization:{type:"string",enum:["none","explicit","unclear"]},query:{type:"string"}}};
 const FALLBACK=Object.freeze({intent:'conversation',action:'answer',authorization:'none',query:''});
@@ -13,6 +14,7 @@ const CORRECTION = /^(?:(?:no|nope|still\s+(?:false|wrong|incorrect)|(?:that(?:'
 const FOLLOWUP_SEARCH = /^(?:(?:please|no|still\s+(?:false|wrong|incorrect)|(?:that(?:'s|\s+is)|you(?:'re|\s+are))\s+(?:false|wrong|incorrect))[,!?.\s]+)*(?:(?:web[\s_]*search|google|search|verify)\s+(?:it|this|that|again)|look\s+(?:it|this|that)\s+up|search\s+(?:the\s+web|online))[.!?\s]*$/i;
 function detectSearchRequirement(value, history = []) {
   const goal=String(value||'').replace(/\s+/g,' ').trim();
+  if (isSelfCapabilityQuestion(goal)) return {required:false,query:'',reasons:['host_capabilities']};
   const matched=SEARCH_PATTERNS.filter(pattern=>pattern.test(goal)).map(pattern=>pattern.source);
   if (FOLLOWUP_SEARCH.test(goal)) {
     // Resolve only a chain of explicit corrections/search retries. Never sweep

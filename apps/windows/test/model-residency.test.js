@@ -82,8 +82,24 @@ test('a reply that starts answering within budget is never cut',async()=>{
   assert.equal(bodies.length,1);assert.equal(result.message.content,'Fine.');assert.equal(result.thinkingBudgetReached,undefined);
 });
 
+test('finite reasoning budgets stream and stop even without progress subscribers',async()=>{
+  const {agent,bodies}=streamingRuntime([...thinkingEvents(2000),{done:true,message:{}}]);
+  const result=await agent.chatOnce('qwen3:30b',[{role:'user',content:'Hello'}],[],null,null,null,{thinkingBudget:96});
+  assert.equal(bodies[0].stream,true);
+  assert.equal(bodies.length,2);
+  assert.equal(result.message.content,'Hello there.');
+});
+
+test('thinking notifications are coalesced but deliver the final character count',async()=>{
+  const {agent}=streamingRuntime([...thinkingEvents(100),{message:{content:'Fine.'}},{done:true,message:{}}]);
+  const updates=[];
+  await agent.chatOnce('qwen3:30b',[],[],null,null,null,{onThinking:value=>updates.push(value),thinkingBudget:256});
+  assert.ok(updates.length<=3,`received ${updates.length} notifications`);
+  assert.equal(updates.at(-1).characters,thinkingEvents(100).map(e=>e.message.thinking).join('').length);
+});
+
 test('simple turns get the small budget and research-shaped turns keep the safety cap',async()=>{
-  for(const [goal,expected] of [['Nethraaaaa',256],['Are you 14b or 30?',256],['Compare the UK and Scottish housing strategies',1100]]){
+  for(const [goal,expected] of [['Hello',96],['Nethraaaaa',256],['Are you 14b or 30?',256],['Compare the UK and Scottish housing strategies',1100]]){
     const {agent,bodies}=streamingRuntime([{message:{content:'ok'}},{done:true,eval_count:1,message:{}}]);
     agent.chatOnce=(original=>async function(...args){bodies.push({budget:args[6]?.thinkingBudget});return original.apply(this,args);})(agent.chatOnce);
     await agent.run({goal,model:'qwen3:30b',history:[],surface:'android-relay',onProgress:async()=>{}}).catch(()=>{});

@@ -204,7 +204,7 @@ class LocalBrainRelay {
         }, 1_000);
         try {
           reportStage = progressReporter(stage => this.update(item.document, state.session, { status: answer ? "streaming" : "running", error: stage }, null), this.now);
-          const result = await this.runLocalAgent({ surface:'android-relay', conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, forceSearch:payload.forceSearch===true, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
+          const result = await this.runLocalAgent({ surface:'android-relay', session:payload.session&&typeof payload.session==='object'?payload.session:null, conversationId:typeof payload.conversationId==='string'?payload.conversationId.slice(0,160):null, goal, model: payload.model, forceSearch:payload.forceSearch===true, history: payload.messages.slice(0, ownerIndex), signal: controller.signal, isCancelled: () => this.cancelled(state, item), runId: id,
             onProgress: async progress => {
               if (progress.text !== undefined) { answer = progress.text; await flush(); }
               else reportStage(progress.stage);

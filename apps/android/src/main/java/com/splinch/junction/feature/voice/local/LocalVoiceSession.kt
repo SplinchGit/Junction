@@ -24,6 +24,9 @@ interface LocalVoiceListener {
      * nothing is listening is the exact illusion that makes voice look broken.
      */
     fun onHandsFreeEnded()
+
+    /** A tagged utterance played to its end (not stopped, overtaken or interrupted). */
+    fun onSpeechCompleted(tag: String?) {}
 }
 
 /**
@@ -71,6 +74,12 @@ class LocalVoiceSession(
     /** Polls [floor] while the line is open; runs only for the duration of a call. */
     private var floorWatchJob: Job? = null
 
+    /** Tags for utterances in flight, keyed by utterance ID, so completion can be attributed. */
+    private val utteranceTags = mutableMapOf<String, String>()
+
+    /** Speech to play once the current reply finishes, instead of re-arming the mic. */
+    private var queuedSpeech: Pair<String, String?>? = null
+
     /** Pending re-arm, cancelled whenever the owner or a new turn overtakes it. */
     private var reArmJob: Job? = null
 
@@ -109,6 +118,7 @@ class LocalVoiceSession(
         // Also drops any reply still waiting on the speech engine to start: the owner is
         // talking now, so something they interrupted must not surface afterwards.
         engine.stopSpeaking()
+        queuedSpeech = null
         handsFree.start(mode)
         watchFloor()
         arm()
@@ -138,12 +148,23 @@ class LocalVoiceSession(
         releaseFloorAndReArm(reason)
     }
 
-    fun speak(text: String) = onSession {
-        if (text.isBlank()) {
+    /**
+     * Speaks after the reply currently playing, or now if nothing is playing. Used for an
+     * approval disclosure that follows the model's own sentence without cutting it off.
+     */
+    fun speakAfterCurrent(text: String, tag: String? = null) = onSession {
+        if (floor.holder == CallFloor.Holder.JUNCTION_SPEAKING) queuedSpeech = text to tag else speakNow(text, tag)
+    }
+
+    fun speak(text: String, tag: String? = null) = onSession { speakNow(text, tag) }
+
+    private fun speakNow(text: String, tag: String?) {
+        val spoken = speechText(text)
+        if (spoken.isBlank()) {
             // Nothing to say still ends the turn. Returning silently here is how a reply
             // that came back empty used to strand the line.
             releaseFloorAndReArm("empty_reply")
-            return@onSession
+            return
         }
 
         // Never speak into a live mic: the recogniser would transcribe Junction and answer
@@ -154,8 +175,11 @@ class LocalVoiceSession(
         // A reply still playing has been overtaken.
         engine.stopSpeaking()
 
-        floor.junctionSpeaking(engine.nowMillis(), text.length)
-        if (!engine.speak(text, UUID.randomUUID().toString())) {
+        floor.junctionSpeaking(engine.nowMillis(), spoken.length)
+        val utteranceId = UUID.randomUUID().toString()
+        if (tag != null) utteranceTags[utteranceId] = tag
+        if (!engine.speak(spoken, utteranceId)) {
+            utteranceTags.remove(utteranceId)
             // The engine refused outright, so nothing will be heard and no completion
             // callback is coming. Hand the line back rather than wait for the watchdog.
             releaseFloorAndReArm("speech_refused")
@@ -237,6 +261,12 @@ class LocalVoiceSession(
     override fun onSpeechFinished(utteranceId: String?) = onSession {
         listener.onSpeakingStateChanged(false)
         engine.stopBargeInListener()
+        listener.onSpeechCompleted(utteranceId?.let { utteranceTags.remove(it) })
+        queuedSpeech?.let { (text, tag) ->
+            queuedSpeech = null
+            speakNow(text, tag)
+            return@onSession
+        }
         // Junction has finished its reply, so the owner's turn is next. Leave a short
         // handover for Samsung's TTS/AudioRecord path to release the microphone before
         // SpeechRecognizer asks for it. Re-arming in the same millisecond makes the OEM
@@ -252,6 +282,8 @@ class LocalVoiceSession(
     }
 
     override fun onSpeechStopped() = onSession {
+        utteranceTags.clear()
+        queuedSpeech = null
         // Barge-in, or a newer reply overtaking this one. Deliberately does not re-arm:
         // either the owner is already talking, or another reply is about to start.
         listener.onSpeakingStateChanged(false)
@@ -260,6 +292,9 @@ class LocalVoiceSession(
     override fun onOwnerCutIn() = onSession {
         if (!handsFree.isActive) return@onSession
         engine.stopSpeaking()
+        // The owner is talking; a queued disclosure was not heard and must not play later.
+        queuedSpeech = null
+        utteranceTags.clear()
         // Straight back to the owner, with no re-arm delay: they are mid-sentence.
         applyDecision(handsFree.onBargeIn())
     }

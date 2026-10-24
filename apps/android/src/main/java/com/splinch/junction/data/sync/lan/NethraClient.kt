@@ -36,7 +36,7 @@ class NethraClient(context: Context) {
 
     suspend fun request(type: String, payload: Map<String, Any?> = emptyMap()): Map<String, Any?> = try { withTimeout(45_000) {
         require(type in TYPES) { "Unsupported Nethra request" }
-        val mutation = type !in setOf("nethra.list", "nethra.get", "nethra.reunion", "nethra.status", "nethra.device.pull")
+        val mutation = type !in setOf("nethra.list", "nethra.get", "nethra.reunion", "nethra.status", "nethra.device.pull", "nethra.warm")
         // Persist a digest-bound id before sending so a process restart cannot replay a mutation as new.
         val (binding, requestId) = if (mutation) unresolved.getOrCreate(type, payload) else "" to UUID.randomUUID().toString()
         val pairing = identity.loadPairing()
@@ -132,7 +132,7 @@ class NethraClient(context: Context) {
         /** Poll interval for background refreshes: LAN is free, every relay request costs ~3 writes. */
         fun pollIntervalMs(lanMs: Long): Long = if (lastTransport == Transport.RELAY) maxOf(lanMs, RELAY_MIN_POLL_MS) else lanMs
         private const val RELAY_MIN_POLL_MS = 120_000L
-        private val TYPES = setOf("nethra.list", "nethra.get", "nethra.openChat", "nethra.reunion", "nethra.create", "nethra.configure", "nethra.control", "nethra.approve", "nethra.settings", "nethra.status", "nethra.answer", "nethra.device.pull", "nethra.device.result")
+        private val TYPES = setOf("nethra.warm", "nethra.redirect", "nethra.list", "nethra.get", "nethra.openChat", "nethra.reunion", "nethra.create", "nethra.configure", "nethra.control", "nethra.approve", "nethra.settings", "nethra.status", "nethra.answer", "nethra.device.pull", "nethra.device.result")
         private fun value(value: Any?): Any? = when (value) {
             is JSONObject -> objectMap(value)
             is JSONArray -> (0 until value.length()).map { value(value.get(it)) }

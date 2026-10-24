@@ -91,6 +91,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -151,6 +153,7 @@ fun ChatScreen(
     val micEnabled by chatManager.micEnabled.collectAsState()
     val voiceListening by chatManager.localVoiceListening.collectAsState()
     val voiceSpeaking by chatManager.localVoiceSpeaking.collectAsState()
+    val callStatus by chatManager.voiceCallStatus.collectAsState()
     val lastUndo by chatManager.lastUndo.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     var forceResearch by rememberSaveable { mutableStateOf(false) }
@@ -167,6 +170,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val prefs = remember(context) { UserPrefsRepository(context) }
     val verbose by prefs.chatVerboseFlow.collectAsState(initial = true)
+    val appearance by prefs.appearanceFlow.collectAsState(initial = com.splinch.junction.data.preference.AppearancePrefs())
     val providerConfig by chatManager.providerConfigFlow.collectAsState(initial = ProviderConfig())
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -175,6 +179,15 @@ fun ChatScreen(
 
     LaunchedEffect(objectivesRequest) {
         if (objectivesRequest > 0) objectivesOpen = true
+    }
+    // Opening, switching or starting a chat asks the paired PC to load its model now.
+    LaunchedEffect(currentSessionId, providerConfig.providerId) {
+        if (providerConfig.providerId == "local") com.splinch.junction.data.sync.lan.PcModelWarmup.request(context, "chat_open")
+    }
+    LaunchedEffect(callStatus.state) {
+        if (callStatus.state == com.splinch.junction.feature.voice.model.VoiceCallState.CONNECTING && providerConfig.providerId == "local") {
+            com.splinch.junction.data.sync.lan.PcModelWarmup.request(context, "voice")
+        }
     }
     // Task lights for the header; polled only while chat is visible.
     LaunchedEffect(objectivesOpen) { if (!objectivesOpen) ObjectiveStatusMonitor.pollWhileVisible(context, NethraClient(context)) }
@@ -241,7 +254,8 @@ fun ChatScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+    com.splinch.junction.ui.component.AmbientBackdrop(appearance, modifier) {
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -328,6 +342,7 @@ fun ChatScreen(
                     }
                 )
             }
+            CallTimer(callStatus)
             Spacer(Modifier.weight(1f))
             ObjectiveStatus.overall(taskList)?.let { (light, count) ->
                 TextButton(onClick = { objectivesOpen = true }) {
@@ -546,6 +561,37 @@ fun ChatScreen(
             onContinueAsObjective = { objectiveDraft = input.trim(); objectivesOpen = true }
         )
     }
+    }
+}
+
+/**
+ * Elapsed call time from the monotonic start the coordinator recorded, so recreating this
+ * screen or changing the clock cannot reset or skew it. Ticks only while a call is shown.
+ */
+@Composable
+private fun CallTimer(status: com.splinch.junction.feature.voice.model.VoiceCallStatus) {
+    if (status.state == com.splinch.junction.feature.voice.model.VoiceCallState.IDLE) return
+    val now by androidx.compose.runtime.produceState(android.os.SystemClock.elapsedRealtime(), status) {
+        while (status.state == com.splinch.junction.feature.voice.model.VoiceCallState.ACTIVE) {
+            value = android.os.SystemClock.elapsedRealtime()
+            kotlinx.coroutines.delay(1_000L - (value % 1_000L).coerceAtMost(999L))
+        }
+        value = android.os.SystemClock.elapsedRealtime()
+    }
+    val elapsed = com.splinch.junction.feature.voice.model.formatCallDuration(status.elapsedMs(now))
+    val label = when (status.state) {
+        com.splinch.junction.feature.voice.model.VoiceCallState.CONNECTING -> "Connecting…"
+        com.splinch.junction.feature.voice.model.VoiceCallState.ACTIVE -> "● $elapsed"
+        com.splinch.junction.feature.voice.model.VoiceCallState.RECONNECTING -> "Reconnecting… $elapsed"
+        com.splinch.junction.feature.voice.model.VoiceCallState.ENDED -> "Call ended · $elapsed"
+        com.splinch.junction.feature.voice.model.VoiceCallState.IDLE -> ""
+    }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = if (status.state == com.splinch.junction.feature.voice.model.VoiceCallState.ACTIVE) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 4.dp).semantics { contentDescription = "Voice call ${status.state.name.lowercase()}, $elapsed" }
+    )
 }
 
 /** Left-hand pop-out: every chat/project on this device, newest first, with a way to start another. */

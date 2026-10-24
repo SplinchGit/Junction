@@ -53,6 +53,15 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
     private val memoryService = dependencies.memoryService
     private val githubSourceContext = GitHubSourceContext()
 
+    /**
+     * Drafts created in this app session, so a later send can be read back by recipient and
+     * content. In memory only: after a restart a send falls back to on-screen approval.
+     */
+    private val draftLedger = java.util.concurrent.ConcurrentHashMap<String, com.splinch.junction.assistant.planning.VoiceApprovalPolicy.DraftDisclosure>()
+
+    fun draftDisclosure(draftId: String): com.splinch.junction.assistant.planning.VoiceApprovalPolicy.DraftDisclosure? =
+        draftId.takeIf { it.isNotBlank() }?.let { draftLedger[it] }
+
     suspend fun execute(call: PendingToolCall): ToolApplyResult {
         return when (call.name) {
         "ask_clarification" -> {
@@ -421,6 +430,7 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         }
         val draft = GmailCopilot(appContext, email).draftReply(threadId, body)
             ?: return ToolApplyResult("", errorOutput("Unable to create a reply draft for that thread"))
+        draftLedger[draft.draftId] = com.splinch.junction.assistant.planning.VoiceApprovalPolicy.DraftDisclosure(draft.recipient, body)
         return ToolApplyResult(
             "Drafted a reply to ${draft.recipient}. Review it before sending.",
             JSONObject().put("status", "applied").put("action", "gmail_draft_reply")

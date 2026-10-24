@@ -14,14 +14,15 @@ test('one ongoing objective persists a milestone, sleeps through unchanged evide
   const task=store.create({goal:'Track university coursework deadlines',mode:'ONGOING',sources:['calendar']});
   let stage=0,turn=0,calls=0;
   const calendar={status:()=>({status:'CONNECTED',lastSyncAt:now}),event:id=>({id,summary:`University coursework deadline ${stage+1}`,start:'2027-02-01'})};
-  const runtime={withInference:fn=>{turn=0;return fn();},chat:async()=>{
+  // The runner takes the inference slot per model call; a wake starts a fresh tool sequence.
+  const runtime={withInference:fn=>fn(),chat:async()=>{
     calls++;
     const tool=turn++===0?{name:'calendar_event',arguments:{id:`deadline-${stage+1}`}}:
       stage===0&&turn===2?{name:'update_plan',arguments:{steps:['Check coursework deadlines'],completedSteps:['Check coursework deadlines']}}:
       {name:'finish_objective',arguments:{summary:`University coursework deadline ${stage+1} verified`}};
     return {message:{role:'assistant',content:'',tool_calls:[{function:tool}]}};
   }};
-  const run=async()=>new NethraScheduler({store,now:()=>now,sourceStatus:calendar.status,execute:(item,options)=>new NethraRunner({store,runtime,calendar,now:()=>now}).execute(item,options)}).tick();
+  const run=async()=>{turn=0;return new NethraScheduler({store,now:()=>now,sourceStatus:calendar.status,execute:(item,options)=>new NethraRunner({store,runtime,calendar,now:()=>now}).execute(item,options)}).tick();};
   await run();
   assert.equal(store.get(task.id).status,'SLEEPING');assert.equal(store.milestoneEvents(task.id).length,1);
   const before=calls;store.close();store=new NethraStore(root,{now:()=>now});

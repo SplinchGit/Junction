@@ -154,6 +154,8 @@ class LanFirstJunctionPcProvider(
                 if (event.requestId != requestId) return@collect
                 when (event.type) {
                     "chat.started" -> trySend(LlmEvent.Activity("Connected to Junction on this network"))
+                    // Host phases separate a queue wait or cold model load from thinking and output.
+                    "chat.progress" -> event.payload["stage"]?.toString()?.takeIf { it.isNotBlank() }?.let { trySend(LlmEvent.Activity(it)) }
                     "chat.delta" -> event.payload["text"]?.toString()?.takeIf { it.isNotEmpty() }?.let { trySend(LlmEvent.TextDelta(it)) }
                     "chat.complete" -> {
                         val text = event.payload["content"]?.toString().orEmpty()
@@ -191,6 +193,7 @@ class LanFirstJunctionPcProvider(
                 "content" to content,
                 "model" to workhorseModel,
                 "forceSearch" to forceResearch,
+                "session" to com.splinch.junction.assistant.runtime.TurnSessionContext.current?.toPayload(),
                 "context" to context.takeLast(MAX_CONTEXT_BLOCKS).map { mapOf("role" to it.role, "content" to it.content.take(MAX_BLOCK_CHARS)) }
             ), requestId)
         } catch (error: Exception) {

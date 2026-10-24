@@ -54,6 +54,57 @@ class UserPrefsRepository(private val context: Context) {
     private val onboardingCompletedKey = booleanPreferencesKey("onboarding_completed")
     private val calculatorBackendUrlKey = stringPreferencesKey("calculator_backend_url")
     private val chatVerboseKey = booleanPreferencesKey("chat_verbose")
+    private val appearanceModeKey = stringPreferencesKey("appearance_mode")
+    private val appearancePaletteKey = stringPreferencesKey("appearance_palette")
+    private val appearanceArtworkKey = stringPreferencesKey("appearance_artwork")
+    private val appearanceIntensityKey = intPreferencesKey("appearance_background_intensity")
+    private val appearancePetalsKey = booleanPreferencesKey("appearance_petals")
+    private val appearancePetalIntensityKey = intPreferencesKey("appearance_petal_intensity")
+    private val appearanceMotionKey = stringPreferencesKey("appearance_motion")
+    private val voiceAzureNameKey = stringPreferencesKey("voice_azure_name")
+    private val voiceAzureQualityKey = stringPreferencesKey("voice_azure_quality")
+    private val voiceDeviceNameKey = stringPreferencesKey("voice_device_name")
+
+    val appearanceFlow: Flow<AppearancePrefs> = context.dataStore.data.map { prefs ->
+        AppearancePrefs(
+            mode = prefs[appearanceModeKey] ?: "system",
+            palette = prefs[appearancePaletteKey] ?: "junction",
+            artwork = prefs[appearanceArtworkKey] ?: "none",
+            backgroundIntensity = prefs[appearanceIntensityKey] ?: 55,
+            petals = prefs[appearancePetalsKey] ?: true,
+            petalIntensity = prefs[appearancePetalIntensityKey] ?: 35,
+            motion = prefs[appearanceMotionKey] ?: "system"
+        ).normalized()
+    }
+
+    suspend fun setAppearance(value: AppearancePrefs) {
+        val clean = value.normalized()
+        context.dataStore.edit {
+            it[appearanceModeKey] = clean.mode
+            it[appearancePaletteKey] = clean.palette
+            it[appearanceArtworkKey] = clean.artwork
+            it[appearanceIntensityKey] = clean.backgroundIntensity
+            it[appearancePetalsKey] = clean.petals
+            it[appearancePetalIntensityKey] = clean.petalIntensity
+            it[appearanceMotionKey] = clean.motion
+        }
+    }
+
+    val voicePrefsFlow: Flow<VoicePrefs> = context.dataStore.data.map { prefs ->
+        VoicePrefs(
+            azureVoice = prefs[voiceAzureNameKey] ?: VoicePrefs.AZURE_DEFAULT_VOICE,
+            azureQuality = prefs[voiceAzureQualityKey]?.takeIf { it in VoicePrefs.AZURE_QUALITY } ?: VoicePrefs().azureQuality,
+            deviceVoice = prefs[voiceDeviceNameKey] ?: VoicePrefs.DEVICE_ENGINE_DEFAULT
+        )
+    }
+
+    suspend fun setVoicePrefs(value: VoicePrefs) {
+        context.dataStore.edit {
+            it[voiceAzureNameKey] = value.azureVoice
+            it[voiceAzureQualityKey] = value.azureQuality.takeIf { quality -> quality in VoicePrefs.AZURE_QUALITY } ?: "standard"
+            it[voiceDeviceNameKey] = value.deviceVoice
+        }
+    }
 
     /** Measured reply telemetry is visible by default and survives app restarts. */
     val chatVerboseFlow: Flow<Boolean> = context.dataStore.data.map { it[chatVerboseKey] ?: true }
