@@ -1,4 +1,6 @@
 'use strict';
+// null means no daily limit: tasks run whenever the model is free (owner chats still pre-empt them).
+const dailyLimits=settings=>({taskMs:settings.objectiveDailyBudgetMs??Infinity,globalMs:settings.globalDailyBudgetMs??Infinity});
 const {randomUUID,createHash}=require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
 const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=600000, LEASE_MS=660000;
@@ -76,7 +78,7 @@ class NethraScheduler {
     const deadline=setTimeout(()=>abort('Wake runtime limit reached'),this.maxRuntimeMs);
     const inference=async callback=>{
       controller.signal.throwIfAborted();const usage=this.store.usage(task.id);
-      const allowance=Math.min(this.maxRuntimeMs,settings.globalDailyBudgetMs-usage.globalMs,settings.objectiveDailyBudgetMs-usage.taskMs);
+      const limits=dailyLimits(settings),allowance=Math.min(this.maxRuntimeMs,limits.globalMs-usage.globalMs,limits.taskMs-usage.taskMs);
       if(allowance<=0)throw new Error('Inference time budget reached');
       this.store.beginInference(task.id,token);const timer=setTimeout(()=>abort('Inference time budget reached'),allowance);
       try{return await callback();}finally{clearTimeout(timer);this.store.endInference(task.id,token);}
@@ -159,7 +161,7 @@ class NethraScheduler {
     if(!this.warmBefore)return;
     try{
       const now=this.now(),settings=this.store.settings();if(!settings.enabled)return;
-      const usage=this.store.usage('__global__');if(usage.globalMs>=settings.globalDailyBudgetMs)return;
+      const usage=this.store.usage('__global__');if(usage.globalMs>=dailyLimits(settings).globalMs)return;
       const next=this.store.list().filter(task=>['SLEEPING','CREATED','ACTIVE','PLANNING'].includes(task.status)&&task.persistent!==false&&Number.isSafeInteger(task.nextWakeAt)&&task.nextWakeAt>now&&task.nextWakeAt-now<=PREWARM_LEAD_MS)
         .filter(task=>!isRoutineMonitor(task,task.nextWakeAt,this.sourceStatus,this.store.pendingAttentionDue?.(task.id)!=null))
         .sort((a,b)=>a.nextWakeAt-b.nextWakeAt)[0];
@@ -170,4 +172,4 @@ class NethraScheduler {
   }
   async stop() {this.stopping=true;clearInterval(this.timer);this.timer=null;this.controller?.abort(new Error('Scheduler stopped'));await this.running;}
 }
-module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS};
+module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS,dailyLimits};

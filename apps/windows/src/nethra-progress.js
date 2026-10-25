@@ -1,6 +1,7 @@
 'use strict';
 const {draftReceiptIsCurrent}=require('./nethra-tools');
 const {verdictLine}=require('./nethra-experiments');
+const {dailyLimits}=require('./nethra-scheduler');
 
 const short=(value,max=240)=>String(value??'').replace(/\s+/g,' ').trim().slice(0,max);
 const FINISHED=new Set(['COMPLETED','CANCELLED','FAILED']);
@@ -52,7 +53,7 @@ function waitingFor(task,store,now=Date.now()){
   if(task.status==='SLEEPING'&&Number.isSafeInteger(task.nextWakeAt)){
     const reason=task.wakeReason;
     const usage=store.usage?.(task.id,now),settings=store.settings?.();
-    if(reason?.kind==='BUDGET'||(usage&&settings&&(usage.taskMs>=settings.objectiveDailyBudgetMs||usage.globalMs>=settings.globalDailyBudgetMs)))return {kind:'budget',detail:`Daily model-time limit reached; resumes at ${new Date(task.nextWakeAt).toISOString()}.`};
+    if(reason?.kind==='BUDGET'||(usage&&settings&&(usage.taskMs>=dailyLimits(settings).taskMs||usage.globalMs>=dailyLimits(settings).globalMs)))return {kind:'budget',detail:`Daily model-time limit reached; resumes at ${new Date(task.nextWakeAt).toISOString()}.`};
     if(reason?.kind==='MONITOR'&&(task.sources||[]).length)return {kind:'source',detail:`A change in ${task.sources.join(' or ')}, or the routine check at ${new Date(task.nextWakeAt).toISOString()}.`};
     return {kind:'time',detail:reason?.detail||`Next scheduled check at ${new Date(task.nextWakeAt).toISOString()}.`};
   }
