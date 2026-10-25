@@ -30,9 +30,10 @@ test('Codex subprocess gets EOF on stdin even when a prompt argument is supplied
 
 test('an objective can inspect real host limits and Codex readiness without asking the owner for logs',async()=>{
   const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:4096})});
-  const names=tools.definitions().map(item=>item.function.name);
+  const names=tools.definitions({task:{allowCodeWork:true}}).map(item=>item.function.name);
   assert.ok(names.includes('host_diagnostics'));
   assert.ok(names.includes('consult_codex'));
+  assert.ok(!tools.definitions({task:{allowCodeWork:false}}).some(item=>item.function.name==='consult_codex'));
   const result=await tools.execute('host_diagnostics',{}, {id:'self-improvement'});
   assert.equal(result.codex.ready,true);
   assert.equal(result.model.contextTokens,4096);
@@ -42,7 +43,7 @@ test('an objective can inspect real host limits and Codex readiness without aski
 test('Codex consultation is bounded, read-only, and associated with the current objective',async()=>{
   const calls=[];
   const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({ready:true}),codexConsult:async input=>{calls.push(input);return {content:'Measure first-token latency, then compare warm and cold turns.',model:'Codex test'};}});
-  const task={id:'self-improvement',goal:'Self Improvement',successCriteria:'Improve speed and awareness',workspace:'C:/task-workspace'};
+  const task={id:'self-improvement',goal:'Self Improvement',successCriteria:'Improve speed and awareness',workspace:'C:/task-workspace',allowCodeWork:true};
   const result=await tools.execute('consult_codex',{question:'How should I measure response latency?'},task);
   assert.match(result.advice,/first-token latency/);
   assert.equal(result.source,'codex');
@@ -57,7 +58,7 @@ test('Codex consultation is bounded, read-only, and associated with the current 
 });
 
 test('an unattended task can reserve at most three Codex consultations per UTC day',async()=>{
-  const live={id:'self-improvement',status:'ACTIVE'};
+  const live={id:'self-improvement',status:'ACTIVE',allowCodeWork:true};
   let calls=0;
   const store={get:()=>live,update:(_id,patch)=>Object.assign(live,patch)};
   const tools=new NethraTools({store,codexStatus:async()=>({ready:true}),codexConsult:async()=>{calls++;return {content:'Advice'};}});
@@ -86,6 +87,8 @@ test('only an opted-in objective can draft scoped Codex development work',async(
   const task={id:'self-improvement',goal:'Self Improvement',status:'ACTIVE',allowCodeWork:false};
   const tools=new NethraTools({store:{get:()=>task},proposeCodeWork:async input=>{proposed.push(input);return {id:'work-1',status:'DRAFT'};}});
   assert.ok(!tools.definitions({task}).some(item=>item.function.name==='propose_code_work'));
+  assert.ok(!tools.definitions({task}).some(item=>item.function.name==='consult_codex'));
+  await assert.rejects(tools.execute('consult_codex',{question:'Can you help?'},task),/not enabled/);
   await assert.rejects(tools.execute('propose_code_work',{task:'Improve Nethra context handling',acceptance:'Measure and pass focused tests'},task),/not enabled/);
   task.allowCodeWork=true;
   assert.ok(tools.definitions({task}).some(item=>item.function.name==='propose_code_work'));

@@ -93,7 +93,7 @@ function groundedQuery(query,ownerInput,publicEvidence){
 class ApprovalRequired extends Error{constructor(approval){super('Exact approval is required before overwriting this draft');this.approval=approval;}}
 class NethraTools {
   constructor({store,researchCoordinator,deviceCommands=null,calendar=null,gmail=null,codexStatus=getCodexStatus,codexConsult=sendCodexChat,proposeCodeWork=null,hostDiagnostics=()=>({model:'qwen3:30b',contextTokens:4096,objectiveThinkingBudgetTokens:1100,host:{freeMemoryBytes:os.freemem(),totalMemoryBytes:os.totalmem(),processRssBytes:process.memoryUsage().rss},sampledAt:new Date().toISOString()})}={}){this.store=store;this.research=researchCoordinator;this.devices=deviceCommands;this.calendar=calendar;this.gmail=gmail;this.codexStatus=codexStatus;this.codexConsult=codexConsult;this.proposeCodeWork=proposeCodeWork;this.hostDiagnostics=hostDiagnostics;}
-  definitions({child=false,task=null}={}){return definitions.filter(d=>(!child||['web_search','read_file','list_directory'].includes(d.function.name))&&(d.function.name!=='propose_code_work'||Boolean(task?.allowCodeWork&&this.proposeCodeWork)));}
+  definitions({child=false,task=null}={}){return definitions.filter(d=>(!child||['web_search','read_file','list_directory'].includes(d.function.name))&&(!['consult_codex','propose_code_work'].includes(d.function.name)||Boolean(task?.allowCodeWork))&&(d.function.name!=='propose_code_work'||Boolean(this.proposeCodeWork)));}
   validate(name,args){const d=definitions.find(d=>d.function.name===name);if(!d)throw Error(`Unsupported tool: ${name}; external sending is unavailable`);validate(d.function.parameters,args);}
   async execute(name,args,task,{signal,approvalId,token}={}){
     this.validate(name,args);signal?.throwIfAborted();
@@ -105,6 +105,7 @@ class NethraTools {
       return {model,codex:{installed:Boolean(codex.installed),ready:Boolean(codex.ready),subscription:Boolean(codex.subscription),version:codex.version||'',detail:String(codex.detail||'').slice(0,240),billing:codex.subscription?'Uses the owner\'s shared ChatGPT Codex allowance; further credits may apply after included limits':'Unknown until sign-in is checked',globalConsultLimitPerUtcDay:3},note:'These are host facts, not a latency benchmark. Measure response times separately before claiming a speedup.'};
     }
     if(name==='consult_codex'){
+      if(!task.allowCodeWork)throw Error('Codex consultation is not enabled for this objective');
       const status=await this.codexStatus();
       if(!status.ready)throw Error('Codex is not signed in with ChatGPT on this PC');
       signal?.throwIfAborted();
