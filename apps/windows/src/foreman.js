@@ -47,7 +47,7 @@ class Foreman {
     const inspected=await this.executor.inspect(input);
     if(inspected.scopeFile)for(const task of tasks)if(!task.files.length)task.files=[inspected.scopeFile];
     if(this.closed)throw new Error('Junction is quitting');
-    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
+    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
   }
   async submit(input) {

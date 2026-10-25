@@ -1,0 +1,113 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const {EventEmitter}=require('node:events');
+const {NethraTools}=require('../src/nethra-tools');
+const {sendCodexChat,getCodexStatus}=require('../src/codex-client');
+const {createCodeWorkProposer}=require('../src/nethra-code-work');
+
+test('Codex login status on stderr still confirms ChatGPT subscription access',async()=>{
+  const run=async(_command,args)=>args[0]==='--version'?{stdout:'codex-cli test\n',stderr:''}:{stdout:'',stderr:'Logged in using ChatGPT\n'};
+  const status=await getCodexStatus(run);
+  assert.equal(status.ready,true);
+  assert.equal(status.subscription,true);
+});
+
+test('Codex subprocess gets EOF on stdin even when a prompt argument is supplied',async()=>{
+  let launchOptions,launchArgs;
+  const launch=(_command,args,options)=>{
+    launchArgs=args;launchOptions=options;
+    const child=new EventEmitter();child.stdout=new EventEmitter();child.stderr=new EventEmitter();child.kill=()=>{};
+    queueMicrotask(()=>{child.stdout.emit('data',JSON.stringify({item:{type:'agent_message',text:'bridge ready'}})+'\n'+JSON.stringify({type:'turn.completed',usage:{input_tokens:100,cached_input_tokens:20,output_tokens:10}})+'\n');child.emit('close',0);});
+    return child;
+  };
+  const result=await sendCodexChat({messages:[{role:'user',content:'ping'}],memories:[],workingDirectory:'C:/scope',model:'gpt-5.6-luna',isolated:true,launch});
+  assert.equal(result.content,'bridge ready');
+  assert.deepEqual(result.usage,{input_tokens:100,cached_input_tokens:20,output_tokens:10});
+  assert.deepEqual(launchOptions.stdio,['ignore','pipe','pipe']);
+  assert.ok(launchArgs.includes('--ignore-user-config'));
+});
+
+test('an objective can inspect real host limits and Codex readiness without asking the owner for logs',async()=>{
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:4096})});
+  const names=tools.definitions().map(item=>item.function.name);
+  assert.ok(names.includes('host_diagnostics'));
+  assert.ok(names.includes('consult_codex'));
+  const result=await tools.execute('host_diagnostics',{}, {id:'self-improvement'});
+  assert.equal(result.codex.ready,true);
+  assert.equal(result.model.contextTokens,4096);
+  assert.ok(!tools.definitions({child:true}).some(item=>item.function.name==='consult_codex'));
+});
+
+test('Codex consultation is bounded, read-only, and associated with the current objective',async()=>{
+  const calls=[];
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({ready:true}),codexConsult:async input=>{calls.push(input);return {content:'Measure first-token latency, then compare warm and cold turns.',model:'Codex test'};}});
+  const task={id:'self-improvement',goal:'Self Improvement',successCriteria:'Improve speed and awareness',workspace:'C:/task-workspace'};
+  const result=await tools.execute('consult_codex',{question:'How should I measure response latency?'},task);
+  assert.match(result.advice,/first-token latency/);
+  assert.equal(result.source,'codex');
+  assert.equal(calls[0].workingDirectory,task.workspace);
+  assert.equal(calls[0].model,'gpt-5.6-luna');
+  assert.equal(calls[0].isolated,true);
+  assert.equal(calls[0].messages.length,1);
+  assert.match(calls[0].messages[0].content,/Self Improvement/);
+  assert.doesNotMatch(JSON.stringify(calls[0]),/readRoots|evidence|ownerInputs/);
+  await assert.rejects(tools.execute('consult_codex',{question:'Again'},task,{signal:AbortSignal.abort()}));
+  assert.equal(calls.length,1);
+});
+
+test('an unattended task can reserve at most three Codex consultations per UTC day',async()=>{
+  const live={id:'self-improvement',status:'ACTIVE'};
+  let calls=0;
+  const store={get:()=>live,update:(_id,patch)=>Object.assign(live,patch)};
+  const tools=new NethraTools({store,codexStatus:async()=>({ready:true}),codexConsult:async()=>{calls++;return {content:'Advice'};}});
+  for(let i=0;i<3;i++)await tools.execute('consult_codex',{question:`Pass ${i}`},live);
+  await assert.rejects(tools.execute('consult_codex',{question:'Pass 4'},live),/three Codex consultations/);
+  assert.equal(calls,3);
+});
+
+test('the persisted Codex allowance is shared across objectives',t=>{
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const {NethraStore}=require('../src/nethra-store');
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-codex-budget-'));
+  const store=new NethraStore(directory);
+  t.after(()=>{store.close();fs.rmSync(directory,{recursive:true,force:true});});
+  const first=store.create({goal:'Improve responsiveness'}),second=store.create({goal:'Improve task awareness'});
+  store.reserveCodexConsult(first.id);
+  store.reserveCodexConsult(second.id);
+  store.reserveCodexConsult(first.id);
+  assert.throws(()=>store.reserveCodexConsult(second.id),/three Codex consultations/);
+  assert.equal(store.get(first.id).codexConsultCount,2);
+  assert.equal(store.get(second.id).codexConsultCount,1);
+});
+
+test('only an opted-in objective can draft scoped Codex development work',async()=>{
+  const proposed=[];
+  const task={id:'self-improvement',goal:'Self Improvement',status:'ACTIVE',allowCodeWork:false};
+  const tools=new NethraTools({store:{get:()=>task},proposeCodeWork:async input=>{proposed.push(input);return {id:'work-1',status:'DRAFT'};}});
+  assert.ok(!tools.definitions({task}).some(item=>item.function.name==='propose_code_work'));
+  await assert.rejects(tools.execute('propose_code_work',{task:'Improve Nethra context handling',acceptance:'Measure and pass focused tests'},task),/not enabled/);
+  task.allowCodeWork=true;
+  assert.ok(tools.definitions({task}).some(item=>item.function.name==='propose_code_work'));
+  const result=await tools.execute('propose_code_work',{task:'Improve Nethra context handling',acceptance:'Measure and pass focused tests'},task);
+  assert.equal(result.workId,'work-1');
+  assert.equal(result.status,'DRAFT');
+  assert.equal(proposed.length,1);
+});
+
+test('a scoped code proposal creates one paused Work Activity draft and reuses it on retry',async t=>{
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-code-scope-'));
+  fs.mkdirSync(path.join(root,'apps','windows'),{recursive:true});t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const projects=[],foreman={list:()=>projects,create:async input=>{const project={id:'draft-1',status:'DRAFT',...input};projects.push(project);return project;}};
+  const propose=createCodeWorkProposer({foreman,junctionRepository:root});
+  const objective={id:'task-1',goal:'Self Improvement',conversationId:'chat-1',allowCodeWork:true,readRoots:[root]};
+  const input={objective,description:'Reduce Nethra latency',acceptance:'A before and after benchmark passes'};
+  const result=await propose(input);
+  assert.equal(result.status,'DRAFT');
+  assert.equal(projects[0].repoPath,path.join(root,'apps','windows'));
+  assert.equal(projects[0].sourceObjectiveId,objective.id);
+  assert.equal((await propose(input)).id,result.id);
+  assert.equal(projects.length,1);
+  await assert.rejects(propose({...input,objective:{...objective,readRoots:[]}}),/Approve the Junction read folder/);
+});

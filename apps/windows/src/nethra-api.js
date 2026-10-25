@@ -20,7 +20,7 @@ class NethraApi {
       // live/step/progress let clients show where Nethra is without fetching each objective.
       const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
       const brief=t=>{try{const p=progressView(t,s,{liveTaskId:liveId});return {doing:p.doing,next:p.next,wake:p.wake,waitingFor:{kind:p.waitingFor.kind,detail:String(p.waitingFor.detail||'').slice(0,240)},lastAccomplished:p.lastAccomplished};}catch{return null;}};
-      const objectives=s.list().slice(0,100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null,continuous:t.continuous===true,usage:(()=>{try{const u=s.usage(t.id);return {todayMs:u.taskMs};}catch{return null;}})()}));
+      const objectives=s.list().slice(0,100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null,continuous:t.continuous===true,allowCodeWork:t.allowCodeWork===true,usage:(()=>{try{const u=s.usage(t.id);return {todayMs:u.taskMs};}catch{return null;}})()}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);if(task.tracking&&length<120)task.tracking={doing:task.tracking.doing,wake:task.tracking.wake,waitingFor:{kind:task.tracking.waitingFor.kind}};}
@@ -68,7 +68,8 @@ class NethraApi {
     if(type==='nethra.create') {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');
       if('continuous' in payload&&typeof payload.continuous!=='boolean')throw new Error('Invalid continuous preference');
-      let task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',continuous:payload.continuous===true,requestId});
+      if(source!=='desktop'&&payload.allowCodeWork===true)throw new Error('Enable Codex development work on Windows');
+      let task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',continuous:payload.continuous===true,allowCodeWork:payload.allowCodeWork===true,requestId});
       // Every objective gets a chat: progress, questions and outcomes go there, and the
       // owner's replies there reach the objective.
       if(!task.conversationId&&this.localData){
@@ -80,8 +81,9 @@ class NethraApi {
       return {task};
     }
     if(type==='nethra.configure'){
-      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode','continuous'].includes(key)))throw new Error('Unknown objective configuration');
-      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode','continuous'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
+      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork'].includes(key)))throw new Error('Unknown objective configuration');
+      if(source!=='desktop'&&payload.allowCodeWork===true)throw new Error('Enable Codex development work on Windows');
+      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
     }
     if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
     if(type==='nethra.redirect'){

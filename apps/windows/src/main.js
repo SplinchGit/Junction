@@ -36,6 +36,7 @@ const { AppearanceStore } = require("./appearance-store");
 const { NethraStore } = require("./nethra-store");
 const { NethraScheduler } = require("./nethra-scheduler");
 const { NethraRunner } = require("./nethra-runner");
+const { createCodeWorkProposer } = require("./nethra-code-work");
 const { NethraApi } = require("./nethra-api");
 const { handleNethraChat } = require("./nethra-chat");
 const { configureStartup } = require("./nethra-startup");
@@ -241,6 +242,7 @@ async function createWindowImpl() {
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
   const createCodeDelegation = async (_instruction,owner={}) => {const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content:owner.goal||'',conversationId:owner.conversationId,requestId:crypto.randomUUID()});if(!result?.id||result.status==='NEEDS_SCOPE')throw new Error('Name the local file, folder or repository in the owner coding request.');return result;};
+  const proposeCodeWork = createCodeWorkProposer({foreman,junctionRepository});
   // Chat is Nethra's front door: it can start and inspect her durable objectives.
   const objectives = {
     create: async ({ goal, successCriteria, mode, conversationId, requestId, surface }) => (await nethraApi.dispatch('nethra.create', { goal, successCriteria, mode, conversationId, persistent: true }, requestId, String(surface || '').startsWith('android') ? 'android' : 'desktop')).task,
@@ -260,7 +262,7 @@ async function createWindowImpl() {
   deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
-  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource});
+  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork});
   const reportedOutcomes = new Set();
   nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes),warmBefore:()=>localAgent.warmer.warm({reason:'objective_due',priority:'background'})});
   nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});

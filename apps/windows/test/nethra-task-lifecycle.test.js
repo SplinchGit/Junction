@@ -38,6 +38,16 @@ test('switching continuous work on wakes a sleeping task; off keeps normal pacin
   assert.throws(()=>f.store.configure(task.id,{continuous:'yes'},on.revision,'cont-bad'),/continuous/);
 });
 
+test('Codex development drafts require a Windows opt-in on the objective',async t=>{
+  const f=fixture(t);
+  await assert.rejects(f.api.dispatch('nethra.create',{goal:'Improve Junction',allowCodeWork:true},'code-phone','android'),/Windows/);
+  const {task}=await f.api.dispatch('nethra.create',{goal:'Improve Junction'},'code-create','desktop');
+  assert.equal(task.allowCodeWork,false);
+  await assert.rejects(f.api.dispatch('nethra.configure',{id:task.id,revision:task.revision,allowCodeWork:true},'code-phone-config','android'),/Windows/);
+  const enabled=await f.api.dispatch('nethra.configure',{id:task.id,revision:task.revision,allowCodeWork:true},'code-enable','desktop');
+  assert.equal(enabled.task.allowCodeWork,true);
+});
+
 test('editing a task changes its goal, keeps evidence, supersedes approvals and replans',t=>{
   const f=fixture(t),task=f.store.create({goal:'Plan a Lisbon trip'});
   const claim=f.store.claim('a');

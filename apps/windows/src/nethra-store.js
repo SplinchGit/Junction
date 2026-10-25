@@ -81,8 +81,9 @@ class NethraStore {
   clearReportPending(id) {return this.transaction(()=>{const task=this.get(id);if(!task.reportPending)return task;delete task.reportPending;return this.saveBudget(task);});}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {
-    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE',continuous=false}=input;
+    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE',continuous=false,allowCodeWork=false}=input;
     if(typeof continuous!=='boolean')throw new Error('Invalid continuous preference');
+    if(typeof allowCodeWork!=='boolean')throw new Error('Invalid Codex work preference');
     if(typeof goal!=='string'||!goal.trim()||goal.length>24000)throw new Error('Invalid goal');
     if(!AUTONOMY.has(autonomy))throw new Error('Invalid autonomy profile');
     if(!Number.isSafeInteger(priority)||priority<1||priority>5)throw new Error('Invalid objective priority');
@@ -102,7 +103,7 @@ class NethraStore {
       if(runnable>=this.maxRunnableObjectives)throw new Error('Nethra active objective limit reached; pause or finish existing work before creating more.');
       const id=randomUUID(),workspace=path.join(this.directory,'workspaces',id);
       fs.mkdirSync(workspace,{recursive:true});
-      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],mode,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,continuous,revision:0,createdAt:this.now()},'CREATED');
+      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],mode,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,continuous,allowCodeWork,revision:0,createdAt:this.now()},'CREATED');
       if(requestId)this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
     });
   }
@@ -125,8 +126,9 @@ class NethraStore {
     if(!requestId)throw new Error('A request ID is required');
     const binding=canonical({kind:'configure',id,patch,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
     if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
-    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode','continuous'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
     if(patch.continuous!==undefined&&typeof patch.continuous!=='boolean')throw new Error('Invalid continuous preference');
+    if(patch.allowCodeWork!==undefined&&typeof patch.allowCodeWork!=='boolean')throw new Error('Invalid Codex work preference');
     if(patch.mode!==undefined&&!MODES.has(patch.mode))throw new Error('Invalid objective mode');
     if(patch.autonomy!==undefined&&!AUTONOMY.has(patch.autonomy))throw new Error('Invalid autonomy profile');
     if(patch.priority!==undefined&&(!Number.isSafeInteger(patch.priority)||patch.priority<1||patch.priority>5))throw new Error('Invalid objective priority');
@@ -150,7 +152,17 @@ class NethraStore {
     value.quietHours={enabled:quiet.enabled,start:quiet.start,end:quiet.end};
     value.globalDailyMs=value.globalDailyBudgetMs;value.objectiveDailyMs=value.objectiveDailyBudgetMs;this.db.prepare('INSERT INTO settings VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET body=excluded.body').run(JSON.stringify(value));return value;});}
   assertLease(id,token) {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(token){if(!lease||lease.taskId!==id||lease.token!==token||lease.expiresAt<=this.now())throw new Error('Nethra lease expired or fenced');}else if(lease?.taskId===id&&lease.expiresAt>this.now())throw new Error('Nethra task requires its lease token');}
-  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
+  reserveCodexConsult(id,token) {return this.transaction(()=>{
+    this.assertRunnable(id,token);
+    const now=this.now(),day=new Date(now).toISOString().slice(0,10),start=Date.parse(`${day}T00:00:00.000Z`);
+    const total=this.db.prepare("SELECT COUNT(*) AS count FROM events WHERE kind='CODEX_CONSULT_RESERVED' AND at>=?").get(start).count;
+    if(total>=3)throw new Error('Nethra has used its three Codex consultations for today');
+    const task=this.get(id),used=task.codexConsultDay===day?(task.codexConsultCount||0):0;
+    if(used>=3)throw new Error('This objective has used its three Codex consultations for today');
+    task.codexConsultDay=day;task.codexConsultCount=used+1;
+    return this.save(task,'CODEX_CONSULT_RESERVED',{count:task.codexConsultCount,globalCount:total+1});
+  });}
+  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   control(id,action,revision,requestId) {return this.transaction(()=>{
     if(!['pause','resume','cancel','wake'].includes(action))throw new Error('Invalid Nethra action');
     if(!requestId)throw new Error('A request ID is required');
