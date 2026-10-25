@@ -32,7 +32,14 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Play publishing is not configured; add the documented repository secrets to enable trusted Play updates."
+            echo "::warning::Play publishing was skipped because release credentials are missing. No Android update was uploaded."
+            {
+              echo "## Android Play release"
+              echo "No update was uploaded. Configure the Play service account and Android release signing repository secrets before publishing."
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              exit 1
+            fi
           fi
 
       - name: Checkout
