@@ -44,7 +44,7 @@ test('without an objective store the tools are not offered',()=>{
 test('a chat turn where the model starts an objective executes the tool and answers',async()=>{
   const {created,adapter}=objectivesFake();let calls=0;
   const fetchImpl=async(url,options={})=>{
-    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:4096}]})};
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:8192}]})};
     calls++;const body=JSON.parse(options.body);
     const message=calls===1?{role:'assistant',content:'',tool_calls:[{function:{name:'start_objective',arguments:{goal:'Research Scotland Housing First for Falkirk and keep me updated'}}}]}
       :{role:'assistant',content:'I have started that and will report back here.'};
@@ -70,7 +70,7 @@ test('the scheduler reports settled outcomes so Nethra can answer in the origina
 function scriptedRuntime(adapter,answers){
   let calls=0;
   const fetchImpl=async(url)=>{
-    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:4096}]})};
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:8192}]})};
     const content=answers[Math.min(calls++,answers.length-1)];
     return {ok:true,json:async()=>({message:{role:'assistant',content},eval_count:5,eval_duration:1e8,prompt_eval_count:10})};
   };

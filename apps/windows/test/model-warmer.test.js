@@ -10,7 +10,7 @@ function ollama({resident=false,loadFails=false,loadGate=null,size=19*GiB}={}){
   const calls=[];let loaded=resident;
   const fetchImpl=async(url,options={})=>{
     const path=new URL(String(url)).pathname,body=options.body?JSON.parse(options.body):null;calls.push({path,body});
-    if(path==='/api/ps')return {ok:true,json:async()=>({models:loaded?[{name:'qwen3:30b',model:'qwen3:30b',context_length:4096,size,size_vram:10*GiB}]:[]})};
+    if(path==='/api/ps')return {ok:true,json:async()=>({models:loaded?[{name:'qwen3:30b',model:'qwen3:30b',context_length:8192,size,size_vram:10*GiB}]:[]})};
     if(path==='/api/tags')return {ok:true,json:async()=>({models:[{name:'qwen3:30b',size}]})};
     if(path==='/api/generate'){if(loadGate)await loadGate;if(loadFails)return {ok:false,status:500,json:async()=>({error:'cudaMalloc failed: out of memory'})};loaded=true;return {ok:true,json:async()=>({done:true,load_duration:48e9})};}
     if(path==='/api/chat')return {ok:true,json:async()=>({message:{role:'assistant',content:'Hi.'},eval_count:2,eval_duration:1e8})};
@@ -32,7 +32,7 @@ test('a load request generates nothing: no prompt, messages, tools or format',as
   await warmer.warm({reason:'startup'});
   const [load]=o.generate();
   assert.deepEqual(Object.keys(load.body).sort(),['keep_alive','model','options']);
-  assert.equal(load.body.keep_alive,'30m');assert.equal(load.body.options.num_ctx,4096);
+  assert.equal(load.body.keep_alive,'30m');assert.equal(load.body.options.num_ctx,8192);
 });
 
 test('an already resident model is never reloaded',async()=>{

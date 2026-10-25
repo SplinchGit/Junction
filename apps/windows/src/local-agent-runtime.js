@@ -16,7 +16,7 @@ const MAX_ITERATIONS = 12, MAX_TOOL_CALLS = 10, MAX_SEARCHES = 5, MAX_CODEX_DELE
 const FINAL_SYNTHESIS_ITERATIONS = 2;
 const AGENT_TIMEOUT_MS = 6 * 60_000, OLLAMA_CALL_TIMEOUT_MS = 180_000, MAX_TOOL_RESULT_CHARS = 8_000;
 // Keep inference within the CPU host context budget.
-const DEFAULT_CONTEXT_TOKENS = 4_096;
+const { CONTEXT_TOKENS: DEFAULT_CONTEXT_TOKENS } = require("./model-context");
 // Residency (Ollama keep_alive) is the owner's idle-retention setting, owned by ModelWarmer.
 // A cold load of the 19 GB 30B model costs ~50 s on this host; the default stays 2 h.
 // Thinking budgets in tokens (~20 tok/s here). Measured: unbounded thinking on a one-word greeting

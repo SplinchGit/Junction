@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
+const { CONTEXT_TOKENS } = require("./model-context");
 
 const WORLD_MODEL = "qwen3:30b";
 function buildWorldInferencePayload(messages, maxOutputTokens) {
@@ -16,7 +17,7 @@ function buildWorldInferencePayload(messages, maxOutputTokens) {
     think: true,
     keep_alive: "2h", // Match the chat runtime so a World call never shortens model residency.
     format: "json",
-    options: { num_ctx: 4096, num_predict: maxOutputTokens, temperature: 0 },
+    options: { num_ctx: CONTEXT_TOKENS, num_predict: maxOutputTokens, temperature: 0 },
   };
 }
 const MAX_EVENT_SUMMARY = 280;

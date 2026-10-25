@@ -166,6 +166,8 @@ class NethraStore {
     this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(id,now,kind,JSON.stringify({todayAcrossObjectives:today+1}));
     return {todayAcrossObjectives:today+1};
   });}
+  /** Journals that older tool results were dropped to fit the window, so it is visible, not silent. */
+  recordContextCompaction(id,{compacted,estimatedTokens,budget}) {this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(id,this.now(),'CONTEXT_COMPACTED',JSON.stringify({compacted,estimatedTokens,budget}));}
   advisorSnapshot(provider) {const row=this.db.prepare('SELECT body FROM advisor_limits WHERE provider=?').get(provider);return row?JSON.parse(row.body):null;}
   recordAdvisorSnapshot(provider,body) {this.db.prepare('INSERT INTO advisor_limits VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET body=excluded.body').run(provider,JSON.stringify(body));}
   recordHostStart() {this.db.prepare('INSERT INTO host_starts VALUES(?)').run(this.now());this.db.prepare('DELETE FROM host_starts WHERE at<?').run(this.now()-90*DAY);}

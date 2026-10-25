@@ -64,7 +64,7 @@ async function testModel(model) {
     stream: false,
     think: false,
     tools: [weatherTool],
-    options: { num_ctx: 4096, num_predict: 256, temperature: 0 },
+    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: 256, temperature: 0 },
     keep_alive: "5m",
   };
   const result = { model, success: false };
@@ -128,7 +128,7 @@ async function testModel(model) {
   const report = {
     generatedAt: new Date().toISOString(),
     host: "Intel i7-6700K / 12 GB RAM / CPU Ollama",
-    contextTokens: 4096,
+    contextTokens: require("../src/model-context").CONTEXT_TOKENS,
     fakeToolResult: { city: "London", temperature: 17, condition: "Cloudy" },
     results,
   };

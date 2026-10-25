@@ -1,5 +1,6 @@
 "use strict";
 const os = require("node:os");
+const { CONTEXT_TOKENS } = require("./model-context");
 
 // Idle retention choices map straight to Ollama keep_alive durations. "2h" matches the
 // residency Junction has always used: a cold load of the 19 GB 30B model is ~50 s here.
@@ -22,7 +23,7 @@ function retentionValue(value) { return Object.hasOwn(RETENTION, value) ? RETENT
  * interactive work. Concurrent requests share one load; a resident copy is never reloaded.
  */
 class ModelWarmer {
-  constructor({ fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", model = "qwen3:30b", contextTokens = 4096, retention = () => DEFAULT_RETENTION, freeMemory = () => os.freemem(), now = Date.now, loadTimeoutMs = 180_000, profile = null } = {}) {
+  constructor({ fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", model = "qwen3:30b", contextTokens = CONTEXT_TOKENS, retention = () => DEFAULT_RETENTION, freeMemory = () => os.freemem(), now = Date.now, loadTimeoutMs = 180_000, profile = null } = {}) {
     Object.assign(this, { fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), model, contextTokens, retention, freeMemory, now, loadTimeoutMs });
     // profile: optional {load(), save(value)} persisting the last observed GPU share across restarts.
     this.profile = profile;

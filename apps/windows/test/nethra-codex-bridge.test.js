@@ -31,7 +31,7 @@ test('Codex subprocess gets EOF on stdin even when a prompt argument is supplied
 });
 
 test('an objective can inspect real host limits and Codex readiness without asking the owner for logs',async()=>{
-  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),claudeStatus:async()=>({installed:true,ready:true,subscription:true,version:'2.1 (Claude Code)'}),advisorLimits:openLimits(),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:4096})});
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),claudeStatus:async()=>({installed:true,ready:true,subscription:true,version:'2.1 (Claude Code)'}),advisorLimits:openLimits(),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:8192})});
   const names=tools.definitions({task:{allowCodeWork:true}}).map(item=>item.function.name);
   assert.ok(names.includes('host_diagnostics'));
   assert.ok(names.includes('consult_codex'));
@@ -40,7 +40,7 @@ test('an objective can inspect real host limits and Codex readiness without aski
   assert.equal(result.codex.ready,true);
   assert.equal(result.claude.ready,true);
   assert.equal(result.codex.liveLimits,'Advisors are not enabled for this objective');
-  assert.equal(result.model.contextTokens,4096);
+  assert.equal(result.model.contextTokens,8192);
   assert.ok(!tools.definitions({child:true}).some(item=>item.function.name==='consult_codex'));
 });
 

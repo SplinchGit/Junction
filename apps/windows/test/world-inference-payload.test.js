@@ -12,5 +12,5 @@ assert.deepEqual(buildWorldInferencePayload(messages, 384), {
   think: true,
   keep_alive: "2h",
   format: "json",
-  options: { num_ctx: 4096, num_predict: 384, temperature: 0 },
+  options: { num_ctx: 8192, num_predict: 384, temperature: 0 },
 });

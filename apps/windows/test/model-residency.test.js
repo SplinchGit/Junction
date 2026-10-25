@@ -21,7 +21,7 @@ test('prewarm loads a cold model once with long residency and is throttled',asyn
   const {agent,requests}=runtime(false);
   assert.equal(await agent.prewarm(),true);
   const load=requests.find(r=>r.url.endsWith('/api/generate'));
-  assert.deepEqual(load.body,{model:'qwen3:30b',keep_alive:'2h',options:{num_ctx:4096}});
+  assert.deepEqual(load.body,{model:'qwen3:30b',keep_alive:'2h',options:{num_ctx:8192}});
   assert.equal(await agent.prewarm(),false);
   assert.equal(requests.filter(r=>r.url.endsWith('/api/generate')).length,1);
 });
@@ -56,7 +56,7 @@ function streamingRuntime(firstEvents){
   const bodies=[];
   const ndjson=events=>({ok:true,status:200,body:(async function*(){for(const event of events)yield Buffer.from(JSON.stringify(event)+'\n');})()});
   const fetchImpl=async(url,options={})=>{
-    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:4096}]})};
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[{name:'qwen3:30b',context_length:8192}]})};
     const body=JSON.parse(options.body);bodies.push(body);
     if(bodies.length===1)return ndjson(firstEvents);
     return ndjson([{message:{content:'Hello there.'}},{done:true,eval_count:4,prompt_eval_count:20,eval_duration:2e8,message:{}}]);
