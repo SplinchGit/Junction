@@ -132,3 +132,10 @@ test('objectives receive only the tools and instructions that apply to them',()=
   assert.doesNotMatch(systemPrompt(new Set(plain)),/consult_claude|experiment|phone_check|gmail_message/);
   assert.match(systemPrompt(new Set(improving)),/consult_claude[\s\S]*experiment[\s\S]*gmail_message/);
 });
+
+test('a resting advisor points Nethra at the other one when it can answer now',async()=>{
+  const task={id:'self-improvement',status:'ACTIVE',goal:'Self Improvement',allowCodeWork:true};
+  const limits={check:async provider=>provider==='codex'?{available:false,detail:'Usage is at or above the 90% the owner allows (five_hour 100%).'}:{available:true},invalidate(){},recordClaude(){}};
+  const tools=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:true}),claudeStatus:async()=>({ready:true}),advisorLimits:limits});
+  await assert.rejects(tools.execute('consult_codex',{question:'q'},task),/Claude is available now through consult_claude/);
+});

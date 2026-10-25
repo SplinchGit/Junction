@@ -109,3 +109,15 @@ test('a productive cycle posts what was actually done to the task chat, once',as
   f.store.update(task.id,{lastCycleProgressed:false},'EXECUTED');
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'no progress, no post');
 });
+
+test('an ongoing task that works continuously posts its steps; a plain ongoing monitor does not',async t=>{
+  const f=fixture(t),settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
+  for(const [continuous,expected] of [[true,true],[false,false]]){
+    const {task}=await f.api.dispatch('nethra.create',{goal:`Self Improvement ${continuous}`,mode:'ONGOING',continuous},`ongoing-${continuous}`,'desktop');
+    const claim=f.store.claim('a');
+    f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:35}}}]},'nethra_tool_result',claim.token);
+    f.store.release(task.id,claim.token);
+    f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,nextWakeAt:f.now()+60_000,wakeReason:{kind:'SCHEDULED',detail:'Wait for Codex availability',at:f.now()+60_000}},'EXECUTED');
+    assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),expected,`continuous=${continuous}`);
+  }
+});

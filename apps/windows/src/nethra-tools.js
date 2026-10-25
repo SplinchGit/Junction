@@ -34,7 +34,7 @@ const definitions = [
   ['consult_codex','Ask the locally signed-in Codex tutor one focused question. Read-only advice: it cannot change files or start a coding job. Allowed while the owner\'s live Codex usage is below their reserve; if not, the error says when it resets.',{question:str(1200)}],
   ['consult_claude','Ask the locally signed-in Claude advisor one focused question. Read-only advice with no tools. Allowed while the owner\'s live Claude usage is below their reserve; if not, the error says when it resets.',{question:str(1200)}],
   ['experiment','Measure whether a change helped. start freezes a baseline of metric; mark_change records when the change was applied (code changes count from the next Junction start); evaluate compares samples since then. Only evaluate verdicts may be reported as improvements.',{action:{type:'string',enum:['start','mark_change','evaluate']},id:{...str(64),optional:true},metric:{type:'string',enum:Object.keys(METRICS),optional:true},hypothesis:{...str(500),optional:true},changeKind:{type:'string',enum:['code','setting','other'],optional:true},workId:{...str(64),optional:true},note:{...str(500),optional:true}}],
-  ['propose_code_work','Prepare one scoped Junction development draft in Work Activity. Available only when the owner enabled code work for this objective. Codex does not start until the owner starts the draft; main-checkout changes still require review.',{task:str(1000),acceptance:str(1000)}],
+  ['propose_code_work','Prepare one scoped Junction development draft in Work Activity. Works even while Codex is resting: Codex only runs when the owner starts the draft, and main-checkout changes still require review.',{task:str(1000),acceptance:str(1000)}],
   ['delegate_task','Run a bounded sequential child of this same model. Review its evidence before acting.',{task:str(1500)}]
 ].map(([name,description,properties])=>({type:'function',function:{name,description,parameters:{type:'object',additionalProperties:false,required:Object.keys(properties).filter(k=>!properties[k].optional),properties:Object.fromEntries(Object.entries(properties).map(([k,v])=>{const {optional,...schema}=v;return [k,schema];}))}}}));
 // Deliberately small validator for this closed schema vocabulary; fail closed.
@@ -128,7 +128,11 @@ class NethraTools {
       if(!status.ready)throw Error(`${label} is not signed in with a subscription on this PC`);
       // Live plan usage, not a daily count, decides. The owner's reserve stays free for their own use.
       const gate=await this.advisorLimits.check(provider);signal?.throwIfAborted();
-      if(!gate.available)throw Error(`${label} is resting: ${gate.detail} Schedule a wake for then, or continue without this advice.`);
+      if(!gate.available){
+        // Point at the other advisor when it can answer now, rather than sleeping until this one resets.
+        const other=provider==='codex'?'claude':'codex',otherReady=await (other==='codex'?this.codexStatus():this.claudeStatus()).then(s=>s.ready&&this.advisorLimits.check(other).then(g=>g.available)).catch(()=>false);
+        throw Error(`${label} is resting: ${gate.detail} ${otherReady?`${ADVISORS[other]} is available now through consult_${other}.`:'Schedule a wake for then, or continue without this advice.'}`);
+      }
       this.store.recordConsult?.(task.id,provider,token);
       const request=`Objective: ${String(task.goal||'').slice(0,500)}\nSuccess criteria: ${String(task.successCriteria||'').slice(0,500)}\nQuestion from Nethra: ${args.question}`;
       let reply;

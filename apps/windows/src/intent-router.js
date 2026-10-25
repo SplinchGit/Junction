@@ -9,6 +9,13 @@ const SEARCH_PATTERNS=Object.freeze([
   /\b(?:online\s+lookup|look\s+up|browse|browsing|web[\s_]*search|google|search\s+(?:for|online|the\s+web)|find\s+(?:online|on\s+the\s+web)|sources?|verify|verification|according\s+to)\b/i,
   /\bwho\s+(?:is|are)\s+(?:the\s+)?(?:pm|prime\s+minister|president|chancellor|ceo|leader|head\s+of\s+state)\b/i
 ]);
+// A time word alone ("now", "latest") is not a public-facts question when the owner is talking
+// about this conversation, a task, or an assistant ("How about now?", "what's changed now, gpt in?").
+// Live miss on 25 October: both were forced into web searches. The model keeps web_search either way.
+const TIME_ONLY=SEARCH_PATTERNS[0];
+const FOLLOWUP_IDIOM=/^(?:(?:and|so|ok(?:ay)?|well|right)[,\s]+)?(?:how|what)\s+about\s+(?:now|today|right\s+now)[?!.\s]*$/i;
+const POLITE_REQUEST=/^(?:please\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:tell|give|show|find|check|get|let)\s+(?:me\s+)?/i;
+const ABOUT_US=/\b(?:you|your|yours|yourself|we|our|us|nethra|junction|gpt|codex|claude|chat|conversation|message|task|tasks|objective|signed?\s+in|log(?:ged)?\s+in|working\s+on)\b/i;
 const ROUTING_PATTERNS=Object.freeze([/\b(?:code|coding|repository|repo|fix|implement|change|modify|edit|build|create|delegate|draft)\b/i,/\b(?:inspect|troubleshoot|debug|diagnose|diagnosis|investigate|why\s+does)\b/i,/\b(?:plan|planning|project|app|application)\b/i]);
 const CORRECTION = /^(?:(?:no|nope|still\s+(?:false|wrong|incorrect)|(?:that(?:'s|\s+is)|you(?:'re|\s+are))\s+(?:false|wrong|incorrect)|false|wrong|incorrect)[\s,.!?]*)+$/i;
 const FOLLOWUP_SEARCH = /^(?:(?:please|no|still\s+(?:false|wrong|incorrect)|(?:that(?:'s|\s+is)|you(?:'re|\s+are))\s+(?:false|wrong|incorrect))[,!?.\s]+)*(?:(?:web[\s_]*search|google|search|verify)\s+(?:it|this|that|again)|look\s+(?:it|this|that)\s+up|search\s+(?:the\s+web|online))[.!?\s]*$/i;
@@ -28,6 +35,7 @@ function detectSearchRequirement(value, history = []) {
     }
     return {required:true,query:'',reasons:['unresolved_owner_followup']};
   }
+  if(matched.length===1&&matched[0]===TIME_ONLY.source&&(FOLLOWUP_IDIOM.test(goal)||ABOUT_US.test(goal.replace(POLITE_REQUEST,''))))return {required:false,query:goal.slice(0,240),reasons:['conversational_time_reference']};
   return {required:matched.length>0,query:goal.slice(0,240),reasons:matched};
 }
 function shouldRunRouting(goal, context=null) {

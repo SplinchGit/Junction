@@ -64,7 +64,9 @@ function postOutcome(task,store,localData,{settings=null,date=new Date()}={}){
  * posted for cycles without progress, so a quiet objective stays quiet.
  */
 function postProgress(task,store,localData,{settings=null,date=new Date(),liveTaskId=null}={}){
-  if(task.mode==='ONGOING'||!task.conversationId||!localData.conversation(task.conversationId))return false;
+  // Ongoing monitors report verified milestones only; an ongoing task that is actively working
+  // (continuous) reports its steps like any other, or the owner hears nothing at all.
+  if((task.mode==='ONGOING'&&!task.continuous)||!task.conversationId||!localData.conversation(task.conversationId))return false;
   if(!['SLEEPING','ACTIVE','PLANNING'].includes(task.status)||task.lastCycleProgressed!==true)return false;
   const policy=deliveryPolicy(settings,date);
   if(settings&&(policy.quiet||!policy.milestones))return false;

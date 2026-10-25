@@ -11,6 +11,9 @@ assert.equal(detectSearchRequirement("What are today's latest prices?").required
 assert.equal(detectSearchRequirement('Explain how recursion works.').required, false);
 assert.equal(detectSearchRequirement('Please verify this against current sources.').required, true);
 assert.equal(detectSearchRequirement('Who is PM of the UK?').required, true);
+// A time word about this conversation or a task is not a public-facts question (live misroutes, 25 Oct).
+for (const goal of ['How about now?', "No you clown I mean given your last message... What's changed now, gpt in?", 'What are you working on right now?', 'Is Codex signed in now?', 'And what about today?']) assert.equal(detectSearchRequirement(goal).required, false, goal);
+for (const goal of ['Can you tell me the current exchange rate for euros?', "What's the latest on the Artemis mission?", 'Who is currently top of the Premier League?', 'Can you search for the latest agentic tools?', 'What is the weather now?']) assert.equal(detectSearchRequirement(goal).required, true, goal);
 assert.equal(shouldRunRouting('Hello, how are you?'), false);
 assert.equal(shouldRunRouting('Please inspect the error shown on my PC.'), true);
 assert.equal(shouldRunRouting('Discuss how to fix this code'), true);
