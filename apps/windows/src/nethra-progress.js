@@ -60,16 +60,21 @@ function activityLine(event){
   if(event.kind==='nethra_tool_result'){
     const item=event.detail?.evidence?.at(-1);
     if(!item)return null;
-    return {kind:item.tool==='consult_codex'?'advice':item.result?.error?'error':'verified',line:evidenceLine(item)};
+    if(item.tool==='consult_codex'&&!item.result?.error)return {kind:'advice',line:evidenceLine(item),actor:'Codex',model:recordedModel(item.result)};
+    return {kind:item.result?.error?'error':'verified',line:evidenceLine(item),actor:'Nethra',model:'qwen3:30b'};
   }
-  if(event.kind==='CODEX_ASSISTED_BRIDGE')return {kind:'advice',line:'Codex advice saved as a technical handoff; Nethra did not call it itself'};
-  if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit'};
-  if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`};
-  if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence'};
-  if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action'};
-  if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step'};
-  if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision'};
+  if(event.kind==='CODEX_ASSISTED_BRIDGE')return {kind:'advice',line:'Codex advice saved as a technical handoff; Nethra did not call it itself',actor:'Codex',model:recordedModel(event.detail?.evidence?.find(item=>item.tool==='consult_codex')?.result)};
+  if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit',actor:'Junction',model:null};
+  if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`,actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision',actor:'Nethra',model:'qwen3:30b'};
   return null;
+}
+function recordedModel(result){
+  const model=result?.model;
+  return typeof model==='string'&&/^[A-Za-z0-9._:-]{1,80}$/.test(model)?model:null;
 }
 /**
  * Host-recorded progress, kept separate from the model's own summary ("narration").
@@ -81,7 +86,7 @@ function progressView(task,store,{now=Date.now(),liveTaskId=null}={}){
     const events=store.recentTaskEvents?.(task.id,40)||store.events(task.id,0).slice(-40).reverse();
     activity=events.map(event=>{const detail=activityLine(event);return detail?{at:event.at,event:event.kind,...detail}:null;}).filter(Boolean).slice(0,8);
     const accomplished=activity.find(item=>['verified','advice'].includes(item.kind));
-    if(accomplished)last={at:accomplished.at,line:accomplished.line,event:accomplished.event};
+    if(accomplished)last={at:accomplished.at,line:accomplished.line,event:accomplished.event,actor:accomplished.actor,model:accomplished.model};
   }catch{}
   const live=liveTaskId===task.id;
   const doing=live?`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`:FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';

@@ -388,7 +388,11 @@ private fun TaskTracking(progress: Map<*, *>?, performance: Map<*, *>?, mode: St
     Text("Activity from host records", style = MaterialTheme.typography.titleSmall)
     val activity = maps(progress["activity"])
     if (activity.isEmpty()) Text("No recorded actions yet.", style = MaterialTheme.typography.bodySmall)
-    activity.take(6).forEach { item -> Text("• ${item["line"]} · ${dateLabel(item["at"])}", style = MaterialTheme.typography.bodySmall) }
+    activity.take(6).forEach { item ->
+        val actor = item["actor"]?.toString() ?: "Junction"
+        val model = item["model"]?.toString()?.takeIf { it.isNotBlank() }
+        Text("• ${item["line"]} · ${dateLabel(item["at"])} · $actor${model?.let { " ($it)" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+    }
     if (performance != null) {
         Text("Measured performance · last 7 days", style = MaterialTheme.typography.titleSmall)
         ObjectivePerformance.lines(performance).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }

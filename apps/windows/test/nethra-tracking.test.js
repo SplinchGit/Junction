@@ -142,10 +142,25 @@ test('task activity distinguishes measured work, Codex advice and a daily budget
   const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
   assert.equal(view.waitingFor.kind,'budget');
   assert.match(view.activity[0].line,/daily model-time limit/i);
+  assert.equal(view.activity[0].actor,'Junction');
+  assert.equal(view.activity[0].model,null);
   assert.match(view.activity[1].line,/Codex.*advice/i);
+  assert.equal(view.activity[1].actor,'Codex');
+  assert.equal(view.activity[1].model,null,'the host must not invent an unspecified Codex model');
   assert.match(view.activity[2].line,/Read C:\/Junction\/metrics.json/);
+  assert.equal(view.activity[2].actor,'Nethra');
+  assert.equal(view.activity[2].model,'qwen3:30b');
   assert.equal(view.activity[1].kind,'advice');
   assert.match(view.lastAccomplished.line,/Codex.*advice/i);
+});
+
+test('assisted Codex activity carries the model recorded in its result',t=>{
+  const f=fixture(t),task=f.store.create({goal:'Self Improvement',mode:'ONGOING'});
+  f.store.update(task.id,{evidence:[{tool:'consult_codex',result:{model:'gpt-5.6-luna',advice:'Measure first'}}]},'CODEX_ASSISTED_BRIDGE');
+  const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
+  assert.equal(view.activity[0].actor,'Codex');
+  assert.equal(view.activity[0].model,'gpt-5.6-luna');
+  assert.equal(view.lastAccomplished.model,'gpt-5.6-luna');
 });
 
 test('quiet hours cross midnight and defer outcome posts until they end, without duplicates',t=>{
