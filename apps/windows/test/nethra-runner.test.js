@@ -283,3 +283,24 @@ test('after an approved write the model is told first that it is done and must n
   assert.match(parsed.approvedActionsNote,/Do not request approval for them again/);
   store.close();
 });
+test('a large read no longer wipes the wake: earlier calls stay visible and an identical repeat is answered, not re-run',async t=>{
+  // Live loop, 25 Oct: after one big read the conversation was reset to a truncated seed, so Nethra
+  // re-listed the repo, re-read build.gradle.kts and re-ran diagnostics until the tool budget ran out.
+  const f=fixture(t);fs.writeFileSync(path.join(f.root,'build.gradle.kts'),'x'.repeat(60_000));
+  f.task.ownerInputs=[{kind:'note',text:'How about now? Is GPT in?'}];
+  f.task.evidence=[{tool:'read_file',result:{path:'old.txt',content:'y'.repeat(20_000)}}];
+  const seen=[];let calls=0;
+  const read={function:{name:'read_file',arguments:{path:'build.gradle.kts'}}};
+  const runtime={withInference:fn=>fn(),chat:async(_model,messages)=>{seen.push(structuredClone(messages));calls++;
+    const plan={function:{name:'update_plan',arguments:{steps:['Inspect build'],completedSteps:['Inspect build']}}};
+    return {message:{role:'assistant',content:'',tool_calls:calls<=2?[read]:calls===3?[plan]:[{function:{name:'schedule_wake',arguments:{at:Date.now()+3_600_000,reason:'Next check'}}}]}};}};
+  let reads=0;const tools=new NethraTools({store:f.store});const execute=tools.execute.bind(tools);
+  const runner=new NethraRunner({store:f.store,runtime});runner.tools.execute=async(name,...rest)=>{if(name==='read_file')reads++;return execute(name,...rest);};
+  await runner.execute(f.task);
+  const seed=JSON.parse(seen[0][1].content);
+  assert.match(JSON.stringify(seed.ownerInputs),/Is GPT in/,'owner notes survive large evidence');
+  assert.ok(Array.isArray(seed.actionsSoFar)&&seed.actionsSoFar.some(line=>/Read old\.txt/.test(line)));
+  assert.equal(reads,1,'the identical read ran once');
+  assert.ok(seen[2].some(m=>m.role==='assistant'&&m.tool_calls?.[0]?.function?.name==='read_file'),'the earlier call is still in the conversation');
+  assert.match(seen[2].at(-1).content,/already called read_file/);
+});

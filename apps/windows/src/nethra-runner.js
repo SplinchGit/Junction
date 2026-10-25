@@ -3,6 +3,9 @@ const {randomUUID,createHash}=require('node:crypto');
 const {NethraTools,ApprovalRequired,draftReceiptIsCurrent}=require('./nethra-tools');
 const {monitorWakeAt,wakeReason}=require('./nethra-scheduler');
 const {CONTEXT_TOKENS,fitContext}=require('./model-context');
+const {evidenceLine}=require('./nethra-progress');
+// Re-running these with identical arguments in one wake returns the same data; say so instead.
+const IDEMPOTENT_READS=new Set(['list_directory','read_file','performance_report','host_diagnostics','web_search','calendar_event','gmail_message','phone_result']);
 const MODEL='qwen3:30b';
 const MAX_ITERATIONS=12,MAX_TOOLS=10,MAX_MS=10*60_000;
 function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\S]*?(?:<\/think>|$)/gi,'').slice(0,max);}
@@ -142,8 +145,10 @@ class NethraRunner {
       // Live 30B runs re-requested an approval Junction had already executed, because the completed
       // action was one item in the evidence list. State it first: bounded() truncates from the end.
       const approvedBriefing=approvedNow.length?{approvedActionsCompletedThisWake:approvedNow,approvedActionsNote:'The owner approved these exact actions and Junction has already completed them; the file hashes are in this list. Do not request approval for them again. Mark the related plan steps completed with update_plan, check the success criteria against this evidence, and call finish_objective if they are met.'}:{};
-      const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,readRoots:task.readRoots||[],workspace:task.workspace,allowCodeWork:task.allowCodeWork===true,codeWorkNote:task.allowCodeWork?'You may use propose_code_work to save one scoped Junction development draft, then ask the owner to start it in Work Activity. This does not run Codex or apply code.':'Code work has not been enabled for this objective.',autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-4),ownerInputs:task.ownerInputs||[],...((task.ownerInputs||[]).some(item=>item.kind==='note')?{ownerInputsNote:'Inputs with kind note are messages the owner wrote in this objective\'s chat since it started; take the latest into account.'}:{}),...(task.continuous?{workMode:'Continuous: keep working through the plan in steps; do not schedule a distant wake while useful steps remain.'}:{}),...(task.redirectedAt&&(task.ownerInputs||[]).at(-1)?.kind==='redirect'&&!state.pendingSteps.length?{ownerRedirect:{text:task.ownerInputs.at(-1).text,at:new Date(task.redirectedAt).toISOString(),note:'The owner changed direction. Keep verified evidence, then save a revised plan with update_plan before acting. Approvals for the old plan were superseded.'}}:{}),now:new Date(this.now()).toISOString(),nowMs:this.now()};
-      let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,4000)}],proseOnlyTurns=0;
+      const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,actionsSoFar:state.evidence.slice(-12).map(evidenceLine),readRoots:task.readRoots||[],workspace:task.workspace,allowCodeWork:task.allowCodeWork===true,codeWorkNote:task.allowCodeWork?'You may use propose_code_work to save one scoped Junction development draft, then ask the owner to start it in Work Activity. This does not run Codex or apply code.':'Code work has not been enabled for this objective.',autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,ownerInputs:task.ownerInputs||[],...((task.ownerInputs||[]).some(item=>item.kind==='note')?{ownerInputsNote:'Inputs with kind note are messages the owner wrote in this objective\'s chat since it started; take the latest into account.'}:{}),...(task.continuous?{workMode:'Continuous: keep working through the plan in steps; do not schedule a distant wake while useful steps remain.'}:{}),...(task.redirectedAt&&(task.ownerInputs||[]).at(-1)?.kind==='redirect'&&!state.pendingSteps.length?{ownerRedirect:{text:task.ownerInputs.at(-1).text,at:new Date(task.redirectedAt).toISOString(),note:'The owner changed direction. Keep verified evidence, then save a revised plan with update_plan before acting. Approvals for the old plan were superseded.'}}:{}),now:new Date(this.now()).toISOString(),nowMs:this.now()};
+      // Raw evidence goes last: bounded() truncates from the end, which must never drop owner notes or the time.
+      seed.evidence=state.evidence.slice(-4).map(item=>({tool:item.tool,result:JSON.parse(bounded(item.result??null,700))}));
+      let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,6000)}],proseOnlyTurns=0;const calledThisWake=new Map();
       for(;budget.iterations<MAX_ITERATIONS;){
         check();const message=await chat(messages);messages.push(message);
         if(!message.tool_calls?.length){
@@ -175,6 +180,9 @@ class NethraRunner {
             }else if(name==='request_input'){
               await persist({status:'WAITING_FOR_USER',summary:cleanText(args.question,1000)},'nethra_input_required');return state;
             }else{
+              const callKey=`${name}:${JSON.stringify(args)}`;
+              if(IDEMPOTENT_READS.has(name)&&calledThisWake.has(callKey)){messages.push(toolMessage(name,{repeated:true,note:`You already called ${name} with these arguments earlier in this wake (call ${calledThisWake.get(callKey)}); nothing has changed. Choose a different next step: update_plan, read a different file, consult an advisor, propose_code_work, start or evaluate an experiment, or schedule_wake.`}));continue;}
+              calledThisWake.set(callKey,budget.tools);
               result=name==='delegate_task'?await child(args.task):await this.tools.execute(name,args,{...task,evidence:state.evidence},{signal:combined,token});
               await persist({evidence:[...state.evidence,{tool:name,result:JSON.parse(bounded(result))}].slice(-30)},'nethra_tool_result');
             }
@@ -185,7 +193,6 @@ class NethraRunner {
           }
           messages.push(toolMessage(name,result));
         }
-        if(JSON.stringify(messages).length>6000)messages=[messages[0],{role:'user',content:bounded({...seed,plan:state.plan,completedSteps:state.completedSteps,evidence:state.evidence.slice(-3)},4000)}];
       }
       return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000,wakeReason:wakeReason('CONTINUE','Continue after the per-wake work budget; progress was saved',this.now()+60_000)},'nethra_budget_reached');
     }catch(error){
