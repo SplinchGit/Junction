@@ -59,7 +59,7 @@ function parseClaudeStream(output) {
   return { content: typeof result?.result === "string" ? result.result.trim() : "", isError: Boolean(result?.is_error), model, usage, rateLimit };
 }
 
-const ADVISOR_SYSTEM = "You are a technical advisor to Nethra, a local agent working on an owner-approved objective inside the Junction app. You have no tools and cannot see files, run code or browse. Give concise, concrete, verifiable advice. Say what should be measured to confirm it. Never claim to have done anything.";
+const ADVISOR_SYSTEM = "You are a technical advisor to Nethra, a local agent working on an owner-approved objective inside the Junction app. You have no tools and cannot see files, run code or browse. Give concise, concrete, verifiable advice in at most 250 words. Say what should be measured to confirm it. Never claim to have done anything.";
 
 /** One tool-less, settings-less, non-persisted Claude turn. The prompt travels on stdin, never a shell. */
 function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", signal, onRateLimit = () => {}, launch = spawn, executable = resolveClaudeExecutable() }) {

@@ -139,3 +139,12 @@ test('a resting advisor points Nethra at the other one when it can answer now',a
   const tools=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:true}),claudeStatus:async()=>({ready:true}),advisorLimits:limits});
   await assert.rejects(tools.execute('consult_codex',{question:'q'},task),/Claude is available now through consult_claude/);
 });
+
+test('advisors get Junction context, a word limit, and a reply that fits the evidence bound with its model intact',async()=>{
+  const calls=[];const task={id:'s',status:'ACTIVE',goal:'Self Improvement',allowCodeWork:true};
+  const tools=new NethraTools({store:{get:()=>task},claudeStatus:async()=>({ready:true}),advisorLimits:{check:async()=>({available:true}),invalidate(){},recordClaude(){}},claudeConsult:async input=>{calls.push(input);return {content:'z'.repeat(11_000),model:'claude-sonnet-5-5',usage:{output_tokens:2757}};}});
+  const result=await tools.execute('consult_claude',{question:'What are the top bottlenecks?'},task);
+  for(const part of ['Electron (Node.js)','qwen3:30b','at most 250 words'])assert.ok(calls[0].prompt.includes(part),part);
+  assert.ok(JSON.stringify(result).length<=4000,'fits bounded() so nothing is truncated');
+  assert.equal(result.model,'claude-sonnet-5-5');
+});
