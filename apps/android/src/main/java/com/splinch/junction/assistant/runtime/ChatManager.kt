@@ -800,6 +800,8 @@ class ChatManager(
                 val at = java.time.LocalTime.now().withNano(0)
                 appendSystemMessage("Approved by voice at $at: ${decision.summary}. (Spoken confirmation during your active call; speech recognition does not verify who is speaking.)")
                 recordVoiceApproval(current, decision.utterance, decision.digest)
+                // Each send must still match, at send time, the draft that was read aloud.
+                current.steps.filter { it.tool == "email_send" }.forEach { toolExecutor.requireExactDraft(it.arguments.optString("draftId")) }
                 // Runs once, then reports what the tools themselves confirmed, not the plan.
                 val result = planCoordinator.approveExact(decision.planId, planCallbacks()) { candidate ->
                     approvalSession != null && voiceCoordinator.activeLocalCallSession() == approvalSession &&

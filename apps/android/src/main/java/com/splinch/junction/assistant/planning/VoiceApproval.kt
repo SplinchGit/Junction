@@ -41,8 +41,11 @@ object VoiceApprovalPolicy {
     fun disclose(plan: Plan, drafts: (String) -> DraftDisclosure?, stepHash: (Step) -> String): Disclosure {
         val steps = plan.steps.filter { it.status == StepStatus.PENDING }
         if (steps.isEmpty()) return Disclosure.ScreenOnly("nothing is waiting")
-        if (steps.any { it.tool == "email_send" || it.tool == "reply_notification" }) {
-            return Disclosure.ScreenOnly("the current send tool cannot bind the live recipient and content to an immutable spoken proposal")
+        // An email send is re-read from Gmail at send time and refused if it differs from what
+        // was spoken (see ToolExecutor.requireExactDraft). A notification reply has no such
+        // check: its target can change underneath, so it stays on screen.
+        if (steps.any { it.tool == "reply_notification" }) {
+            return Disclosure.ScreenOnly("a notification reply's target can't be checked again at send time")
         }
         if (steps.size > MAX_STEPS) return Disclosure.ScreenOnly("it has too many steps to read aloud")
         if (steps.any { it.riskTier == RiskTier.DESTRUCTIVE }) return Disclosure.ScreenOnly("it can change code, install software, or is not a recognised action")

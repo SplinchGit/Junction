@@ -604,7 +604,8 @@ fun JunctionDrawerContent(
     onDelete: (String) -> Unit,
     onOpenBuild: () -> Unit,
     onOpenWork: () -> Unit,
-    onOpenObjectives: () -> Unit
+    onOpenObjectives: () -> Unit,
+    onOpenAudit: () -> Unit = {}
 ) {
     var pendingDelete by remember { mutableStateOf<com.splinch.junction.assistant.conversation.ChatSessionSummary?>(null) }
     pendingDelete?.let { summary ->
@@ -632,9 +633,15 @@ fun JunctionDrawerContent(
             icon = { Icon(Icons.Default.Build, contentDescription = null) }
         )
         NavigationDrawerItem(
-            label = { Text("Active tasks") },
+            label = { Text("Tasks") },
             selected = false,
             onClick = onOpenObjectives,
+            icon = { Icon(Icons.Default.Build, contentDescription = null) }
+        )
+        NavigationDrawerItem(
+            label = { Text("Audit") },
+            selected = false,
+            onClick = onOpenAudit,
             icon = { Icon(Icons.Default.Build, contentDescription = null) }
         )
         Spacer(Modifier.height(8.dp))

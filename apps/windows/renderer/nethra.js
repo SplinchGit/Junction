@@ -3,7 +3,11 @@
  const el=(tag,text='')=>{const node=document.createElement(tag);node.textContent=text;return node;};
  const section=el('aside');section.id='nethra-task-drawer';section.className='nethra-task-drawer';section.setAttribute('aria-label','Nethra tasks');section.setAttribute('aria-hidden','true');section.inert=true;
  const header=el('header'),title=el('h2','Nethra tasks'),close=el('button','×');close.type='button';close.setAttribute('aria-label','Close task drawer');header.append(title,close);section.append(header);
- const area=el('div');area.className='foreman-area';section.append(area);document.querySelector('#view-chat .chat-layout').append(section);
+ const area=el('div');area.className='foreman-area';section.append(area);
+ const page=el('section');page.className='view';page.id='view-tasks';page.setAttribute('aria-hidden','true');
+ const pageHeader=el('header');const pageTitle=el('div');pageTitle.append(Object.assign(el('small','NETHRA · ON YOUR PC'),{}),el('h1','Tasks'));pageHeader.append(pageTitle,Object.assign(el('mark','Keeps working when this window is closed'),{}));
+ const layout=el('div');layout.className='tasks-page';const detailPane=el('div');detailPane.className='task-detail-pane';detailPane.setAttribute('aria-live','polite');
+ section.classList.add('tasks-list-pane');queueMicrotask(()=>{area.append(reunion);notice.classList.add('task-line');area.append(notice);});section.inert=false;section.removeAttribute('aria-hidden');layout.append(section,detailPane);page.append(pageHeader,layout);document.querySelector('main').append(page);
  const notice=el('p','One local agent on your Windows PC. Enabled objectives continue while the desktop window is closed.');area.append(notice);
  const reunion=el('details');reunion.append(el('summary','Since you were away'));const reunionBody=el('div','Checking saved activity…');reunion.append(reunionBody);area.append(reunion);
  const error=el('p');error.role='status';area.append(error);
@@ -18,7 +22,7 @@
  const policyFields=el('div');policyFields.className='objective-policy';policyFields.append(mode.wrapper,autonomy.wrapper,priority.wrapper,checkIn.wrapper);
  const checkbox=(text,checked=false)=>{const input=el('input');input.type='checkbox';input.checked=checked;const label=el('label',text);label.prepend(input);return {label,input};};
  const watchCalendar=checkbox(' Watch my Google Calendar (read-only)'),watchGmail=checkbox(' Watch new Gmail inbox mail (headers only)');
- const create=el('button','Create objective');create.type='submit';form.append(goal,roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label,create);const createDetails=el('details');createDetails.className='task-create-details';createDetails.append(el('summary','New objective'),form);area.append(createDetails);
+ const continuousNew=checkbox(' Keep working continuously until done',true);const create=el('button','Create task');create.type='submit';const moreOptions=el('details');moreOptions.className='task-more-options';moreOptions.append(el('summary','More options'),roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label);form.append(goal,continuousNew.label,moreOptions,create);const createDetails=el('details');createDetails.className='task-create-details';createDetails.append(el('summary','+ New task'),form);area.append(createDetails);
  const settings=el('article');settings.className='panel';const thinking=el('input');thinking.type='checkbox';thinking.checked=true;thinking.disabled=true;const thinkingLabel=el('label',' Thinking is always on with Qwen3 30B');thinkingLabel.prepend(thinking);
  const startup=el('input');startup.type='checkbox';const startupLabel=el('label',' Start Nethra after Windows sign-in');startupLabel.prepend(startup);const modelStatus=el('p','Checking host…');settings.append(thinkingLabel,startupLabel,modelStatus);document.querySelector('.settings').append(settings);
  // Model warm-up and proactive updates. Loading never generates a reply or touches chats.
@@ -59,56 +63,96 @@
  const refreshBadge=async()=>{try{lastObjectives=(await api('nethra.list')).objectives;updateObjectiveStatus(lastObjectives);updateStrip();}catch{objectiveStatus.textContent='Tasks';}};
  window.addEventListener('junction:chat-opened',refreshBadge);
  strip.onclick=()=>{const row=lastObjectives.find(item=>item.conversationId===activeConversationId);if(row)selectedId=row.id;setDrawerOpen(true);};
- const setDrawerOpen=open=>{section.classList.toggle('open',open);section.setAttribute('aria-hidden',String(!open));section.inert=!open;objectiveStatus.setAttribute('aria-expanded',String(open));if(open)refresh();};
+ const setDrawerOpen=open=>{if(open)showView('tasks');else if(document.getElementById('view-tasks').classList.contains('active'))showView('chat');section.classList.toggle('open',open);objectiveStatus.setAttribute('aria-expanded',String(open));if(open)refresh();};
  close.onclick=()=>setDrawerOpen(false);
  const perform=async fn=>{try{error.textContent='';await fn();}catch(e){error.textContent=e.message;}finally{await refresh();}};
  const button=(label,fn)=>{const b=el('button',label);b.type='button';b.onclick=()=>perform(fn);return b;};
  const time=value=>value?new Date(value).toLocaleString():'None scheduled';
  const details=(label,value)=>{const d=el('details');d.append(el('summary',label),el('pre',typeof value==='string'?value:JSON.stringify(value,null,2)));return d;};
+ const stateOf=row=>row.live?'working':['WAITING_FOR_USER','BLOCKED'].includes(row.status)||(row.tracking&&!['nothing','time','source'].includes(row.tracking.waitingFor?.kind))?'needs':row.status==='PAUSED'?'paused':row.status==='COMPLETED'?'done':['FAILED','CANCELLED'].includes(row.status)?'ended':row.status==='SLEEPING'?'sleeping':'queued';
+ const stateLabel=row=>({working:'Working now',needs:'Needs you',paused:'Paused',done:'Done',ended:row.status==='CANCELLED'?'Stopped':'Failed',sleeping:row.continuous?'Continuing shortly':row.mode==='ONGOING'?'Monitoring':'Sleeping',queued:row.continuous?'Working continuously':'Queued'})[stateOf(row)];
  async function refresh(){if(loading){refreshAgain=true;return;}loading=true;try{
    const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;updateObjectiveStatus(result.objectives);updateStrip();
-   const answerDrafts=new Map([...list.querySelectorAll('article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
-   list.replaceChildren();const activeRows=result.objectives.filter(visible);if(!activeRows.length)list.append(el('p','No active tasks. Start one from the chat draft.'));
+   const answerDrafts=new Map([...document.querySelectorAll('#view-tasks article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
+   list.replaceChildren();detailPane.replaceChildren(Object.assign(el('p','Select a task to see what Nethra is doing, what it needs from you, and its controls.'),{className:'task-line'}));const activeRows=result.objectives.filter(visible);if(!activeRows.length)list.append(el('p','No active tasks. Start one from the chat draft.'));
    const recentEnded=result.objectives.filter(row=>!visible(row)).slice(0,5);
    const rows=[...activeRows,...recentEnded];if((selectedId===null||(selectedId&&!rows.some(row=>row.id===selectedId)))&&activeRows.length)selectedId=activeRows[0].id;
-   for(const row of rows){if(row===recentEnded[0])list.append(el('h3','Recent work'));const card=el('article');card.className='delegation-card';card.dataset.objectiveId=row.id;const heading=el('button',`${row.live?'● Working now':'○ '+row.status.replaceAll('_',' ')} · ${row.goal}`);heading.type='button';heading.className='task-index-row';heading.setAttribute('aria-expanded',String(selectedId===row.id));heading.onclick=()=>{selectedId=selectedId===row.id?'':row.id;refresh();};card.append(heading);if(row.step)card.append(el('p',row.step));
-     const openChat=button(row.conversationId?'Open chat':'Create chat',async()=>{const result=await api('nethra.openChat',{id:row.id});await openConversation(result.conversationId);setDrawerOpen(false);});card.append(openChat);
-     if(selectedId!==row.id){list.append(card);continue;}
-     const {task,approvals,events,attention,progress}=await api('nethra.get',{id:row.id});card.append(el('strong',row.live?'Working now':task.status.replaceAll('_',' ')));
-     // Host-recorded tracking first; the model's own summary is labelled as its narration.
+   for(const row of rows){
+     if(row===recentEnded[0])list.append(el('h3','Recent work'));
+     const card=el('article');card.className='task-card';card.dataset.objectiveId=row.id;card.dataset.state=stateOf(row);
+     const head=el('div');head.className='task-head';
+     const chip=el('span',stateLabel(row));chip.className='task-chip';
+     const title=el('button',row.goal);title.type='button';title.className='task-index-row task-title';title.setAttribute('aria-expanded',String(selectedId===row.id));title.onclick=()=>{selectedId=selectedId===row.id?'':row.id;refresh();};
+     const chat=button(row.conversationId?'Open chat':'Create chat',async()=>{const result=await api('nethra.openChat',{id:row.id});await openConversation(result.conversationId);setDrawerOpen(false);});chat.className='task-link';
+     head.append(chip,title,chat);card.append(head);
+     const line=row.tracking?((!['nothing','time','source'].includes(row.tracking.waitingFor?.kind)?`Needs you: ${row.tracking.waitingFor.detail||''}`:row.tracking.doing)||''):(row.step||'');
+     if(line)card.append(Object.assign(el('p',line),{className:'task-line'}));
+     // A visible continuous switch on every open task.
+     if(!['COMPLETED','CANCELLED','FAILED'].includes(row.status)&&row.mode!=='ONGOING'){const quick=checkbox(' Continuous',row.continuous===true);quick.label.className='task-toggle task-quick';quick.label.title='Keep working step after step until done';quick.input.onchange=()=>perform(()=>api('nethra.configure',{id:row.id,revision:row.revision,continuous:quick.input.checked}));card.append(quick.label);}
+     list.append(card);
+     if(selectedId!==row.id)continue;
+     card.classList.add('selected');const detailCard=el('article');detailCard.className='task-detail';detailCard.dataset.objectiveId=row.id;
+     const detailHead=el('div');detailHead.className='task-head';detailHead.append(Object.assign(el('span',stateLabel(row)),{className:'task-chip'}),Object.assign(el('h2',row.goal),{className:'task-detail-title'}),button(row.conversationId?'Open task chat':'Create task chat',async()=>{const opened=await api('nethra.openChat',{id:row.id});await openConversation(opened.conversationId);showView('chat');}));detailCard.dataset.state=stateOf(row);detailCard.append(detailHead);detailPane.replaceChildren(detailCard);
+     const {task,approvals,events,attention,progress}=await api('nethra.get',{id:row.id});
+     const open=!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
+     const pendingApprovals=approvals.filter(a=>a.status==='PENDING');
+     // What Nethra needs from the owner comes first.
+     if(pendingApprovals.length||task.status==='WAITING_FOR_USER'||task.status==='BLOCKED'){
+       const needs=el('div');needs.className='task-needs';needs.append(el('strong',pendingApprovals.length?'Approval needed':task.status==='BLOCKED'?'Blocked':'Nethra is asking'));
+       for(const approval of pendingApprovals){needs.append(el('p',approval.reviewReason||`Replace the draft ${approval.args?.path||''}`),details('Exact change',approval.args));const row2=el('div');row2.className='task-actions';row2.append(button(approval.reviewRequired?'Approve exact retry':'Approve',()=>api('nethra.approve',{id:approval.id,approved:true})),button('Reject',()=>api('nethra.approve',{id:approval.id,approved:false})));needs.append(row2);}
+       if(!pendingApprovals.length){needs.append(el('p',task.summary||'Nethra needs a direction.'));
+         if(task.status==='WAITING_FOR_USER'){const answer=el('textarea');answer.placeholder='Answer Nethra (or reply in this task’s chat)';answer.setAttribute('aria-label','Answer Nethra');answer.value=answerDrafts.get(task.id)||'';needs.append(answer,button('Send answer',()=>api('nethra.answer',{id:task.id,revision:task.revision,answer:answer.value})));}}
+       detailCard.append(needs);
+     }
+     // Host-recorded tracking; the model's own words are labelled as its note.
      if(progress){const dl=el('dl');dl.className='tracking';const add=(term,value,cls)=>{if(!value)return;const dd=el('dd',value);if(cls)dd.className=cls;dl.append(el('dt',term),dd);};
        add('Doing',progress.doing);add('Last done',progress.lastAccomplished?`${progress.lastAccomplished.line} (${time(progress.lastAccomplished.at)})`:null);add('Next',progress.next);
        add('Wakes',progress.wake?`${time(progress.wake.at)} — ${progress.wake.reason}`:null);
-       if(!['nothing','time','source'].includes(progress.waitingFor.kind))add('Needs you',progress.waitingFor.detail,'needs');else if(progress.waitingFor.kind!=='time')add('Waiting for',progress.waitingFor.detail);
+       if(['source','dependency','budget'].includes(progress.waitingFor.kind))add('Waiting for',progress.waitingFor.detail);
+       add('Steps',progress.counts.total?`${progress.counts.done} of ${progress.counts.total} done`:null);
        add('Outputs',progress.outputs.length?progress.outputs.map(item=>`${item.path}${item.current?'':' (changed since written)'}`).join('\n'):null);
        add('Evidence',progress.evidence.length?progress.evidence.map(item=>`${item.ok?'✓':'✗'} ${item.line}`).join('\n'):null);
-       card.append(dl);}
-     card.append(el('p',task.summary?`Nethra's note: ${task.summary}`:'Waiting for a useful next action'),el('p',`Direction review: ${time(task.nextDirectionCheckAt)}`));
-     if(row.progress?.total)card.append(el('p',row.step?`Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}: ${row.step}`:`${row.progress.done} of ${row.progress.total} steps done`));
-     if(task.mode==='ONGOING')card.append(el('p','Ongoing monitoring'));
-     const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
-     const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
-     const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
-     const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');
-     const watches=checkbox(' Watch Google Calendar',(task.sources||[]).includes('calendar')),watchesMail=checkbox(' Watch Gmail',(task.sources||[]).includes('gmail'));
-     if(!['COMPLETED','CANCELLED','FAILED'].includes(task.status)){const controls=el('div');controls.className='objective-policy';controls.append(taskMode.wrapper,profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,mode:taskMode.field.value,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));card.append(controls);}
-     card.append(details('Plan',{steps:task.plan,completed:task.completedSteps,pending:task.pendingSteps}),details('Evidence',task.evidence),details('Attention',attention||[]),details('History',events),details('Errors',task.errors));
-     if(!['COMPLETED','CANCELLED','FAILED'].includes(task.status)){
-       const action=task.status==='PAUSED'||task.status==='BLOCKED'?'resume':'pause';card.append(button(action==='pause'?'Pause':'Resume',()=>api('nethra.control',{id:task.id,action,revision:task.revision})),button('Cancel objective',()=>api('nethra.control',{id:task.id,action:'cancel',revision:task.revision})));
-       if(task.status==='SLEEPING')card.append(button('Check now',()=>api('nethra.control',{id:task.id,action:'wake',revision:task.revision})));
-       const redirectRow=el('div');redirectRow.className='redirect-row';const direction=el('textarea');direction.placeholder='Redirect: tell Nethra the new direction (keeps verified evidence)';direction.setAttribute('aria-label','Redirect objective');direction.maxLength=4000;
-       redirectRow.append(direction,button('Redirect',()=>api('nethra.redirect',{id:task.id,revision:task.revision,instruction:direction.value})));card.append(redirectRow);
+       if(task.summary&&!['WAITING_FOR_USER','BLOCKED'].includes(task.status))add("Nethra's note",task.summary);
+       if(row.usage)add('Model time today',`${Math.round(row.usage.todayMs/60000)} min of ${Math.round(result.settings.objectiveDailyMs/60000)} min daily limit`);
+       detailCard.append(dl);}
+     if(open){
+       const actions=el('div');actions.className='task-actions';
+       if(task.status==='PAUSED')actions.append(button('Resume',()=>api('nethra.control',{id:task.id,action:'resume',revision:task.revision})));
+       else if(!['WAITING_FOR_USER','BLOCKED'].includes(task.status))actions.append(button('Pause',()=>api('nethra.control',{id:task.id,action:'pause',revision:task.revision})));
+       if(task.status==='SLEEPING')actions.append(button('Check now',()=>api('nethra.control',{id:task.id,action:'wake',revision:task.revision})));
+       const editButton=el('button','Edit');editButton.type='button';actions.append(editButton);
+       const stop=button('Stop task',async()=>{if(!window.confirm('Stop this task? It will not run again. Its chat, evidence and drafts are kept.'))return;await api('nethra.control',{id:task.id,action:'cancel',revision:task.revision});});stop.className='danger';actions.append(stop);
+       const remove=button('Delete',async()=>{if(!window.confirm('Delete this task, its history and its drafts? Its chat is kept as an ordinary conversation. This cannot be undone.'))return;await api('nethra.delete',{id:task.id,confirm:true});selectedId=null;});remove.className='danger';actions.append(remove);
+       detailCard.append(actions);
+       if(task.mode!=='ONGOING'){const continuous=checkbox(' Keep working continuously (one step after another until done)',task.continuous===true);continuous.label.className='task-toggle';
+       continuous.input.onchange=()=>perform(()=>api('nethra.configure',{id:task.id,revision:task.revision,continuous:continuous.input.checked}));detailCard.append(continuous.label);}
+       // Edit the objective's wording; completed steps and evidence are kept.
+       const editor=el('div');editor.className='task-editor';editor.hidden=true;const goalField=el('textarea');goalField.value=task.goal;goalField.setAttribute('aria-label','Edit goal');goalField.rows=3;
+       const criteriaField=el('textarea');criteriaField.value=task.successCriteria&&task.successCriteria!==task.goal?task.successCriteria:'';criteriaField.placeholder='What does done look like? (optional)';criteriaField.setAttribute('aria-label','Edit success criteria');
+       const editActions=el('div');editActions.className='task-actions';editActions.append(button('Save changes',()=>api('nethra.edit',{id:task.id,revision:task.revision,goal:goalField.value,successCriteria:criteriaField.value})),Object.assign(el('button','Cancel'),{type:'button',onclick:()=>{editor.hidden=true;}}));
+       editor.append(el('label','Goal'),goalField,el('label','Success criteria'),criteriaField,editActions);editButton.onclick=()=>{editor.hidden=!editor.hidden;if(!editor.hidden)goalField.focus();};detailCard.append(editor);
+       const redirect=el('details');redirect.append(el('summary','Change direction'));const redirectRow=el('div');redirectRow.className='redirect-row';const direction=el('textarea');direction.placeholder='Tell Nethra the new direction (keeps verified evidence)';direction.setAttribute('aria-label','Redirect objective');direction.maxLength=4000;
+       redirectRow.append(direction,button('Redirect',()=>api('nethra.redirect',{id:task.id,revision:task.revision,instruction:direction.value})));redirect.append(redirectRow);detailCard.append(redirect);
+       const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
+       const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
+       const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
+       const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');
+       const watches=checkbox(' Watch Google Calendar',(task.sources||[]).includes('calendar')),watchesMail=checkbox(' Watch Gmail',(task.sources||[]).includes('gmail'));
+       const approach=el('details');approach.append(el('summary','Approach and sources'));const controls=el('div');controls.className='objective-policy';controls.append(taskMode.wrapper,profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,mode:taskMode.field.value,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));approach.append(controls);detailCard.append(approach);
+     }else{
+       const remove=button('Delete',async()=>{if(!window.confirm('Delete this finished task, its history and its drafts? Its chat is kept.'))return;await api('nethra.delete',{id:task.id,confirm:true});selectedId=null;});remove.className='danger';
+       const actions=el('div');actions.className='task-actions';actions.append(remove);detailCard.append(actions);
      }
-     for(const approval of approvals.filter(a=>a.status==='PENDING')){const panel=el('div');panel.append(el('strong',`Approval required: ${approval.tool}`),el('p',approval.reviewReason||''),details('Exact action',approval.args),button(approval.reviewRequired?'Approve exact retry':'Approve',()=>api('nethra.approve',{id:approval.id,approved:true})),button('Reject',()=>api('nethra.approve',{id:approval.id,approved:false})));card.append(panel);}
-     if(task.status==='WAITING_FOR_USER'&&!approvals.some(a=>a.status==='PENDING')){const answer=el('textarea');answer.placeholder='Answer Nethra';answer.setAttribute('aria-label','Answer Nethra');answer.value=answerDrafts.get(task.id)||'';card.append(answer,button('Send answer',()=>api('nethra.answer',{id:task.id,revision:task.revision,answer:answer.value})));}
-     list.append(card);
+     const record=el('details');record.append(el('summary','Full record'),details('Plan',{steps:task.plan,completed:task.completedSteps,pending:task.pendingSteps}),details('Evidence',task.evidence),details('Attention',attention||[]),details('History',events),details('Errors',task.errors));detailCard.append(record);
    }
  }catch(e){error.textContent=e.message;}finally{loading=false;if(refreshAgain){refreshAgain=false;refresh();}}}
- form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,conversationId:activeConversationId||null,persistent:persistent.checked,mode:mode.field.value,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=false;});};
+ form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,conversationId:activeConversationId||null,persistent:persistent.checked,mode:mode.field.value,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,continuous:continuousNew.input.checked,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=false;});};
  startup.onchange=()=>perform(()=>api('nethra.settings',{persistentStartup:startup.checked}));
  openObjectives.onclick=()=>{const draft=document.getElementById('message-input').value.trim();if(draft)goal.value=draft;document.getElementById('chat-options').open=false;createDetails.open=true;setDrawerOpen(true);goal.focus();};
  objectiveStatus.onclick=()=>setDrawerOpen(!section.classList.contains('open'));
+ document.querySelectorAll('[data-view="tasks"]').forEach(button=>button.addEventListener('click',()=>{section.classList.add('open');refresh();}));
+ document.querySelectorAll('.nav[data-view]:not([data-view="tasks"])').forEach(button=>button.addEventListener('click',()=>section.classList.remove('open')));
  api('nethra.status',{warm:false}).then(s=>{showSettings(s.settings);modelStatus.textContent=`${s.model} · Windows host · ${s.capabilities.thinking?'native thinking supported':'thinking support unavailable'} · one inference at a time${s.modelState?` · ${s.modelState.state}`:''}`;showCalendar(s.sources.calendar);showGmail(s.sources.gmail);}).catch(e=>{modelStatus.textContent=e.message;});
  api('nethra.reunion',{since:Date.now()-86400000}).then(result=>{reunionBody.replaceChildren(el('p',`${result.objectives.length} saved objective(s) · ${result.pendingApprovals} approval(s) waiting`));for(const event of result.events.slice(0,8))reunionBody.append(el('p',`${time(event.at)} · ${event.kind} · ${event.taskId.slice(0,8)}`));}).catch(e=>{reunionBody.textContent=e.message;});
- setInterval(()=>{if(section.classList.contains('open')&&!section.querySelector('textarea[aria-label="Answer Nethra"]:focus'))refresh();else if(document.getElementById('view-chat').classList.contains('active'))refreshBadge();},5000);refreshBadge();
+ setInterval(()=>{if(section.classList.contains('open')&&!document.querySelector('#view-tasks textarea:focus,#view-tasks input:focus,#view-tasks select:focus'))refresh();else if(document.getElementById('view-chat').classList.contains('active'))refreshBadge();},5000);refreshBadge();
 })();

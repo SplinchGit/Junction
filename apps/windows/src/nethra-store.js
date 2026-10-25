@@ -81,7 +81,8 @@ class NethraStore {
   clearReportPending(id) {return this.transaction(()=>{const task=this.get(id);if(!task.reportPending)return task;delete task.reportPending;return this.saveBudget(task);});}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {
-    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE'}=input;
+    const {goal,successCriteria='',persistent=true,conversationId=null,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE',continuous=false}=input;
+    if(typeof continuous!=='boolean')throw new Error('Invalid continuous preference');
     if(typeof goal!=='string'||!goal.trim()||goal.length>24000)throw new Error('Invalid goal');
     if(!AUTONOMY.has(autonomy))throw new Error('Invalid autonomy profile');
     if(!Number.isSafeInteger(priority)||priority<1||priority>5)throw new Error('Invalid objective priority');
@@ -101,7 +102,7 @@ class NethraStore {
       if(runnable>=this.maxRunnableObjectives)throw new Error('Nethra active objective limit reached; pause or finish existing work before creating more.');
       const id=randomUUID(),workspace=path.join(this.directory,'workspaces',id);
       fs.mkdirSync(workspace,{recursive:true});
-      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],mode,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,revision:0,createdAt:this.now()},'CREATED');
+      const result=this.save({id,goal:goal.trim(),successCriteria,plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],status:'CREATED',summary:'',nextWakeAt:null,lastExecutionAt:null,dependencies:[],requiredApprovals:[],errors:[],retryCount:0,budget:{dailyMs:0,totalMs:0},parentId:null,conversationId,readRoots:[...readRoots],workspace,persistent:!!persistent,thinking,autonomy,priority,checkIn,sources:[...sources],mode,lastMeaningfulProgressAt:null,lastDirectionAt:this.now(),nextDirectionCheckAt:checkInDelay(checkIn)?this.now()+checkInDelay(checkIn):null,lastMilestoneCount:0,continuous,revision:0,createdAt:this.now()},'CREATED');
       if(requestId)this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
     });
   }
@@ -124,14 +125,17 @@ class NethraStore {
     if(!requestId)throw new Error('A request ID is required');
     const binding=canonical({kind:'configure',id,patch,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
     if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
-    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode','continuous'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(patch.continuous!==undefined&&typeof patch.continuous!=='boolean')throw new Error('Invalid continuous preference');
     if(patch.mode!==undefined&&!MODES.has(patch.mode))throw new Error('Invalid objective mode');
     if(patch.autonomy!==undefined&&!AUTONOMY.has(patch.autonomy))throw new Error('Invalid autonomy profile');
     if(patch.priority!==undefined&&(!Number.isSafeInteger(patch.priority)||patch.priority<1||patch.priority>5))throw new Error('Invalid objective priority');
     if(patch.checkIn!==undefined&&!CHECK_INS.has(patch.checkIn))throw new Error('Invalid check-in policy');
     if(patch.sources!==undefined&&!validSources(patch.sources))throw new Error('Invalid watched sources');
     const task=this.get(id);if(task.revision!==revision)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
-    this.assertLease(id);Object.assign(task,patch);if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}
+    this.assertLease(id);Object.assign(task,patch);
+    // Switching continuous work on brings a sleeping objective back now.
+    if(patch.continuous===true&&task.status==='SLEEPING'&&task.mode!=='ONGOING'){task.nextWakeAt=this.now();task.wakeReason={kind:'OWNER',detail:'Continuous work switched on',at:this.now()};}if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}
     if(task.status==='SLEEPING'&&task.mode==='ONGOING'&&task.lastMilestoneAt!=null&&(patch.autonomy!==undefined||patch.mode!==undefined)){
       task.nextWakeAt=monitorWakeAt(task,this.now());
       const attentionDue=this.pendingAttentionDue(id);if(Number.isSafeInteger(attentionDue))task.nextWakeAt=Math.min(task.nextWakeAt,attentionDue);
@@ -230,6 +234,77 @@ class NethraStore {
     task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),requestId}].slice(-100);task.summary=text.trim();task.status='ACTIVE';task.nextWakeAt=null;
     const result=this.save(task,'OWNER_INPUT',{text:text.trim()});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}
+  /**
+   * Owner edits the objective's wording. Like a redirect, verified evidence and completed
+   * steps stay, the remaining plan is dropped, and pending approvals are superseded.
+   */
+  edit(id,changes,revision,requestId) {
+    if(!changes||typeof changes!=='object'||Array.isArray(changes)||Object.keys(changes).some(key=>!['goal','successCriteria'].includes(key))||!Object.keys(changes).length)throw new Error('Edit the goal or success criteria');
+    for(const [key,value] of Object.entries(changes))if(typeof value!=='string'||(key==='goal'&&!value.trim())||value.length>24000)throw new Error(`Invalid ${key}`);
+    return this.transaction(()=>{
+      if(!requestId)throw new Error('A request ID is required');
+      const binding=canonical({kind:'edit',id,changes,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
+      let task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Task is already finished');if(task.revision!==revision)throw new Error('Nethra revision conflict');
+      this.fenceInside(id);task=this.get(id);
+      const superseded=this.supersedeApprovalsInside(id);
+      const before={goal:task.goal,successCriteria:task.successCriteria};
+      if(changes.goal!==undefined)task.goal=changes.goal.trim();
+      if(changes.successCriteria!==undefined)task.successCriteria=changes.successCriteria.trim()||task.goal;
+      task.ownerInputs=[...(task.ownerInputs||[]),{text:`Objective edited. Now: ${task.goal}${task.successCriteria&&task.successCriteria!==task.goal?` (success: ${task.successCriteria})`:''}`,at:this.now(),requestId,kind:'redirect'}].slice(-100);
+      task.plan=[...(task.completedSteps||[])];task.pendingSteps=[];task.redirectedAt=this.now();task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;task.wakeReason=null;
+      if(task.status!=='PAUSED'){task.status='ACTIVE';task.nextWakeAt=null;}
+      const result=this.save(task,'EDITED',{before,after:{goal:task.goal,successCriteria:task.successCriteria},supersededApprovals:superseded});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
+    });
+  }
+  /**
+   * An owner message in the objective's chat. It joins the objective's inputs (so the next
+   * wake sees it and an identical-input skip cannot ignore it) and wakes a sleeping objective.
+   */
+  note(id,text) {return this.transaction(()=>{
+    if(typeof text!=='string'||!text.trim()||text.length>4000)throw new Error('Invalid note');
+    const task=this.get(id);if(TERMINAL.has(task.status))return task;
+    task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),kind:'note'}].slice(-100);
+    if(task.status==='SLEEPING'&&task.mode!=='ONGOING'||task.status==='SLEEPING'&&task.continuous){task.nextWakeAt=Math.min(task.nextWakeAt??Infinity,this.now()+15_000);task.wakeReason={kind:'OWNER',detail:'You added a note in the task chat',at:task.nextWakeAt};}
+    task.unchangedWakes=0;
+    return this.save(task,'OWNER_NOTE',{text:text.trim().slice(0,500)});
+  });}
+  /**
+   * Deletes an objective and its journal, approvals, attention, receipts and workspace drafts.
+   * A running step is fenced first. The linked chat is kept as an ordinary conversation.
+   */
+  remove(id,requestId) {
+    if(!requestId)throw new Error('A request ID is required');
+    let workspace=null;
+    const result=this.transaction(()=>{
+      const old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
+      if(old){if(old.binding!==canonical({kind:'remove',id}))throw new Error('Request payload mismatch');return JSON.parse(old.body);}
+      const task=this.get(id);workspace=task.workspace;
+      this.fenceInside(id);
+      this.db.prepare('DELETE FROM attention WHERE taskId=?').run(id);
+      this.db.prepare('DELETE FROM approvals WHERE taskId=?').run(id);
+      for(const row of this.db.prepare('SELECT actionKey,body FROM actions').all())if(JSON.parse(row.body).taskId===id)this.db.prepare('DELETE FROM actions WHERE actionKey=?').run(row.actionKey);
+      this.db.prepare('DELETE FROM children WHERE parentId=?').run(id);
+      this.db.prepare('DELETE FROM events WHERE taskId=?').run(id);
+      this.db.prepare('DELETE FROM tasks WHERE id=?').run(id);
+      for(const other of this.list())if((other.dependencies||[]).includes(id)){other.dependencies=other.dependencies.filter(dep=>dep!==id);this.save(other,'DEPENDENCY_REMOVED',{id});}
+      const body={deleted:true,id,goal:task.goal,conversationId:task.conversationId||null};
+      this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,canonical({kind:'remove',id}),JSON.stringify(body));return body;
+    });
+    // Only a workspace inside this store's own directory is ever removed.
+    const root=path.join(this.directory,'workspaces');
+    if(workspace&&path.resolve(workspace).startsWith(root+path.sep))try{fs.rmSync(workspace,{recursive:true,force:true});}catch{}
+    return result;
+  }
+  fenceInside(id) {
+    const lease=this.db.prepare('SELECT * FROM lease WHERE taskId=?').get(id);if(!lease)return false;
+    this.closeInferenceIntervals(lease.token);this.accountUsage(id,this.now()-this.execution(lease.token).startedAt,lease.token);
+    this.db.prepare("UPDATE attention SET state='PENDING',leaseToken=NULL WHERE leaseToken=?").run(lease.token);this.db.prepare('DELETE FROM lease WHERE taskId=?').run(id);return true;
+  }
+  supersedeApprovalsInside(id) {
+    const superseded=[];
+    for(const approval of this.approvals(id).filter(item=>item.status==='PENDING')){approval.status='SUPERSEDED';approval.decidedAt=this.now();this.saveApproval(approval);superseded.push(approval.id);}
+    return superseded;
+  }
   /**
    * Owner changes direction. Completed steps and evidence stay; the remaining plan is
    * dropped so the next wake re-plans from the new instruction. Pending approvals for the

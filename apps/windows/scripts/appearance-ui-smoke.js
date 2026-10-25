@@ -67,9 +67,9 @@ app.on("browser-window-created", (_event, window) => {
       const tracking = await window.webContents.executeJavaScript(`(async()=>{
         await window.junction.setAppearance({mode:'dark'});
         document.getElementById('objective-status').click();
-        for(let i=0;i<100&&!document.querySelector('#nethra-task-drawer .tracking');i++)await new Promise(r=>setTimeout(r,30));
-        const text=document.querySelector('#nethra-task-drawer .tracking')?.textContent||'';document.querySelector('#nethra-task-drawer .tracking')?.scrollIntoView({block:'center'});
-        return {text,redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#nethra-task-drawer button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
+        for(let i=0;i<100&&!document.querySelector('#view-tasks .tracking');i++)await new Promise(r=>setTimeout(r,30));
+        const text=document.querySelector('#view-tasks .tracking')?.textContent||'';document.querySelector('#view-tasks .tracking')?.scrollIntoView({block:'center'});
+        return {text,redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
       })()`);
       assert.match(tracking.text, /Routine daily monitoring/); assert.match(tracking.text, /Searched the web/);
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);

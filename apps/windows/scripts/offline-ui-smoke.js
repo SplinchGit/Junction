@@ -80,12 +80,12 @@ app.on("browser-window-created", (_event, window) => {
         const thinkingFixed=document.querySelector('#chat-options #chat-thinking')?.getAttribute('aria-disabled')==='true';
         const conversationList=document.querySelector('#chat-drawer');
         const sidebarThreads=conversationList?.parentElement===document.querySelector('.shell>aside');
-        const fullWidth=Math.abs(document.querySelector('.conversation').getBoundingClientRect().left-document.querySelector('main').getBoundingClientRect().left)<2;
+        showView('chat');const fullWidth=Math.abs(document.querySelector('.conversation').getBoundingClientRect().left-document.querySelector('main').getBoundingClientRect().left)<2;
         showView('audit');const threadsHiddenAway=getComputedStyle(conversationList).display==='none';showView('chat');
         return {views,created:history.some(item=>item.id===chat.id),removed,nethra,completedVisible,linkedStrip,workControls,collapsed,expanded,primaryNavigation,standaloneObjectiveScreen,objectiveStatus,objectivePrefill,thinkingFixed,sidebarThreads,fullWidth,threadsHiddenAway,extracted:!document.getElementById('open-mafioso'),hasPreload:typeof window.junction.audit==='function'};
       })()`);
-      assert.deepEqual(result.views, ["chat", "audit", "feed", "projects", "context", "settings"]);
-      assert.deepEqual(result.primaryNavigation,["chat","audit"]);
+      assert.deepEqual(result.views, ["chat", "tasks", "audit", "feed", "projects", "context", "settings"]);
+      assert.deepEqual(result.primaryNavigation,["chat","tasks"]);
       assert.equal(result.standaloneObjectiveScreen,false,'standalone objective screen removed');
       for (const key of ["created", "removed", "nethra", "completedVisible", "linkedStrip", "workControls", "collapsed", "expanded", "objectiveStatus", "objectivePrefill", "thinkingFixed", "sidebarThreads", "fullWidth", "threadsHiddenAway", "extracted", "hasPreload"]) assert.equal(result[key], true, key);
       assert.deepEqual(errors, [], "Renderer errors");

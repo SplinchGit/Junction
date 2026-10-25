@@ -252,7 +252,7 @@ class LocalAgentRuntime {
         for await (const chunk of response.body) { buffer += decoder.decode(chunk, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop(); for (const line of lines) { await consume(line); if (budgetStop.signal.aborted) break; } if (budgetStop.signal.aborted) break; }
       } catch (error) { if (!budgetStop.signal.aborted) throw error; }
       await notifyThinking(true);
-      if (budgetStop.signal.aborted) { const continued = await this.answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingEvents, Date.now() - streamStarted); return { ...continued, firstTokenMs: firstTokenAt === null ? continued.firstTokenMs : firstTokenAt - streamStarted }; }
+      if (budgetStop.signal.aborted) { const continued = await this.answerFromThinking(model, messages, tools, signal, onText, format, options, thinking, thinkingEvents, Date.now() - (firstTokenAt ?? streamStarted)); return { ...continued, firstTokenMs: firstTokenAt === null ? continued.firstTokenMs : firstTokenAt - streamStarted }; }
       buffer += decoder.decode(); await consume(buffer);
       await notifyThinking(true);
       if (!final) throw new Error("The local model stream ended before completion. Please retry.");

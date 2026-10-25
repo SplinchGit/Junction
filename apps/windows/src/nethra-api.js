@@ -2,7 +2,7 @@
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
 const {progressView}=require('./nethra-progress');
-const TYPES = ['nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
+const TYPES = ['nethra.edit','nethra.delete','nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
   constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact}); }
@@ -20,7 +20,7 @@ class NethraApi {
       // live/step/progress let clients show where Nethra is without fetching each objective.
       const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
       const brief=t=>{try{const p=progressView(t,s,{liveTaskId:liveId});return {doing:p.doing,next:p.next,wake:p.wake,waitingFor:{kind:p.waitingFor.kind,detail:String(p.waitingFor.detail||'').slice(0,240)},lastAccomplished:p.lastAccomplished};}catch{return null;}};
-      const objectives=s.list().slice(0,100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null}));
+      const objectives=s.list().slice(0,100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null,continuous:t.continuous===true,usage:(()=>{try{const u=s.usage(t.id);return {todayMs:u.taskMs};}catch{return null;}})()}));
       const result={objectives,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=0;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);if(task.tracking&&length<120)task.tracking={doing:task.tracking.doing,wake:task.tracking.wake,waitingFor:{kind:task.tracking.waitingFor.kind}};}
@@ -67,17 +67,34 @@ class NethraApi {
     }
     if(type==='nethra.create') {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');
-      const task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',requestId});
+      if('continuous' in payload&&typeof payload.continuous!=='boolean')throw new Error('Invalid continuous preference');
+      let task=s.create({goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',continuous:payload.continuous===true,requestId});
+      // Every objective gets a chat: progress, questions and outcomes go there, and the
+      // owner's replies there reach the objective.
+      if(!task.conversationId&&this.localData){
+        const conversationId=`nethra_task_${task.id.replaceAll('-','_')}`;
+        this.localData.ensureConversation(conversationId);
+        try{this.localData.renameConversation(conversationId,`Task: ${String(task.goal).replace(/\s+/g,' ').slice(0,60)}`);}catch{}
+        task=s.linkConversation(task.id,conversationId);
+      }
       return {task};
     }
     if(type==='nethra.configure'){
-      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode'].includes(key)))throw new Error('Unknown objective configuration');
-      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
+      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode','continuous'].includes(key)))throw new Error('Unknown objective configuration');
+      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode','continuous'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
     }
     if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
     if(type==='nethra.redirect'){
       if(typeof payload.instruction!=='string'||!payload.instruction.trim()||payload.instruction.length>4000)throw new Error('Provide a bounded new direction');
       return {task:s.redirect(payload.id,payload.instruction.trim(),payload.revision,requestId)};
+    }
+    if(type==='nethra.edit'){
+      const changes=Object.fromEntries(['goal','successCriteria'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]]));
+      return {task:s.edit(payload.id,changes,payload.revision,requestId)};
+    }
+    if(type==='nethra.delete'){
+      if(payload.confirm!==true)throw new Error('Confirm deletion');
+      return s.remove(payload.id,requestId);
     }
     if(type==='nethra.warm'){
       // Loading never generates text, appends messages or creates tasks. Respond immediately;

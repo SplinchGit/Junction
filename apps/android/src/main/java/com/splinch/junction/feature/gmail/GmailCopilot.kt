@@ -130,6 +130,26 @@ class GmailCopilot(context: Context, private val accountEmail: String) {
         }.getOrNull()
     }
 
+    enum class ExactSend { SENT, CHANGED, FAILED }
+
+    /**
+     * Sends a draft only if, read back from Gmail now, it goes to exactly [recipient] (no other
+     * To/Cc/Bcc) with exactly [body]. Used after a spoken approval, so an edit made elsewhere
+     * after the owner heard the draft cannot be sent on that approval.
+     */
+    suspend fun sendDraftIfUnchanged(draftId: String, recipient: String, body: String): ExactSend = withContext(Dispatchers.IO) {
+        runCatching {
+            val message = service.users().drafts().get("me", draftId).setFormat("full").execute().message
+                ?: return@runCatching ExactSend.CHANGED
+            val headers = message.payload?.headers.orEmpty()
+            val addresses = headers.filter { it.name.lowercase() in setOf("to", "cc", "bcc") }
+                .flatMap { header -> runCatching { InternetAddress.parse(header.value).map { it.address.lowercase() } }.getOrDefault(listOf("unparseable")) }
+            val normalize = { text: String -> text.replace("\r\n", "\n").trim().replace(Regex("\\s+"), " ") }
+            if (addresses != listOf(recipient.lowercase()) || normalize(extractReadableText(message.payload)) != normalize(body)) return@runCatching ExactSend.CHANGED
+            if (sendDraft(draftId)) ExactSend.SENT else ExactSend.FAILED
+        }.getOrDefault(ExactSend.FAILED)
+    }
+
     /** Sends a previously created Gmail draft and confirms Gmail assigned it the SENT label. */
     suspend fun sendDraft(draftId: String): Boolean = withContext(Dispatchers.IO) {
         runCatching {

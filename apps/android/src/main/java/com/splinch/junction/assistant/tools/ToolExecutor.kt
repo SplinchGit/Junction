@@ -62,6 +62,11 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
     fun draftDisclosure(draftId: String): com.splinch.junction.assistant.planning.VoiceApprovalPolicy.DraftDisclosure? =
         draftId.takeIf { it.isNotBlank() }?.let { draftLedger[it] }
 
+    /** Drafts whose next send must match, at send time, exactly what was read aloud. */
+    private val exactDrafts = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun requireExactDraft(draftId: String) { exactDrafts.add(draftId) }
+
     suspend fun execute(call: PendingToolCall): ToolApplyResult {
         return when (call.name) {
         "ask_clarification" -> {
@@ -443,6 +448,15 @@ class ToolExecutor(private val dependencies: ToolDependencies) {
         val draftId = call.arguments.optString("draftId")
         if (email.isBlank() || draftId.isBlank()) {
             return ToolApplyResult("", errorOutput("Gmail account and draftId are required"))
+        }
+        if (exactDrafts.remove(draftId)) {
+            val heard = draftLedger[draftId]
+                ?: return ToolApplyResult("", errorOutput("The draft read to you is no longer known to Junction, so it was not sent."))
+            return when (GmailCopilot(appContext, email).sendDraftIfUnchanged(draftId, heard.recipient, heard.body)) {
+                GmailCopilot.ExactSend.SENT -> ToolApplyResult("Gmail confirmed the email to ${heard.recipient} was sent.", successOutput("email_send", draftId))
+                GmailCopilot.ExactSend.CHANGED -> ToolApplyResult("", errorOutput("The draft changed after it was read to you (recipient or text differs), so it was not sent."))
+                GmailCopilot.ExactSend.FAILED -> ToolApplyResult("", errorOutput("Gmail could not confirm that draft was sent"))
+            }
         }
         return if (GmailCopilot(appContext, email).sendDraft(draftId)) {
             ToolApplyResult("Gmail confirmed the draft was sent.", successOutput("email_send", draftId))

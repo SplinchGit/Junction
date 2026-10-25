@@ -45,7 +45,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { postMilestones, postOutcome } = require("./nethra-conversation-report");
+const { postMilestones, postOutcome, postProgress } = require("./nethra-conversation-report");
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
@@ -87,9 +87,25 @@ function deliverObjectiveUpdates() {
   if (changed) { scheduleSharedSync(); mainWindow?.webContents.send('junction:conversations-changed'); }
 }
 function companionModule() { return require(app.isPackaged ? path.join(process.resourcesPath, "pc-companion", "server.js") : path.join(__dirname, "../../../services/pc-companion/src/server.js")); }
+/** The unfinished objective this chat belongs to, if any. */
+function taskForConversation(conversationId){
+  if(!conversationId||!nethraStore)return null;
+  return nethraStore.list().find(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status))||null;
+}
 async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop'){
   const nethraReply=await handleNethraChat({api:nethraApi,content,conversationId,requestId,source});
   if(nethraReply)return nethraReply;
+  // In a task's chat, the owner is talking to that task: an answer it was waiting for
+  // resumes it; anything else becomes a note it reads on its next step, and chat replies too.
+  const task=taskForConversation(conversationId);
+  if(task){
+    const text=String(content).trim().slice(0,4000);
+    const approvals=nethraStore.approvals(task.id).some(item=>item.status==='PENDING');
+    if(task.status==='WAITING_FOR_USER'&&!approvals){
+      try{nethraStore.answer(task.id,text,task.revision,String(requestId||crypto.randomUUID()));return `Thanks. I've added that to "${String(task.goal).slice(0,100)}" and I'm continuing with it now.`;}
+      catch(error){recordStartupIssue('task chat answer',error);}
+    }else{try{nethraStore.note(task.id,text);}catch(error){recordStartupIssue('task chat note',error);}}
+  }
   const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content,conversationId,requestId});
   return result?.response||null;
 }
@@ -396,7 +412,8 @@ function reportObjectiveOutcome(task, reported) {
   if (!task.conversationId || !localData?.conversation(task.conversationId)) return;
   const settings = nethraStore.settings();
   if(postMilestones(task,nethraStore,localData,{settings})){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
-  if(task.status==='SLEEPING')return;
+  if(postProgress(task,nethraStore,localData,{settings,liveTaskId:nethraStore.liveTaskId()})){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
+  if(!['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED'].includes(task.status))return;
   const key = `${task.id}:${task.status}:${task.summary || ''}`;
   if (reported.has(key)) return;
   reported.add(key);

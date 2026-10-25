@@ -115,8 +115,31 @@ provenance tag — can never themselves initiate a tool call.
   read-only companion mirror below, gated the same owner-provenance way `TrustGate` gates
   everything else.
 - Voice-drivable workflows extended to notifications, GitHub, and calendar reminders.
-- Optional Firebase sync (chat/feed/prefs) and a PC companion web client that mirrors
+- Optional Firebase sync (chat/feed/prefs) and a browser companion (`apps/web`) that mirrors
   conversations read-only — it cannot execute tools; anything it sends is tagged `UNTRUSTED`.
+  This is separate from the Windows app below, which is a full host.
+- **Junction for Windows (Nethra)** — see the next section. It is not a read-only companion: it
+  runs local inference, durable objectives and a scheduler on the owner's PC.
+
+## Junction for Windows and Nethra
+
+`apps/windows` is an Electron app that hosts **Nethra**, the owner's single local agent, on the
+Windows PC. Inference runs on the PC through Ollama (`qwen3:30b`, the Qwen3-30B-A3B-Thinking-2507
+MoE build, Q4_K_M, 4K context). The phone talks to it over a paired, certificate-pinned LAN link,
+or an end-to-end encrypted Firebase relay when the LAN path is unreachable. The phone UI does not
+need to stay open for authorised PC work to continue. Details and run steps:
+[`apps/windows/README.md`](apps/windows/README.md); latest delivery notes and verification
+status: [`docs/NETHRA_DELIVERY_2026-10-25.md`](docs/NETHRA_DELIVERY_2026-10-25.md).
+
+| Area | Status |
+|---|---|
+| Model warm-up (startup/chat/voice/upcoming task), residency setting, response phases | Implemented and verified on this PC (tests + live measurement) |
+| Interactive chat preempts background objective inference | Implemented and verified (tests) |
+| Situational context (origin, time zone, source freshness, phone presence, call state) | Implemented and verified (tests) |
+| Persistent objectives: continuous work, wake reasons, edit/redirect/pause/stop/delete, task chats | Implemented and verified (tests, offline UI smoke); long-duration live runs not yet observed |
+| Appearance (light/dark, palettes, Sakura Mountain artwork, petals, reduced motion) | Windows verified visually; Android built, needs on-device check |
+| Spoken approval on Android (exact plan, read-back, send-time re-check) | Implemented with unit tests; needs physical-device verification |
+| External sending from Windows objectives | Not available (no send tool exists on the PC) |
 - GitHub Pages update card + checksum-verified APK install, rollback backup, and Android
   installer confirmation; the same signed build now also publishes as a GitHub Release, and
   a verified update starts automatically rather than waiting on a tap.
@@ -215,7 +238,11 @@ Settings > Voice backend chooses:
 - **Realtime** — OpenAI's WebRTC voice API, low latency, needs the Functions/server relay above and sign-in.
 - **On-device** — Android's `SpeechRecognizer`/`TextToSpeech`, routed through your configured text provider. Higher latency, works with any provider, and needs neither Firebase nor the server.
 
-A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. A monotonic timer shows active call duration. Supported bounded actions can accept a one-use spoken confirmation after the full disclosure finishes; email sending, notification replies, repository changes and installation still require the screen. Settings shows the actual last-used speech engine/voice and offers previews and optional higher-bitrate Azure audio.
+A voice call has one visible control: **Start voice call** begins speech and listening together; **End call** stops both. A call timer (monotonic clock) shows connecting, active, reconnecting and ended states. The local backend runs a continuous listen → reply → speak → listen loop, while still leaving typed input available. Each turn tells the model whether a call is live, whether the message was spoken or typed, and whether the reply will be spoken; this state is never stored as memory.
+
+**Spoken approval (on-device backend only).** When a plan needs approval during an owner-started local call, Junction reads an exact disclosure aloud (for an email: recipient and text) and asks for a specific phrase such as “send it”. The approval is bound to that one plan and disclosure, expires after 45 seconds, can be used once, is rejected if it overlaps Junction's own speech, and is recorded in chat and the audit log. A voice-approved email is re-read from Gmail at send time and is not sent if its recipient or text changed. Speech recognition is not speaker verification. Code changes and merges, installs, notification replies, screen automation, settings changes and anything not on the eligible list keep on-screen approval. This needs physical-device verification.
+
+Voice settings show the engine, voice, locale and whether synthesis is local or network for the most recent utterance. The Azure voice stays the same Ollie voice by default and is now requested at 48 kHz / 192 kbps unless you saved another quality; the HD Ollie variant, other on-device voices and lower bitrates are opt-in, with previews. Azure bills per character, not by audio quality.
 ## Privacy posture
 
 - Notification ingestion, feed, chat history, memory, and the audit log are local-only by default.

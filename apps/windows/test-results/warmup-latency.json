@@ -1,0 +1,152 @@
+{
+  "model": "qwen3:30b",
+  "measuredAt": "2026-10-24T23:45:04.408Z",
+  "runs": [
+    {
+      "label": "cold chat (no warm-up)",
+      "goal": "Hello",
+      "wallMs": 73576,
+      "coldStart": true,
+      "queueMs": 0,
+      "firstTokenMs": 65123,
+      "firstContentMs": 71669,
+      "loadMs": 10,
+      "promptEvalMs": 665,
+      "evalMs": 71456,
+      "generatedTokens": 108,
+      "tokensPerSecond": 1.51,
+      "modelCalls": 1,
+      "phases": [
+        {
+          "phase": "queued",
+          "atMs": 1
+        },
+        {
+          "phase": "loading_model",
+          "atMs": 1308
+        },
+        {
+          "phase": "thinking",
+          "atMs": 66433
+        },
+        {
+          "phase": "responding",
+          "atMs": 72979
+        }
+      ],
+      "reply": "Hello! How can I assist you today? 😊"
+    },
+    {
+      "label": "warm chat",
+      "goal": "Hello",
+      "wallMs": 6822,
+      "coldStart": false,
+      "queueMs": 0,
+      "firstTokenMs": 90,
+      "firstContentMs": 6315,
+      "loadMs": 9,
+      "promptEvalMs": 649,
+      "evalMs": 6020,
+      "generatedTokens": 108,
+      "tokensPerSecond": 17.94,
+      "modelCalls": 1,
+      "phases": [
+        {
+          "phase": "queued",
+          "atMs": 1
+        },
+        {
+          "phase": "reading_prompt",
+          "atMs": 1
+        },
+        {
+          "phase": "thinking",
+          "atMs": 91
+        },
+        {
+          "phase": "responding",
+          "atMs": 6316
+        }
+      ],
+      "reply": "Hello! How can I assist you today? 😊"
+    },
+    {
+      "label": "warm chat (short question)",
+      "goal": "In one sentence, what is the capital of Scotland?",
+      "wallMs": 9118,
+      "coldStart": false,
+      "queueMs": 1,
+      "firstTokenMs": 649,
+      "firstContentMs": 8735,
+      "loadMs": 6,
+      "promptEvalMs": 623,
+      "evalMs": 8468,
+      "generatedTokens": 194,
+      "tokensPerSecond": 22.91,
+      "modelCalls": 1,
+      "phases": [
+        {
+          "phase": "queued",
+          "atMs": 0
+        },
+        {
+          "phase": "reading_prompt",
+          "atMs": 1
+        },
+        {
+          "phase": "thinking",
+          "atMs": 650
+        },
+        {
+          "phase": "responding",
+          "atMs": 8736
+        },
+        {
+          "phase": "thinking",
+          "atMs": 9117
+        }
+      ],
+      "reply": "Edinburgh is the capital of Scotland."
+    },
+    {
+      "label": "first chat after warm-up",
+      "goal": "Hello",
+      "wallMs": 7483,
+      "coldStart": false,
+      "queueMs": 0,
+      "firstTokenMs": 2536,
+      "firstContentMs": 7075,
+      "loadMs": 6,
+      "promptEvalMs": 540,
+      "evalMs": 6844,
+      "generatedTokens": 107,
+      "tokensPerSecond": 15.63,
+      "modelCalls": 1,
+      "phases": [
+        {
+          "phase": "queued",
+          "atMs": 0
+        },
+        {
+          "phase": "reading_prompt",
+          "atMs": 0
+        },
+        {
+          "phase": "thinking",
+          "atMs": 2536
+        },
+        {
+          "phase": "responding",
+          "atMs": 7075
+        }
+      ],
+      "reply": "Hi there! How can I help you today?"
+    }
+  ],
+  "ollama": "0.40.7",
+  "warmUp": {
+    "outcome": "loaded",
+    "wallMs": 60834,
+    "loadMs": null
+  }
+}

@@ -11,6 +11,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -309,14 +312,15 @@ class MainActivity : ComponentActivity() {
 
 private enum class JunctionTab {
     CHAT,
-    AUDIT
+    TASKS
 }
 
 private enum class JunctionWorkspace {
     CHAT,
     BUILD,
     WORK,
-    SETTINGS
+    SETTINGS,
+    AUDIT
 }
 
 private fun ComponentActivity.requestNotificationPermissionIfNeeded() {
@@ -422,9 +426,12 @@ private fun JunctionApp(
                         scope.launch { drawerState.close() }
                     },
                     onOpenObjectives = {
+                        selectedTab = JunctionTab.TASKS
+                        scope.launch { drawerState.close() }
+                    },
+                    onOpenAudit = {
                         selectedTab = JunctionTab.CHAT
-                        selectedWorkspace = JunctionWorkspace.CHAT
-                        objectivesRequest++
+                        selectedWorkspace = JunctionWorkspace.AUDIT
                         scope.launch { drawerState.close() }
                     }
                 )
@@ -444,10 +451,10 @@ private fun JunctionApp(
                     label = { Text("Chat") }
                 )
                 NavigationBarItem(
-                    selected = selectedTab == JunctionTab.AUDIT,
-                    onClick = { selectedTab = JunctionTab.AUDIT },
+                    selected = selectedTab == JunctionTab.TASKS,
+                    onClick = { selectedTab = JunctionTab.TASKS },
                     icon = { Icon(Icons.AutoMirrored.Filled.FactCheck, contentDescription = null) },
-                    label = { Text("Audit") }
+                    label = { Text("Tasks") }
                 )
                 }
             }
@@ -475,6 +482,20 @@ private fun JunctionApp(
                         onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
                         modifier = Modifier.padding(padding)
                     ) { contentModifier -> ProjectsScreen(modifier = contentModifier) }
+                    JunctionWorkspace.AUDIT -> WorkspaceScreen(
+                        title = "Audit",
+                        onOpenNavigation = { scope.launch { drawerState.open() } },
+                        onBackToChat = { selectedWorkspace = JunctionWorkspace.CHAT },
+                        modifier = Modifier.padding(padding)
+                    ) { contentModifier ->
+                        AuditScreen(
+                            actionLogDao = actionLogDao,
+                            modelUsageDao = modelUsageDao,
+                            worldAuditDao = worldAuditDao,
+                            junctionWorldClient = junctionWorldClient,
+                            modifier = contentModifier
+                        )
+                    }
                     JunctionWorkspace.SETTINGS -> WorkspaceScreen(
                         title = "Settings",
                         onOpenNavigation = { scope.launch { drawerState.open() } },
@@ -492,13 +513,16 @@ private fun JunctionApp(
                         )
                     }
                 }
-                JunctionTab.AUDIT -> AuditScreen(
-                    actionLogDao = actionLogDao,
-                    modelUsageDao = modelUsageDao,
-                    worldAuditDao = worldAuditDao,
-                    junctionWorldClient = junctionWorldClient,
-                    modifier = Modifier.padding(padding)
-                )
+                // Tasks: Nethra's objectives on the paired PC, managed full screen.
+                JunctionTab.TASKS -> Column(Modifier.padding(padding).fillMaxSize()) {
+                    Text("Tasks", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp))
+                    Text("Nethra works on these on your PC, even when this app is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+                    com.splinch.junction.feature.projects.NethraPanel(
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                        conversationId = null,
+                        onOpenChat = { id -> scope.launch { chatManager.switchToSession(id); selectedTab = JunctionTab.CHAT; selectedWorkspace = JunctionWorkspace.CHAT } }
+                    )
+                }
             }
         }
     }

@@ -33,6 +33,9 @@ function isRoutineMonitor(task,now,sourceStatus,hasReasoningAttention){
     &&!(task.pendingSteps||[]).length&&Boolean(sourceStatus)&&!hasReasoningAttention
     &&!(Number.isSafeInteger(task.nextDirectionCheckAt)&&task.nextDirectionCheckAt<=now);
 }
+// Continuous objectives start their next step this soon after a productive cycle. The owner's
+// chats still preempt them, and the daily inference budget still applies.
+const CONTINUOUS_GAP_MS=20_000;
 // Warm the model this long before a wake that will need it (a cold load takes ~50 s here).
 const PREWARM_LEAD_MS=120_000;
 
@@ -106,10 +109,12 @@ class NethraScheduler {
         patch.summary='No meaningful progress after repeated short wake cycles. What should Nethra try next?';
       }
       const modelWake=Number.isFinite(patch.nextWakeAt);
-      patch.nextWakeAt=patch.status==='SLEEPING'?clampWake(patch.nextWakeAt,this.now(),settings.minWakeMs,settings.maxWakeMs):null;
+      const continuing=patch.status==='SLEEPING'&&live.continuous===true&&live.mode!=='ONGOING'&&progressed&&(!modelWake||live.wakeReason?.kind==='CONTINUE');
+      patch.nextWakeAt=patch.status==='SLEEPING'?(continuing?this.now()+CONTINUOUS_GAP_MS:clampWake(patch.nextWakeAt,this.now(),settings.minWakeMs,settings.maxWakeMs)):null;
       patch.lastInferenceFingerprint=fingerprint;patch.lastCycleProgressed=progressed;patch.unchangedWakes=progressed?0:(live.unchangedWakes||0);
       // Keep a reason the runner already recorded (schedule_wake, monitoring); otherwise this is a continuation.
       if(patch.status!=='SLEEPING')patch.wakeReason=null;
+      else if(continuing)patch.wakeReason=wakeReason('CONTINUE','Continuous work: starting the next step',patch.nextWakeAt);
       else if(live.wakeReason&&live.wakeReason.at===live.nextWakeAt&&modelWake)patch.wakeReason={...live.wakeReason,at:patch.nextWakeAt};
       else if(modelWake)patch.wakeReason=wakeReason('SCHEDULED','A follow-up chosen during the last run',patch.nextWakeAt);
       else patch.wakeReason=wakeReason('CONTINUE',progressed?'Continue the plan after saved progress':'Continue; the last cycle saved no new progress',patch.nextWakeAt);
@@ -125,7 +130,7 @@ class NethraScheduler {
           // Running out of wall time (often because the owner's chats had priority) is a yield
           // with saved checkpoints, not a failure; repeated yields without progress still stop.
           const progressed=(live.lastMeaningfulProgressAt||0)>(task.lastMeaningfulProgressAt||0);
-          const cycles=progressed?0:(live.noProgressCycles||0)+1,wake=clampWake(this.now()+settings.minWakeMs,this.now(),settings.minWakeMs,settings.maxWakeMs);
+          const cycles=progressed?0:(live.noProgressCycles||0)+1,wake=progressed&&live.continuous?this.now()+CONTINUOUS_GAP_MS:clampWake(this.now()+settings.minWakeMs,this.now(),settings.minWakeMs,settings.maxWakeMs);
           if(cycles>=6)this.store.update(task.id,{status:'WAITING_FOR_USER',noProgressCycles:cycles,nextWakeAt:null,wakeReason:null,summary:'Repeated wakes ran out of time without new progress. What should Nethra try next?'},'YIELD_EXHAUSTED',token);
           else this.store.update(task.id,{status:task.persistent?'SLEEPING':'PAUSED',noProgressCycles:cycles,nextWakeAt:task.persistent?wake:null,wakeReason:task.persistent?wakeReason('CONTINUE','Resume after the wake time limit; progress was checkpointed',wake):null},'YIELDED',token);
           return;
@@ -141,7 +146,8 @@ class NethraScheduler {
       try{this.store.endInference(task.id,token);}catch(error){if(!/lease/i.test(error.message))this.lastError=error;}
       this.store.release(task.id,token,completedCycle);this.controller=null;
       // Outcomes the owner should hear about go back to the conversation that started the work.
-      if(this.onSettled){try{const settled=this.store.get(task.id);if(['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED'].includes(settled.status)||(settled.mode==='ONGOING'&&settled.status==='SLEEPING'))await this.onSettled(settled);}catch(error){this.lastError=error;}}
+      // Every settled cycle is offered to the report hook; it decides what the chat should hear.
+      if(this.onSettled){try{const settled=this.store.get(task.id);await this.onSettled(settled);}catch(error){if(!/Unknown Nethra task/.test(error.message))this.lastError=error;}}
     }
   }
   /**
@@ -164,4 +170,4 @@ class NethraScheduler {
   }
   async stop() {this.stopping=true;clearInterval(this.timer);this.timer=null;this.controller?.abort(new Error('Scheduler stopped'));await this.running;}
 }
-module.exports={NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS};
+module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS};

@@ -178,3 +178,18 @@ search deliberately and requires zero model calls and no answer. Inspect
 
 The local-model fixes run on the paired Windows PC. Updating the Android APK alone
 does not update that runtime; rebuild the Windows package as well.
+
+## Nethra tasks, warm-up and appearance (October 2026)
+
+Current status and measurements: [`docs/NETHRA_DELIVERY_2026-10-25.md`](../../docs/NETHRA_DELIVERY_2026-10-25.md).
+
+- **Model readiness.** The chat header shows whether `qwen3:30b` is loaded. Junction loads it when
+  you open Junction (Settings → Model readiness: launch, sign-in or never), open or start a chat,
+  start voice on the phone, or shortly before a task needs it. Loading never writes a message.
+  Measured here: a cold first reply took 73.6 s; after warm-up it took 7.5 s.
+- **Tasks.** Create one in Tasks (or ask in chat). Each task has its own chat where Nethra posts
+  real progress and asks what it needs; reply there to steer it. Tasks can work continuously, and
+  can be paused, checked now, edited, redirected, stopped or deleted. Background work yields to
+  your messages.
+- **Appearance.** Settings → Appearance: light/dark, palette, Sakura Mountain artwork, petals and
+  motion. Reduced motion in Windows is respected.
