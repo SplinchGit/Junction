@@ -118,7 +118,23 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 .task-detail{border:1px solid var(--line);border-radius:16px;padding:18px 20px;background:var(--panel);display:flex;flex-direction:column;gap:12px}
 .task-detail .task-head{grid-template-columns:auto 1fr auto}
 .task-detail-title{margin:0;font-size:18px;line-height:1.3}
+.task-progress-overview,.task-activity,.task-performance{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--md-surface-container-low,var(--panel));}
+.task-progress-overview h3,.task-activity h3,.task-performance h3{margin:0 0 9px;font-size:13px;letter-spacing:.01em}
+.task-progress-overview p{display:grid;grid-template-columns:90px 1fr;gap:8px;margin:6px 0;font-size:12px;line-height:1.4}
+.task-progress-overview p strong{color:var(--muted);font-weight:600}
+.task-progress-overview progress{width:100%;height:8px;accent-color:var(--md-primary,#7898ff);margin-top:7px}
+.task-progress-overview .task-step-count{display:block;margin:2px 0 0;color:var(--muted)}
+.task-activity ol{list-style:none;margin:0;padding:0 0 0 10px;border-left:1px solid var(--line)}
+.task-activity li{position:relative;display:flex;flex-direction:column;gap:2px;padding:0 0 11px 12px;font-size:12px;line-height:1.4}
+.task-activity li:last-child{padding-bottom:0}
+.task-activity li:before{content:'';position:absolute;left:-15px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--md-primary,#7898ff)}
+.task-activity li[data-kind="waiting"]:before{background:var(--muted)}
+.task-activity li[data-kind="advice"]:before{background:#9b84e8}
+.task-activity small,.task-performance small{color:var(--muted);font-size:11px}
+.task-performance p{margin:7px 0;font-size:12px;line-height:1.4}
 .task-card.selected{outline:2px solid var(--md-primary,#7898ff)}
+.task-card progress{width:100%;height:6px;accent-color:var(--md-primary,#7898ff)}
+.task-card-progress{margin:0;color:var(--muted);font-size:11px}
 .task-quick{margin-top:2px}
 .task-more-options>summary{cursor:pointer;font-size:12px;color:var(--muted);margin:6px 0}
 

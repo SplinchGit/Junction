@@ -2,6 +2,7 @@
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
 const {progressView}=require('./nethra-progress');
+const {performanceReport}=require('./nethra-performance');
 const TYPES = ['nethra.edit','nethra.delete','nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
@@ -37,7 +38,8 @@ class NethraApi {
     if(type==='nethra.get') {
       const task=s.get(payload.id),approvals=s.approvals(task.id),events=s.events(task.id,Number.isSafeInteger(payload.after)?payload.after:0);
       const progress=progressView(task,s,{liveTaskId:s.liveTaskId?.()??null});
-      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id),progress};
+      const performance=performanceReport({store:s,localData:this.localData,taskId:task.id});
+      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id),progress,performance};
       // Keep the exact actionable payload when it fits. Older approvals and
       // large evidence remain on Windows; the mobile frame is bounded.
       const pending=approvals.filter(item=>item.status==='PENDING');
@@ -46,7 +48,7 @@ class NethraApi {
       const briefList=value=>(Array.isArray(value)?value:[]).slice(-8).map(item=>short(item,300));
       const mobileTask={id:task.id,conversationId:task.conversationId||null,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
       const mobileProgress={...progress,evidence:progress.evidence.slice(-4),outputs:progress.outputs.slice(-4).map(item=>({...item,path:String(item.path||'').slice(-200)}))};
-      const result={progress:mobileProgress,task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
+      const result={progress:mobileProgress,performance,task:mobileTask,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
       if(Buffer.byteLength(JSON.stringify(result))>50000&&selected){
         const content=String(selected.args?.content||'');
         result.approvals=[{...selected,args:{...selected.args,content:content.slice(0,1000)},contentSha256:crypto.createHash('sha256').update(content).digest('hex'),reviewOnWindows:true}];

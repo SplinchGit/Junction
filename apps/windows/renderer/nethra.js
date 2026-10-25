@@ -58,8 +58,9 @@
  const strip=el('button');strip.id='nethra-chat-strip';strip.type='button';strip.hidden=true;strip.setAttribute('aria-label','Open task details for this chat');document.querySelector('#view-chat .conversation').prepend(strip);
  const api=(type,payload={})=>window.junction.nethra(type,payload);
  const visible=task=>!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
+ const needsOwner=kind=>['approval','input','blocked','owner_resume'].includes(kind);
  const updateObjectiveStatus=objectives=>{const active=objectives.filter(visible).length;objectiveStatus.textContent=active?`${active} active`:'Tasks';objectiveStatus.classList.toggle('has-active',active>0);};
- const updateStrip=()=>{const linked=lastObjectives.filter(row=>row.conversationId&&row.conversationId===activeConversationId);strip.hidden=!linked.length;if(!linked.length)return;const row=linked[0],wake='',needs=row.tracking&&!['nothing','time','source'].includes(row.tracking.waitingFor?.kind)?' · needs you':'',progress=row.progress?.total?` · Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}${row.step?`: ${row.step}`:''}`:'';strip.textContent=`${linked.length>1?`${linked.length} tasks · `:''}${row.goal} · ${row.live?'Working now':row.status.replaceAll('_',' ')}${needs}${wake}${progress} · ${row.nextWakeAt?`Next wake ${time(row.nextWakeAt)}`:'No wake scheduled'}`;};
+ const updateStrip=()=>{const linked=lastObjectives.filter(row=>row.conversationId&&row.conversationId===activeConversationId);strip.hidden=!linked.length;if(!linked.length)return;const row=linked[0],wake='',needs=needsOwner(row.tracking?.waitingFor?.kind)?' · needs you':'',progress=row.progress?.total?` · Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}${row.step?`: ${row.step}`:''}`:'';strip.textContent=`${linked.length>1?`${linked.length} tasks · `:''}${row.goal} · ${row.live?'Working now':row.status.replaceAll('_',' ')}${needs}${wake}${progress} · ${row.nextWakeAt?`Next wake ${time(row.nextWakeAt)}`:'No wake scheduled'}`;};
  const refreshBadge=async()=>{try{lastObjectives=(await api('nethra.list')).objectives;updateObjectiveStatus(lastObjectives);updateStrip();}catch{objectiveStatus.textContent='Tasks';}};
  window.addEventListener('junction:chat-opened',refreshBadge);
  strip.onclick=()=>{const row=lastObjectives.find(item=>item.conversationId===activeConversationId);if(row)selectedId=row.id;setDrawerOpen(true);};
@@ -69,8 +70,8 @@
  const button=(label,fn)=>{const b=el('button',label);b.type='button';b.onclick=()=>perform(fn);return b;};
  const time=value=>value?new Date(value).toLocaleString():'None scheduled';
  const details=(label,value)=>{const d=el('details');d.append(el('summary',label),el('pre',typeof value==='string'?value:JSON.stringify(value,null,2)));return d;};
- const stateOf=row=>row.live?'working':['WAITING_FOR_USER','BLOCKED'].includes(row.status)||(row.tracking&&!['nothing','time','source'].includes(row.tracking.waitingFor?.kind))?'needs':row.status==='PAUSED'?'paused':row.status==='COMPLETED'?'done':['FAILED','CANCELLED'].includes(row.status)?'ended':row.status==='SLEEPING'?'sleeping':'queued';
- const stateLabel=row=>({working:'Working now',needs:'Needs you',paused:'Paused',done:'Done',ended:row.status==='CANCELLED'?'Stopped':'Failed',sleeping:row.continuous?'Continuing shortly':row.mode==='ONGOING'?'Monitoring':'Sleeping',queued:row.continuous?'Working continuously':'Queued'})[stateOf(row)];
+ const stateOf=row=>row.live?'working':['WAITING_FOR_USER','BLOCKED'].includes(row.status)||needsOwner(row.tracking?.waitingFor?.kind)?'needs':row.status==='PAUSED'?'paused':row.status==='COMPLETED'?'done':['FAILED','CANCELLED'].includes(row.status)?'ended':row.status==='SLEEPING'?'sleeping':'queued';
+ const stateLabel=row=>({working:'Working now',needs:'Needs you',paused:'Paused',done:'Done',ended:row.status==='CANCELLED'?'Stopped':'Failed',sleeping:row.tracking?.waitingFor?.kind==='budget'?'Daily limit reached':row.continuous?'Continuing shortly':row.mode==='ONGOING'?'Monitoring':'Sleeping',queued:row.continuous?'Working continuously':'Queued'})[stateOf(row)];
  async function refresh(){if(loading){refreshAgain=true;return;}loading=true;try{
    const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;updateObjectiveStatus(result.objectives);updateStrip();
    const answerDrafts=new Map([...document.querySelectorAll('#view-tasks article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
@@ -85,15 +86,16 @@
      const title=el('button',row.goal);title.type='button';title.className='task-index-row task-title';title.setAttribute('aria-expanded',String(selectedId===row.id));title.onclick=()=>{selectedId=selectedId===row.id?'':row.id;refresh();};
      const chat=button(row.conversationId?'Open chat':'Create chat',async()=>{const result=await api('nethra.openChat',{id:row.id});await openConversation(result.conversationId);setDrawerOpen(false);});chat.className='task-link';
      head.append(chip,title,chat);card.append(head);
-     const line=row.tracking?((!['nothing','time','source'].includes(row.tracking.waitingFor?.kind)?`Needs you: ${row.tracking.waitingFor.detail||''}`:row.tracking.doing)||''):(row.step||'');
+     const line=row.tracking?((needsOwner(row.tracking.waitingFor?.kind)?`Needs you: ${row.tracking.waitingFor.detail||''}`:row.tracking.waitingFor?.kind==='budget'?row.tracking.waitingFor.detail:row.tracking.doing)||''):(row.step||'');
      if(line)card.append(Object.assign(el('p',line),{className:'task-line'}));
+     if(row.progress?.total){const count=el('p',`${row.progress.done} of ${row.progress.total} steps ${row.mode==='ONGOING'?'this cycle':'done'}`);count.className='task-card-progress';const bar=el('progress');bar.max=row.progress.total;bar.value=row.progress.done;bar.setAttribute('aria-label','Completed task steps');card.append(bar,count);}
      // A visible continuous switch on every open task.
      if(!['COMPLETED','CANCELLED','FAILED'].includes(row.status)&&row.mode!=='ONGOING'){const quick=checkbox(' Continuous',row.continuous===true);quick.label.className='task-toggle task-quick';quick.label.title='Keep working step after step until done';quick.input.onchange=()=>perform(()=>api('nethra.configure',{id:row.id,revision:row.revision,continuous:quick.input.checked}));card.append(quick.label);}
      list.append(card);
      if(selectedId!==row.id)continue;
      card.classList.add('selected');const detailCard=el('article');detailCard.className='task-detail';detailCard.dataset.objectiveId=row.id;
      const detailHead=el('div');detailHead.className='task-head';detailHead.append(Object.assign(el('span',stateLabel(row)),{className:'task-chip'}),Object.assign(el('h2',row.goal),{className:'task-detail-title'}),button(row.conversationId?'Open task chat':'Create task chat',async()=>{const opened=await api('nethra.openChat',{id:row.id});await openConversation(opened.conversationId);showView('chat');}));detailCard.dataset.state=stateOf(row);detailCard.append(detailHead);detailPane.replaceChildren(detailCard);
-     const {task,approvals,events,attention,progress}=await api('nethra.get',{id:row.id});
+     const {task,approvals,events,attention,progress,performance}=await api('nethra.get',{id:row.id});
      const open=!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
      const pendingApprovals=approvals.filter(a=>a.status==='PENDING');
      // What Nethra needs from the owner comes first.
@@ -104,17 +106,28 @@
          if(task.status==='WAITING_FOR_USER'){const answer=el('textarea');answer.placeholder='Answer Nethra (or reply in this task’s chat)';answer.setAttribute('aria-label','Answer Nethra');answer.value=answerDrafts.get(task.id)||'';needs.append(answer,button('Send answer',()=>api('nethra.answer',{id:task.id,revision:task.revision,answer:answer.value})));}}
        detailCard.append(needs);
      }
+     if(progress){
+       const overview=el('section');overview.className='task-progress-overview';overview.append(el('h3','Task progress'));
+       const nowLine=el('p');nowLine.append(el('strong','Now'),el('span',progress.doing||'Finished'));overview.append(nowLine);
+       const nextLine=el('p');nextLine.append(el('strong','Next action'),el('span',progress.next|| (progress.wake?`Check at ${time(progress.wake.at)}`:'None scheduled')));overview.append(nextLine);
+       if(progress.counts.total){const count=el('p',`${progress.counts.done} of ${progress.counts.total} steps ${task.mode==='ONGOING'?'in this cycle':'done'}`);count.className='task-step-count';const bar=el('progress');bar.max=progress.counts.total;bar.value=progress.counts.done;bar.setAttribute('aria-label','Completed task steps');overview.append(bar,count);}
+       detailCard.append(overview);
+     }
      // Host-recorded tracking; the model's own words are labelled as its note.
      if(progress){const dl=el('dl');dl.className='tracking';const add=(term,value,cls)=>{if(!value)return;const dd=el('dd',value);if(cls)dd.className=cls;dl.append(el('dt',term),dd);};
-       add('Doing',progress.doing);add('Last done',progress.lastAccomplished?`${progress.lastAccomplished.line} (${time(progress.lastAccomplished.at)})`:null);add('Next',progress.next);
+       add('Last recorded action',progress.lastAccomplished?`${progress.lastAccomplished.line} (${time(progress.lastAccomplished.at)})`:null);
        add('Wakes',progress.wake?`${time(progress.wake.at)} — ${progress.wake.reason}`:null);
        if(['source','dependency','budget'].includes(progress.waitingFor.kind))add('Waiting for',progress.waitingFor.detail);
-       add('Steps',progress.counts.total?`${progress.counts.done} of ${progress.counts.total} done`:null);
        add('Outputs',progress.outputs.length?progress.outputs.map(item=>`${item.path}${item.current?'':' (changed since written)'}`).join('\n'):null);
        add('Evidence',progress.evidence.length?progress.evidence.map(item=>`${item.ok?'✓':'✗'} ${item.line}`).join('\n'):null);
        if(task.summary&&!['WAITING_FOR_USER','BLOCKED'].includes(task.status))add("Nethra's note",task.summary);
        if(row.usage)add('Model time today',`${Math.round(row.usage.todayMs/60000)} min of ${Math.round(result.settings.objectiveDailyMs/60000)} min daily limit`);
        detailCard.append(dl);}
+     if(progress){const timeline=el('section');timeline.className='task-activity';timeline.append(el('h3','Activity from host records'));if(progress.activity?.length){const items=el('ol');for(const item of progress.activity){const li=el('li');li.dataset.kind=item.kind;li.append(el('span',item.line),el('small',time(item.at)));items.append(li);}timeline.append(items);}else timeline.append(el('p','No recorded actions yet.'));detailCard.append(timeline);}
+     if(performance){const metrics=el('section');metrics.className='task-performance';metrics.append(el('h3','Measured performance · last 7 days'));const seconds=ms=>`${(ms/1000).toFixed(1)} s`;const objective=performance.objective,chat=performance.chat;
+       metrics.append(el('p',objective.sampleCount?`${objective.sampleCount} task model call${objective.sampleCount===1?'':'s'} · median inference ${seconds(objective.medianInferenceMs)} · latest ${time(objective.lastSampleAt)}`:'No measured samples for this task in the last 7 days.'));
+       metrics.append(el('p',chat.sampleCount?`${chat.sampleCount} local chat repl${chat.sampleCount===1?'ies':'y'} across all conversations · median response ${seconds(chat.medianResponseMs)}${chat.medianTokensPerSecond?` · ${chat.medianTokensPerSecond} tokens/s`:''} · latest ${time(chat.lastSampleAt)}`:'No measured samples for local chat in the last 7 days.'));
+       metrics.append(el('small','These are recorded timings, not a before-and-after speedup test.'));detailCard.append(metrics);}
      if(open){
        const actions=el('div');actions.className='task-actions';
        if(task.status==='PAUSED')actions.append(button('Resume',()=>api('nethra.control',{id:task.id,action:'resume',revision:task.revision})));

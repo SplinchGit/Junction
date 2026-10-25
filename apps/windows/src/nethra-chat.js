@@ -80,10 +80,10 @@ const when = at => new Date(at).toLocaleString(undefined, { weekday: "short", ho
 function describe(task, progress) {
   const lines = [`“${String(task.goal).slice(0, 160)}” — ${task.status.toLowerCase().replaceAll("_", " ")}.`];
   if (progress?.doing) lines.push(`Now: ${progress.doing}.`);
-  if (progress?.lastAccomplished) lines.push(`Last done (${when(progress.lastAccomplished.at)}): ${progress.lastAccomplished.line}.`);
+  if (progress?.lastAccomplished) lines.push(`Last recorded (${when(progress.lastAccomplished.at)}): ${progress.lastAccomplished.line}.`);
   if (progress?.next) lines.push(`Next: ${progress.next}.`);
   if (progress?.wake) lines.push(`Wakes ${when(progress.wake.at)} — ${progress.wake.reason}.`);
-  if (progress?.waitingFor && !["nothing", "time", "source"].includes(progress.waitingFor.kind)) lines.push(`Needs from you: ${progress.waitingFor.detail}`);
+  if (progress?.waitingFor && ["approval", "input", "blocked", "owner_resume"].includes(progress.waitingFor.kind)) lines.push(`Needs from you: ${progress.waitingFor.detail}`);
   if (progress?.outputs?.length) lines.push(`Outputs: ${progress.outputs.map(item => item.path).join(", ")}.`);
   return lines.join("\n");
 }

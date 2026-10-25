@@ -34,6 +34,13 @@ class ObjectiveStatusTest {
     }
 
     @Test
+    fun aDailyBudgetPauseIsShownAsWaitingForReset() {
+        val status = ObjectiveStatus.of(mapOf("status" to "SLEEPING", "nextWakeAt" to now + 600_000,
+            "tracking" to mapOf("waitingFor" to mapOf("kind" to "budget"))), now)
+        assertTrue(status.label.startsWith("Daily limit"))
+    }
+
+    @Test
     fun endedObjectivesAreRedAndPausedOrBlockedAreGrey() {
         for (status in listOf("COMPLETED", "CANCELLED", "FAILED")) {
             val result = ObjectiveStatus.of(mapOf("status" to status), now)
@@ -47,6 +54,7 @@ class ObjectiveStatusTest {
     fun stepLineShowsWhereNethraIs() {
         assertEquals("Step 2 of 3: Summarise", ObjectiveStatus.stepLine(mapOf("step" to "Summarise", "progress" to mapOf("done" to 1, "total" to 3))))
         assertEquals("3 of 3 steps done", ObjectiveStatus.stepLine(mapOf("step" to null, "progress" to mapOf("done" to 3, "total" to 3))))
+        assertEquals("3 of 3 steps this cycle", ObjectiveStatus.stepLine(mapOf("mode" to "ONGOING", "step" to null, "progress" to mapOf("done" to 3, "total" to 3))))
         assertNull(ObjectiveStatus.stepLine(mapOf("progress" to mapOf("done" to 0, "total" to 0))))
     }
 
@@ -66,5 +74,20 @@ class ObjectiveStatusTest {
         val tasks = listOf(mapOf("id" to "one", "conversationId" to "chat-a"), mapOf("id" to "two", "conversationId" to "chat-b"), mapOf("id" to "three", "conversationId" to "chat-a"))
         assertEquals(listOf("one", "three"), ObjectiveStatus.forConversation(tasks, "chat-a").map { it["id"] })
         assertTrue(ObjectiveStatus.forConversation(tasks, "new-chat").isEmpty())
+    }
+
+    @Test
+    fun performanceLinesKeepSampleCountsAndMissingMeasurementsHonest() {
+        val empty = ObjectivePerformance.lines(mapOf("objective" to mapOf("sampleCount" to 0), "chat" to mapOf("sampleCount" to 0)))
+        assertTrue(empty[0].contains("No measured samples"))
+        assertTrue(empty[1].contains("No measured samples"))
+        val measured = ObjectivePerformance.lines(mapOf(
+            "objective" to mapOf("sampleCount" to 2, "medianInferenceMs" to 2500),
+            "chat" to mapOf("sampleCount" to 3, "medianResponseMs" to 4000, "medianTokensPerSecond" to 18)
+        ))
+        assertTrue(measured[0].contains("2 task model calls"))
+        assertTrue(measured[0].contains("2.5 s"))
+        assertTrue(measured[1].contains("3 local chat replies"))
+        assertTrue(measured[1].contains("18 tokens/s"))
     }
 }

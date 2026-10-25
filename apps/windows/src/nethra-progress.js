@@ -17,6 +17,10 @@ function evidenceLine(item){
   if(item.tool==='phone_check')return `Asked the paired phone for a check (${short(result.state,30)})`;
   if(item.tool==='phone_result')return `Phone check ${short(result.state,30)}`;
   if(item.tool==='delegate_task')return 'Reviewed a bounded child research report';
+  if(item.tool==='host_diagnostics')return 'Inspected host diagnostics';
+  if(item.tool==='performance_report')return 'Read measured performance report';
+  if(item.tool==='consult_codex')return 'Asked Codex for advice; no code was changed';
+  if(item.tool==='propose_code_work')return 'Prepared a development draft for owner review';
   return `${short(item.tool,40)} returned a result`;
 }
 
@@ -44,26 +48,40 @@ function waitingFor(task,store,now=Date.now()){
   if(deps.length)return {kind:'dependency',detail:`Waiting for ${deps.length} other objective${deps.length===1?'':'s'} to complete.`};
   if(task.status==='SLEEPING'&&Number.isSafeInteger(task.nextWakeAt)){
     const reason=task.wakeReason;
+    const usage=store.usage?.(task.id,now),settings=store.settings?.();
+    if(reason?.kind==='BUDGET'||(usage&&settings&&(usage.taskMs>=settings.objectiveDailyBudgetMs||usage.globalMs>=settings.globalDailyBudgetMs)))return {kind:'budget',detail:`Daily model-time limit reached; resumes at ${new Date(task.nextWakeAt).toISOString()}.`};
     if(reason?.kind==='MONITOR'&&(task.sources||[]).length)return {kind:'source',detail:`A change in ${task.sources.join(' or ')}, or the routine check at ${new Date(task.nextWakeAt).toISOString()}.`};
     return {kind:'time',detail:reason?.detail||`Next scheduled check at ${new Date(task.nextWakeAt).toISOString()}.`};
   }
   return {kind:'nothing',detail:FINISHED.has(task.status)?'Finished.':'Ready to run when the PC model is free.'};
 }
 
-const ACCOMPLISHED=new Set(['nethra_tool_result','nethra_approved_action','MILESTONE_VERIFIED','nethra_completed','CHILD_COMPLETED']);
+function activityLine(event){
+  if(event.kind==='nethra_tool_result'){
+    const item=event.detail?.evidence?.at(-1);
+    if(!item)return null;
+    return {kind:item.tool==='consult_codex'?'advice':item.result?.error?'error':'verified',line:evidenceLine(item)};
+  }
+  if(event.kind==='CODEX_ASSISTED_BRIDGE')return {kind:'advice',line:'Codex advice saved as a technical handoff; Nethra did not call it itself'};
+  if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit'};
+  if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`};
+  if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence'};
+  if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action'};
+  if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step'};
+  if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision'};
+  return null;
+}
 /**
  * Host-recorded progress, kept separate from the model's own summary ("narration").
  */
 function progressView(task,store,{now=Date.now(),liveTaskId=null}={}){
   const evidence=(task.evidence||[]).slice(-6).map(item=>({tool:item.tool,line:evidenceLine(item),ok:!item.result?.error}));
-  let last=null;
+  let last=null,activity=[];
   try{
-    const events=store.events(task.id,0).slice(-120).reverse();
-    const event=events.find(item=>ACCOMPLISHED.has(item.kind));
-    if(event){
-      const line=event.kind==='MILESTONE_VERIFIED'?`Verified a milestone: ${short(event.detail?.summary,200)}`:event.kind==='nethra_completed'?'Finished the objective with verified evidence':event.kind==='CHILD_COMPLETED'?'A child research step completed':event.kind==='nethra_approved_action'?'Carried out an action you approved':evidence.at(-1)?.line||'Saved a tool result';
-      last={at:event.at,line,event:event.kind};
-    }
+    const events=store.recentTaskEvents?.(task.id,40)||store.events(task.id,0).slice(-40).reverse();
+    activity=events.map(event=>{const detail=activityLine(event);return detail?{at:event.at,event:event.kind,...detail}:null;}).filter(Boolean).slice(0,8);
+    const accomplished=activity.find(item=>['verified','advice'].includes(item.kind));
+    if(accomplished)last={at:accomplished.at,line:accomplished.line,event:accomplished.event};
   }catch{}
   const live=liveTaskId===task.id;
   const doing=live?`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`:FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';
@@ -72,7 +90,7 @@ function progressView(task,store,{now=Date.now(),liveTaskId=null}={}){
     doing,next,lastAccomplished:last,
     wake:Number.isSafeInteger(task.nextWakeAt)&&!FINISHED.has(task.status)?{at:task.nextWakeAt,kind:task.wakeReason?.kind||'UNKNOWN',reason:task.wakeReason?.detail||'Next scheduled wake'}:null,
     waitingFor:waitingFor(task,store,now),
-    outputs:outputs(task,store),
+    outputs:outputs(task,store),activity,
     evidence,
     narration:short(task.summary,600)||null,
     counts:{done:(task.completedSteps||[]).length,total:(task.completedSteps||[]).length+(task.pendingSteps||[]).length,evidence:(task.evidence||[]).length}

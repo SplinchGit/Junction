@@ -243,7 +243,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         Text(objective["goal"]?.toString().orEmpty(), maxLines = 2)
                         if (objective["mode"] == "ONGOING") Text("Ongoing monitoring", style = MaterialTheme.typography.labelSmall)
                         ObjectiveStatus.stepLine(objective)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3) }
+                        objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Nethra's note: $it", style = MaterialTheme.typography.bodySmall, maxLines = 3) }
                     }
                 }
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -268,7 +268,8 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 task["nextDirectionCheckAt"]?.let { Text("Direction review: ${dateLabel(it)}") }
                 task["lastExecutionAt"]?.let { Text("Last run: ${dateLabel(it)}") }
                 task["lastMeaningfulProgressAt"]?.let { Text("Last verified progress: ${dateLabel(it)}") }
-                Text(task["summary"]?.toString().orEmpty())
+                TaskTracking(detail?.get("progress") as? Map<*, *>, detail?.get("performance") as? Map<*, *>, task["mode"]?.toString())
+                task["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Nethra's note: $it", style = MaterialTheme.typography.bodySmall) }
                 val id = task["id"].toString()
                 val revision = (task["revision"] as? Number)?.toLong() ?: -1L
                 val terminal = task["status"] in setOf("COMPLETED", "CANCELLED", "FAILED")
@@ -276,7 +277,6 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 PolicyChoice("Autonomy", task["autonomy"]?.toString() ?: "BALANCED", listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "autonomy" to it)) }
                 PolicyChoice("Priority", task["priority"]?.toString() ?: "3", (1..5).map { it.toString() to "$it · Priority" }, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "priority" to it.toInt())) }
                 PolicyChoice("Direction check-in", task["checkIn"]?.toString() ?: "WEEKLY", listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MILESTONES" to "At milestones or blockers", "MANUAL" to "Manual only"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "checkIn" to it)) }
-                TaskTracking(detail?.get("progress") as? Map<*, *>)
                 var confirm by remember(id) { mutableStateOf<String?>(null) }
                 var editing by remember(id) { mutableStateOf(false) }
                 var editGoal by remember(id) { mutableStateOf(task["goal"]?.toString().orEmpty()) }
@@ -367,16 +367,33 @@ private fun PolicyChoice(label: String, selected: String, options: List<Pair<Str
 
 /** Host-recorded progress: what Nethra is doing, did last, does next, and needs from you. */
 @Composable
-private fun TaskTracking(progress: Map<*, *>?) {
+private fun TaskTracking(progress: Map<*, *>?, performance: Map<*, *>?, mode: String?) {
     if (progress == null) return
+    Text("Task progress", style = MaterialTheme.typography.titleSmall)
     val waiting = progress["waitingFor"] as? Map<*, *>
-    val needs = waiting?.get("kind")?.toString()?.takeIf { it !in setOf("nothing", "time", "source") }
+    val needs = waiting?.get("kind")?.toString()?.takeIf { it in setOf("approval", "input", "blocked", "owner_resume") }
     if (needs != null) Text("Needs you: ${waiting["detail"]}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
-    progress["doing"]?.toString()?.let { Text("Doing: $it") }
-    (progress["lastAccomplished"] as? Map<*, *>)?.let { Text("Last done (${dateLabel(it["at"])}): ${it["line"]}", style = MaterialTheme.typography.bodySmall) }
-    progress["next"]?.toString()?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }
+    progress["doing"]?.toString()?.let { Text("Now: $it") }
+    progress["next"]?.toString()?.let { Text("Next action: $it", style = MaterialTheme.typography.bodyMedium) }
+    val counts = progress["counts"] as? Map<*, *>
+    val done = ((counts?.get("done") as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+    val total = ((counts?.get("total") as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+    if (total > 0) {
+        LinearProgressIndicator(progress = { (done.toFloat() / total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+        Text("$done of $total steps ${if (mode == "ONGOING") "this cycle" else "done"}", style = MaterialTheme.typography.bodySmall)
+    }
+    (progress["lastAccomplished"] as? Map<*, *>)?.let { Text("Last recorded (${dateLabel(it["at"])}): ${it["line"]}", style = MaterialTheme.typography.bodySmall) }
     (progress["wake"] as? Map<*, *>)?.let { Text("Wakes ${dateLabel(it["at"])}: ${it["reason"]}", style = MaterialTheme.typography.bodySmall) }
     maps(progress["outputs"]).takeIf { it.isNotEmpty() }?.let { outputs -> Text("Outputs: " + outputs.joinToString { it["path"].toString().substringAfterLast('\\').substringAfterLast('/') }, style = MaterialTheme.typography.bodySmall) }
+    Text("Activity from host records", style = MaterialTheme.typography.titleSmall)
+    val activity = maps(progress["activity"])
+    if (activity.isEmpty()) Text("No recorded actions yet.", style = MaterialTheme.typography.bodySmall)
+    activity.take(6).forEach { item -> Text("• ${item["line"]} · ${dateLabel(item["at"])}", style = MaterialTheme.typography.bodySmall) }
+    if (performance != null) {
+        Text("Measured performance · last 7 days", style = MaterialTheme.typography.titleSmall)
+        ObjectivePerformance.lines(performance).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Recorded timings are not a before-and-after speedup test.", style = MaterialTheme.typography.labelSmall)
+    }
 }
 
 private fun maps(value: Any?): List<Map<*, *>> = (value as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()

@@ -108,6 +108,7 @@ class NethraStore {
     });
   }
   events(id,after=0) {return this.db.prepare('SELECT * FROM events WHERE taskId=? AND seq>? ORDER BY seq LIMIT 500').all(id,after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
+  recentTaskEvents(id,limit=30) {this.get(id);if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new Error('Invalid task event limit');return this.db.prepare('SELECT * FROM events WHERE taskId=? ORDER BY seq DESC LIMIT ?').all(id,limit).map(r=>({...r,detail:JSON.parse(r.detail)}));}
   milestoneEvents(id,after=0) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE taskId=? AND kind=? AND seq>? ORDER BY seq').all(id,'MILESTONE_VERIFIED',after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
   recentEvents(since=0,limit=40) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE at>=? ORDER BY seq DESC LIMIT ?').all(since,limit).map(row=>({seq:row.seq,taskId:row.taskId,at:row.at,kind:row.kind,detail:JSON.parse(row.detail)}));}
   attention(id) {return this.db.prepare('SELECT body,state FROM attention WHERE taskId=? ORDER BY dueAt DESC,id DESC LIMIT 500').all(id).reverse().map(row=>({...JSON.parse(row.body),state:row.state}));}
@@ -198,6 +199,11 @@ class NethraStore {
   recoverInside() {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(!lease||lease.expiresAt>this.now())return 0;this.closeInferenceIntervals(lease.token);this.accountUsage(lease.taskId,this.now()-this.execution(lease.token).startedAt,lease.token);for(const child of this.children(lease.taskId).filter(c=>c.status==='ACTIVE'&&c.leaseToken===lease.token)){child.status='INTERRUPTED';child.finishedAt=this.now();delete child.leaseToken;this.db.prepare('UPDATE children SET body=? WHERE id=?').run(JSON.stringify(child),child.id);}this.db.prepare('UPDATE attention SET state=\'PENDING\',leaseToken=NULL WHERE leaseToken=?').run(lease.token);this.db.prepare('DELETE FROM lease WHERE singleton=1').run();const task=this.get(lease.taskId);if(['ACTIVE','PLANNING'].includes(task.status)){task.status=task.persistent?'ACTIVE':'PAUSED';task.summary='Interrupted execution recovered from durable checkpoint';this.save(task,'RECOVERED');}return 1;}
   recoverExpired() {return this.transaction(()=>this.recoverInside());}
   usage(taskId,at=this.now()) {const day=Math.floor(at/DAY),rows=this.db.prepare('SELECT taskId,ms FROM usage WHERE day=?').all(day);return {day,globalMs:rows.reduce((s,r)=>s+r.ms,0),taskMs:rows.find(r=>r.taskId===taskId)?.ms||0};}
+  inferenceSamples(taskId,since=0,limit=100) {
+    this.get(taskId);
+    if(!Number.isSafeInteger(since)||since<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw new Error('Invalid inference sample window');
+    return this.db.prepare('SELECT i.endedAt AS at, i.endedAt-i.startedAt AS durationMs FROM inference_intervals i JOIN executions e ON e.token=i.token WHERE e.taskId=? AND i.endedAt IS NOT NULL AND i.endedAt>=? AND i.endedAt>i.startedAt ORDER BY i.endedAt DESC LIMIT ?').all(taskId,since,limit);
+  }
   execution(token) {const row=this.db.prepare('SELECT * FROM executions WHERE token=?').get(token);if(!row)throw new Error('Unknown execution lease');return row;}
   accountUsage(id,elapsed,token) {
     const execution=this.execution(token);if(execution.taskId!==id)throw new Error('Execution lease mismatch');

@@ -1,6 +1,6 @@
 # Nethra ↔ Codex bridge, 25 October 2026
 
-The ongoing **Self Improvement** objective now has three native tools:
+The ongoing **Self Improvement** objective has a measured `performance_report` tool alongside these bridge tools. See [NETHRA_PROGRESS_TELEMETRY_2026-10-25.md](NETHRA_PROGRESS_TELEMETRY_2026-10-25.md) for its source and limits.
 
 - `host_diagnostics` reports the host's current memory, Nethra's configured 4,096-token context and 1,100-token per-step thinking budget, and whether this PC's Codex CLI is signed in with ChatGPT. These are facts about configuration and a momentary memory sample, not response-time measurements.
 - `consult_codex` is available only when the owner enables Codex for that objective on Windows. It sends one bounded question plus the objective and success criteria to a separate Codex CLI turn using GPT-5.6 Luna. The turn is read-only, ignores user configuration, and returns advice plus token usage. It does not edit code or measure speed. Reservations are capped at three consultations per UTC day across all Nethra objectives.

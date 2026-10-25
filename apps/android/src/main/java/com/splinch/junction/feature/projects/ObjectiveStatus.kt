@@ -20,6 +20,7 @@ data class ObjectiveStatus(val light: ObjectiveLight, val label: String, val end
             val status = objective["status"]?.toString().orEmpty()
             val live = objective["live"] == true
             val nextWake = (objective["nextWakeAt"] as? Number)?.toLong()
+            val waiting = (objective["tracking"] as? Map<*, *>)?.get("waitingFor") as? Map<*, *>
             return when {
                 live -> ObjectiveStatus(ObjectiveLight.GREEN, "Working on it now", false)
                 status == "COMPLETED" -> ObjectiveStatus(ObjectiveLight.RED, "Done", true)
@@ -28,6 +29,8 @@ data class ObjectiveStatus(val light: ObjectiveLight, val label: String, val end
                 status == "WAITING_FOR_USER" -> ObjectiveStatus(ObjectiveLight.AMBER, "Needs your input", false)
                 status == "BLOCKED" -> ObjectiveStatus(ObjectiveLight.GREY, "Blocked", false)
                 status == "PAUSED" -> ObjectiveStatus(ObjectiveLight.GREY, "Paused", false)
+                status == "SLEEPING" && waiting?.get("kind") == "budget" && nextWake != null && nextWake > now ->
+                    ObjectiveStatus(ObjectiveLight.AMBER, "Daily limit · resumes ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(nextWake))}", false)
                 status == "SLEEPING" && nextWake != null && nextWake > now ->
                     ObjectiveStatus(ObjectiveLight.AMBER, "Next check ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(nextWake))}", false)
                 else -> ObjectiveStatus(ObjectiveLight.AMBER, "Queued", false)
@@ -42,6 +45,7 @@ data class ObjectiveStatus(val light: ObjectiveLight, val label: String, val end
             val step = objective["step"]?.toString()?.takeIf { it.isNotBlank() && it != "null" }
             return when {
                 total > 0 && step != null -> "Step ${minOf(done + 1, total)} of $total: $step"
+                total > 0 && objective["mode"] == "ONGOING" -> "$done of $total steps this cycle"
                 total > 0 -> "$done of $total steps done"
                 else -> null
             }

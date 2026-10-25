@@ -130,6 +130,24 @@ test('progress view separates host facts from narration and lists real outputs a
   assert.equal(listed.objectives[0].tracking.waitingFor.kind,'input');
 });
 
+test('task activity distinguishes measured work, Codex advice and a daily budget wait',t=>{
+  const f=fixture(t),task=f.store.create({goal:'Self Improvement',mode:'ONGOING'});
+  const first={tool:'read_file',result:{path:'C:/Junction/metrics.json',content:'measured data'}};
+  f.store.update(task.id,{evidence:[first]},'nethra_tool_result');
+  f.advance(1000);
+  const advice={tool:'consult_codex',result:{source:'codex',advice:'Measure first',verifiedActions:[]}};
+  f.store.update(task.id,{evidence:[first,advice]},'nethra_tool_result');
+  f.advance(1000);
+  f.store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000,wakeReason:{kind:'BUDGET',detail:'Daily model-time limit'}},'BUDGET_WAIT');
+  const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
+  assert.equal(view.waitingFor.kind,'budget');
+  assert.match(view.activity[0].line,/daily model-time limit/i);
+  assert.match(view.activity[1].line,/Codex.*advice/i);
+  assert.match(view.activity[2].line,/Read C:\/Junction\/metrics.json/);
+  assert.equal(view.activity[1].kind,'advice');
+  assert.match(view.lastAccomplished.line,/Codex.*advice/i);
+});
+
 test('quiet hours cross midnight and defer outcome posts until they end, without duplicates',t=>{
   const settings={proactiveUpdates:'ALL',quietHours:{enabled:true,start:'22:00',end:'07:00'}};
   const at=(h,m=0)=>{const date=new Date(2026,9,24,h,m);return date;};
