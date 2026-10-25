@@ -64,8 +64,8 @@ Hidden tools still refuse at execution.
 
 ## Later the same evening: context, budgets and a live run
 
-- **Context 8,192** for every qwen3:30b caller (one shared constant, so no reloads). Measured: +0.38 GiB, same GPU offload, 22.3 tok/s either way. Before each objective step the oldest tool results are compacted to fit; each compaction is journaled () and shown in activity.
-- **No daily model-time limit** (owner's choice).  budgets mean unlimited; Settings → Model readiness has a Task model time control. Owner chats still pre-empt tasks.
+- **Context 8,192** for every qwen3:30b caller (one shared constant, so no reloads). Measured: +0.38 GiB, same GPU offload, 22.3 tok/s either way. Before each objective step the oldest tool results are compacted to fit; each compaction is journaled (`CONTEXT_COMPACTED`) and shown in activity.
+- **No daily model-time limit** (owner's choice). `null` budgets mean unlimited; Settings → Model readiness has a Task model time control. Owner chats still pre-empt tasks.
 - **Live run findings, all fixed:**
   - The lease heartbeat still applied the old limit.
   - Task-chat notes like "How about now?" were forced into web searches by the bare word "now".
@@ -78,4 +78,4 @@ Hidden tools still refuse at execution.
 ## Not done
 
 - Sending from Windows tasks: deferred by the owner.
-- Nethra still spends reads on irrelevant files (it read the Android  looking for Windows bottlenecks). Better repository orientation, such as a pointer to , is the next likely improvement.
+- Nethra still spends reads on irrelevant files (it read the Android `build.gradle.kts` looking for Windows bottlenecks). Better repository orientation, such as a pointer to `docs/CODEBASE_MAP.md`, is the next likely improvement.
