@@ -62,7 +62,20 @@ To pay for the new tools:
 
 Hidden tools still refuse at execution.
 
+## Later the same evening: context, budgets and a live run
+
+- **Context 8,192** for every qwen3:30b caller (one shared constant, so no reloads). Measured: +0.38 GiB, same GPU offload, 22.3 tok/s either way. Before each objective step the oldest tool results are compacted to fit; each compaction is journaled () and shown in activity.
+- **No daily model-time limit** (owner's choice).  budgets mean unlimited; Settings → Model readiness has a Task model time control. Owner chats still pre-empt tasks.
+- **Live run findings, all fixed:**
+  - The lease heartbeat still applied the old limit.
+  - Task-chat notes like "How about now?" were forced into web searches by the bare word "now".
+  - Continuous ongoing tasks never posted progress.
+  - Nethra slept for Codex while Claude was free.
+  - The runner wiped a wake's conversation after 6,000 characters, so Nethra repeated identical reads until its tool budget ran out.
+  - Advisors got no Junction context and overlong replies were stored truncated.
+- Owner-facing progress posts still respect quiet hours (22:00–07:00 by default).
+
 ## Not done
 
-- Long multi-step wakes still grow the message list without a token check. A seed near its 4,000-character bound, plus several tool results, can approach the context limit, and Ollama truncates silently when it does. Raising `num_ctx` (e.g. to 8,192, roughly +0.4 GB of KV cache) or compacting older tool results would remove this risk. Both change the measured model setup, so neither was done here.
-- No long live run of a self-improvement objective using both advisors and an experiment has been observed yet.
+- Sending from Windows tasks: deferred by the owner.
+- Nethra still spends reads on irrelevant files (it read the Android  looking for Windows bottlenecks). Better repository orientation, such as a pointer to , is the next likely improvement.
