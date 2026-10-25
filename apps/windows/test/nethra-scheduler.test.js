@@ -121,3 +121,12 @@ test('runtime errors do not save credentials in the objective journal',async t=>
   assert.equal(live.errors.length,1);
   assert.doesNotMatch(JSON.stringify({errors:live.errors,summary:live.summary}),/private-value/);
 });
+test('with no daily limit neither the claim, the inference allowance nor the lease heartbeat stops a task that has run for hours',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Self Improvement'});f.store.setSettings({objectiveDailyMs:null,globalDailyMs:null});
+  f.store.db.prepare('INSERT INTO usage VALUES(?,?,?)').run(Math.floor(f.now()/86_400_000),task.id,5*3_600_000);
+  let ran=false;
+  const scheduler=new NethraScheduler({...f,execute:async(_task,{inference})=>{await inference(()=>new Promise(resolve=>setTimeout(resolve,1300)));ran=true;return {status:'COMPLETED',summary:'Done with evidence.'};}});
+  await scheduler.tick();
+  assert.equal(ran,true);
+  assert.notEqual(f.store.get(task.id).errors?.at(-1)?.message,'Inference time budget reached');
+});

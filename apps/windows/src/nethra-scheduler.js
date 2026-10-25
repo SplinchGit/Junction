@@ -74,7 +74,7 @@ class NethraScheduler {
     }
     let abortReason='';
     const abort=reason=>{abortReason=reason;controller.abort(new Error(reason));};
-    const heartbeat=setInterval(()=>{try{const live=this.store.get(task.id);if(['PAUSED','CANCELLED'].includes(live.status)){abort(live.status);return;}if(!this.store.renew(task.id,token,LEASE_MS)){abort('Lease lost');return;}const usage=this.store.usage(task.id);if(usage.globalMs>=settings.globalDailyBudgetMs||usage.taskMs>=settings.objectiveDailyBudgetMs)abort('Inference time budget reached');}catch(error){abort(error.message);}},Math.min(this.pollMs,1000));
+    const heartbeat=setInterval(()=>{try{const live=this.store.get(task.id);if(['PAUSED','CANCELLED'].includes(live.status)){abort(live.status);return;}if(!this.store.renew(task.id,token,LEASE_MS)){abort('Lease lost');return;}const usage=this.store.usage(task.id),limits=dailyLimits(settings);if(usage.globalMs>=limits.globalMs||usage.taskMs>=limits.taskMs)abort('Inference time budget reached');}catch(error){abort(error.message);}},Math.min(this.pollMs,1000));
     const deadline=setTimeout(()=>abort('Wake runtime limit reached'),this.maxRuntimeMs);
     const inference=async callback=>{
       controller.signal.throwIfAborted();const usage=this.store.usage(task.id);
