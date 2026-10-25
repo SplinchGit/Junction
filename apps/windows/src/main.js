@@ -11,6 +11,8 @@ const { registerDevice } = require("./firebase-sync");
 const { LocalDataStore } = require("./local-data");
 const { sendChat } = require("./provider-client");
 const { getCodexStatus, sendCodexChat } = require("./codex-client");
+const { getClaudeStatus } = require("./claude-client");
+const { AdvisorLimits } = require("./advisor-limits");
 const { providers, estimate, credentialProviderId } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
 const { AppServerDelegationCoordinator } = require("./app-server-delegation-coordinator");
@@ -250,6 +252,11 @@ async function createWindowImpl() {
   };
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
+  // Experiments on code changes only count samples from a Junction process started after the change.
+  try { nethraStore.recordHostStart(); } catch (error) { recordStartupIssue('Nethra host start record', error); }
+  const advisorLimits = new AdvisorLimits({ store: nethraStore });
+  const workStatus = id => { try { const project = foreman.get(id), promoted = project.tasks.flatMap(task => task.attempts || []).filter(attempt => attempt.status === 'COMPLETED' && attempt.promoted).map(attempt => attempt.finishedAt).filter(Number.isFinite); return { status: project.status, promotedAt: promoted.length ? Math.max(...promoted) : null }; } catch { return null; } };
+  const advisorStatus = async () => { const describe = async (provider, status) => ({ ...status, limits: status.ready ? await advisorLimits.check(provider).catch(error => ({ error: String(error.message).slice(0, 200) })) : null }); const [codex, claude] = await Promise.all([getCodexStatus(), getClaudeStatus()]); return { reservePercent: advisorLimits.reservePercent(), codex: await describe('codex', codex), claude: await describe('claude', claude) }; };
   // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.
   const modelProfile = path.join(app.getPath('userData'), 'nethra', 'model-profile.json');
   localAgent = new LocalAgentRuntime({ toolRegistry, retention: () => nethraStore.settings().idleRetention, profile: { load: () => JSON.parse(fs.readFileSync(modelProfile, 'utf8')), save: value => fs.writeFileSync(modelProfile, JSON.stringify(value)) } });
@@ -262,10 +269,10 @@ async function createWindowImpl() {
   deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
-  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork,performanceReport:taskId=>require('./nethra-performance').performanceReport({store:nethraStore,localData,taskId})});
+  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork,localData,workStatus,advisorLimits,performanceReport:taskId=>require('./nethra-performance').performanceReport({store:nethraStore,localData,taskId})});
   const reportedOutcomes = new Set();
   nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes),warmBefore:()=>localAgent.warmer.warm({reason:'objective_due',priority:'background'})});
-  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,advisors:advisorStatus,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
   deliverObjectiveUpdates();
   outcomeSweep = setInterval(deliverObjectiveUpdates, 60_000); outcomeSweep.unref?.();
   nethraScheduler.start();

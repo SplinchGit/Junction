@@ -3,10 +3,10 @@ const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
 const {progressView}=require('./nethra-progress');
 const {performanceReport}=require('./nethra-performance');
-const TYPES = ['nethra.edit','nethra.delete','nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail'];
+const TYPES = ['nethra.edit','nethra.delete','nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail','nethra.advisors'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 class NethraApi {
-  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact}); }
+  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null,advisors=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact,advisors}); }
   /** Model residency for clients: connecting vs. cold vs. loading vs. ready is shown, not guessed. */
   modelState(){
     const state=this.runtime.modelState?.()||{state:'unknown'};
@@ -39,7 +39,9 @@ class NethraApi {
       const task=s.get(payload.id),approvals=s.approvals(task.id),events=s.events(task.id,Number.isSafeInteger(payload.after)?payload.after:0);
       const progress=progressView(task,s,{liveTaskId:s.liveTaskId?.()??null});
       const performance=performanceReport({store:s,localData:this.localData,taskId:task.id});
-      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id),progress,performance};
+      // Raw sample values stay on the host; the view needs only the summaries and the verdict.
+      const experiments=(s.experiments?.(task.id)||[]).slice(0,5).map(({baseline,...item})=>({...item,baseline:{count:baseline.count,median:baseline.median}}));
+      if(source==='desktop')return {task,approvals,events,attention:s.attention(task.id),progress,performance,experiments};
       // Keep the exact actionable payload when it fits. Older approvals and
       // large evidence remain on Windows; the mobile frame is bounded.
       const pending=approvals.filter(item=>item.status==='PENDING');
@@ -140,10 +142,16 @@ class NethraApi {
       if(type==='nethra.device.enqueue')return {command:d.enqueue({kind:payload.kind,args:payload.args||{},requestedBy:payload.requestedBy||'owner',deviceId:payload.deviceId||'*',ttlMs:payload.ttlMs,requestId})};
       return {commands:d.list(payload.limit||20)};
     }
+    if(type==='nethra.advisors') {
+      if(source!=='desktop')throw new Error('Advisor usage is shown on this PC');
+      if(!this.advisors)throw new Error('Advisors are unavailable on this host');
+      return this.advisors();
+    }
     if(type==='nethra.settings') {
-      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates'];
+      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent'];
       if(Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Unknown Nethra setting');
       if(('persistentStartup' in payload||'warmOnStartup' in payload)&&source!=='desktop')throw new Error('Change Windows startup on this PC');
+      if('advisorReservePercent' in payload&&source!=='desktop')throw new Error('Change advisor usage on this PC');
       if('thinking' in payload&&typeof payload.thinking!=='boolean')throw new Error('Invalid thinking preference');
       if(payload.thinking===false)throw new Error('Qwen3 30B always uses thinking');
       if('verbose' in payload&&typeof payload.verbose!=='boolean')throw new Error('Invalid verbose preference');

@@ -1,5 +1,6 @@
 'use strict';
 const {draftReceiptIsCurrent}=require('./nethra-tools');
+const {verdictLine}=require('./nethra-experiments');
 
 const short=(value,max=240)=>String(value??'').replace(/\s+/g,' ').trim().slice(0,max);
 const FINISHED=new Set(['COMPLETED','CANCELLED','FAILED']);
@@ -20,6 +21,8 @@ function evidenceLine(item){
   if(item.tool==='host_diagnostics')return 'Inspected host diagnostics';
   if(item.tool==='performance_report')return 'Read measured performance report';
   if(item.tool==='consult_codex')return 'Asked Codex for advice; no code was changed';
+  if(item.tool==='consult_claude')return 'Asked Claude for advice; no code was changed';
+  if(item.tool==='experiment')return result.result?verdictLine(result.result):result.status==='CHANGED'?'Recorded when the experiment change was applied':`Started an experiment with a baseline of ${result.baseline?.count??'?'} samples`;
   if(item.tool==='propose_code_work')return 'Prepared a development draft for owner review';
   return `${short(item.tool,40)} returned a result`;
 }
@@ -61,9 +64,11 @@ function activityLine(event){
     const item=event.detail?.evidence?.at(-1);
     if(!item)return null;
     if(item.tool==='consult_codex'&&!item.result?.error)return {kind:'advice',line:evidenceLine(item),actor:'Codex',model:recordedModel(item.result)};
+    if(item.tool==='consult_claude'&&!item.result?.error)return {kind:'advice',line:evidenceLine(item),actor:'Claude',model:recordedModel(item.result)};
     return {kind:item.result?.error?'error':'verified',line:evidenceLine(item),actor:'Nethra',model:'qwen3:30b'};
   }
   if(event.kind==='CODEX_ASSISTED_BRIDGE')return {kind:'advice',line:'Codex advice saved as a technical handoff; Nethra did not call it itself',actor:'Codex',model:recordedModel(event.detail?.evidence?.find(item=>item.tool==='consult_codex')?.result)};
+  if(event.kind==='EXPERIMENT_CONCLUDED'&&event.detail?.result)return {kind:'verified',line:verdictLine(event.detail.result),actor:'Junction',model:null};
   if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit',actor:'Junction',model:null};
   if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`,actor:'Nethra',model:'qwen3:30b'};
   if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence',actor:'Nethra',model:'qwen3:30b'};

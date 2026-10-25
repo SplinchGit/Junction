@@ -16,7 +16,7 @@ const WARM_STARTUP=new Set(['desktop','always','never']);
 const RETENTION=new Set(['15m','30m','1h','2h','4h','8h']);
 const PROACTIVE=new Set(['ALL','IMPORTANT','OFF']);
 const CLOCK=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const SETTING_DEFAULTS=Object.freeze({warmOnStartup:'desktop',idleRetention:'2h',proactiveUpdates:'ALL',quietHours:Object.freeze({enabled:true,start:'22:00',end:'07:00'})});
+const SETTING_DEFAULTS=Object.freeze({advisorReservePercent:10,warmOnStartup:'desktop',idleRetention:'2h',proactiveUpdates:'ALL',quietHours:Object.freeze({enabled:true,start:'22:00',end:'07:00'})});
 const validSources=value=>Array.isArray(value)&&value.length<=SOURCES.size&&value.every(item=>SOURCES.has(item))&&new Set(value).size===value.length;
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
 const DAY = 86400000;
@@ -40,7 +40,7 @@ class NethraStore {
     this.db = new DatabaseSync(path.join(this.directory,'nethra.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;');
     const version = this.db.prepare('PRAGMA user_version').get().user_version;
-    if (version > 4) { this.db.close(); throw new Error('Nethra database requires a newer Junction'); }
+    if (version > 5) { this.db.close(); throw new Error('Nethra database requires a newer Junction'); }
     this.transaction(() => this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, taskId TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
@@ -67,6 +67,10 @@ class NethraStore {
         this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(task.id,this.now(),'PROFILE_DEFAULTED',JSON.stringify({autonomy:task.autonomy,priority:task.priority,checkIn:'WEEKLY'}));
       }
       this.db.exec('PRAGMA user_version=4');
+    });
+    this.transaction(()=>{
+      // Schema 5: measured before/after experiments, Junction start times, and the last live advisor usage reading.
+      this.db.exec('CREATE TABLE IF NOT EXISTS experiments(id TEXT PRIMARY KEY, taskId TEXT NOT NULL, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS host_starts(at INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS advisor_limits(provider TEXT PRIMARY KEY, body TEXT NOT NULL); PRAGMA user_version=5;');
     });
   }
   transaction(fn) { this.db.exec('BEGIN IMMEDIATE'); try {const result=fn();this.db.exec('COMMIT');return result;} catch(error){this.db.exec('ROLLBACK');throw error;} }
@@ -147,21 +151,52 @@ class NethraStore {
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}
   settings() {const r=this.db.prepare('SELECT body FROM settings WHERE singleton=1').get();const value={enabled:true,thinking:true,verbose:false,persistentStartup:true,minWakeMs:300000,maxWakeMs:604800000,globalDailyBudgetMs:3600000,objectiveDailyBudgetMs:1200000,...SETTING_DEFAULTS,...(r?JSON.parse(r.body):{}),thinking:true};return {...value,quietHours:{...SETTING_DEFAULTS.quietHours,...(value.quietHours||{})},globalDailyMs:value.globalDailyBudgetMs,objectiveDailyMs:value.objectiveDailyBudgetMs};}
-  setSettings(patch) {return this.transaction(()=>{const allowed=['enabled','thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyBudgetMs','objectiveDailyBudgetMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates'];if(Object.keys(patch).some(k=>!allowed.includes(k)))throw new Error('Unknown Nethra setting');if(patch.thinking===false)throw new Error('Qwen3 30B always uses thinking');const value={...this.settings(),...patch};if(Object.hasOwn(patch,'globalDailyMs'))value.globalDailyBudgetMs=patch.globalDailyMs;if(Object.hasOwn(patch,'objectiveDailyMs'))value.objectiveDailyBudgetMs=patch.objectiveDailyMs;for(const key of ['globalDailyBudgetMs','objectiveDailyBudgetMs'])if(!Number.isFinite(value[key])||value[key]<0)throw new Error('Invalid budget');if(!Number.isFinite(value.minWakeMs)||value.minWakeMs<300000||!Number.isFinite(value.maxWakeMs)||value.maxWakeMs>604800000||value.maxWakeMs<value.minWakeMs)throw new Error('Invalid wake bounds');for(const key of ['enabled','thinking','verbose','persistentStartup'])if(typeof value[key]!=='boolean')throw new Error('Invalid boolean setting');
-    if(!WARM_STARTUP.has(value.warmOnStartup))throw new Error('Invalid startup warming preference');if(!RETENTION.has(value.idleRetention))throw new Error('Invalid idle retention');if(!PROACTIVE.has(value.proactiveUpdates))throw new Error('Invalid update preference');
+  setSettings(patch) {return this.transaction(()=>{const allowed=['enabled','thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyBudgetMs','objectiveDailyBudgetMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent'];if(Object.keys(patch).some(k=>!allowed.includes(k)))throw new Error('Unknown Nethra setting');if(patch.thinking===false)throw new Error('Qwen3 30B always uses thinking');const value={...this.settings(),...patch};if(Object.hasOwn(patch,'globalDailyMs'))value.globalDailyBudgetMs=patch.globalDailyMs;if(Object.hasOwn(patch,'objectiveDailyMs'))value.objectiveDailyBudgetMs=patch.objectiveDailyMs;for(const key of ['globalDailyBudgetMs','objectiveDailyBudgetMs'])if(!Number.isFinite(value[key])||value[key]<0)throw new Error('Invalid budget');if(!Number.isFinite(value.minWakeMs)||value.minWakeMs<300000||!Number.isFinite(value.maxWakeMs)||value.maxWakeMs>604800000||value.maxWakeMs<value.minWakeMs)throw new Error('Invalid wake bounds');for(const key of ['enabled','thinking','verbose','persistentStartup'])if(typeof value[key]!=='boolean')throw new Error('Invalid boolean setting');
+    if(!WARM_STARTUP.has(value.warmOnStartup))throw new Error('Invalid startup warming preference');if(!RETENTION.has(value.idleRetention))throw new Error('Invalid idle retention');if(!PROACTIVE.has(value.proactiveUpdates))throw new Error('Invalid update preference');if(!Number.isInteger(value.advisorReservePercent)||value.advisorReservePercent<0||value.advisorReservePercent>50)throw new Error('Advisor reserve must be a whole percentage from 0 to 50');
     const quiet=value.quietHours;if(!quiet||typeof quiet!=='object'||Array.isArray(quiet)||Object.keys(quiet).some(k=>!['enabled','start','end'].includes(k))||typeof quiet.enabled!=='boolean'||!CLOCK.test(quiet.start)||!CLOCK.test(quiet.end))throw new Error('Invalid quiet hours');
     value.quietHours={enabled:quiet.enabled,start:quiet.start,end:quiet.end};
     value.globalDailyMs=value.globalDailyBudgetMs;value.objectiveDailyMs=value.objectiveDailyBudgetMs;this.db.prepare('INSERT INTO settings VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET body=excluded.body').run(JSON.stringify(value));return value;});}
   assertLease(id,token) {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(token){if(!lease||lease.taskId!==id||lease.token!==token||lease.expiresAt<=this.now())throw new Error('Nethra lease expired or fenced');}else if(lease?.taskId===id&&lease.expiresAt>this.now())throw new Error('Nethra task requires its lease token');}
-  reserveCodexConsult(id,token) {return this.transaction(()=>{
+  /** Journals one advisor consultation. Live usage windows, not a count, decide whether it may run. */
+  recordConsult(id,provider,token) {return this.transaction(()=>{
     this.assertRunnable(id,token);
+    if(!['codex','claude'].includes(provider))throw new Error('Unknown advisor');
     const now=this.now(),day=new Date(now).toISOString().slice(0,10),start=Date.parse(`${day}T00:00:00.000Z`);
-    const total=this.db.prepare("SELECT COUNT(*) AS count FROM events WHERE kind='CODEX_CONSULT_RESERVED' AND at>=?").get(start).count;
-    if(total>=3)throw new Error('Nethra has used its three Codex consultations for today');
-    const task=this.get(id),used=task.codexConsultDay===day?(task.codexConsultCount||0):0;
-    if(used>=3)throw new Error('This objective has used its three Codex consultations for today');
-    task.codexConsultDay=day;task.codexConsultCount=used+1;
-    return this.save(task,'CODEX_CONSULT_RESERVED',{count:task.codexConsultCount,globalCount:total+1});
+    const kind=`${provider.toUpperCase()}_CONSULT_RESERVED`,today=this.db.prepare('SELECT COUNT(*) AS count FROM events WHERE kind=? AND at>=?').get(kind,start).count;
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(id,now,kind,JSON.stringify({todayAcrossObjectives:today+1}));
+    return {todayAcrossObjectives:today+1};
+  });}
+  advisorSnapshot(provider) {const row=this.db.prepare('SELECT body FROM advisor_limits WHERE provider=?').get(provider);return row?JSON.parse(row.body):null;}
+  recordAdvisorSnapshot(provider,body) {this.db.prepare('INSERT INTO advisor_limits VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET body=excluded.body').run(provider,JSON.stringify(body));}
+  recordHostStart() {this.db.prepare('INSERT INTO host_starts VALUES(?)').run(this.now());this.db.prepare('DELETE FROM host_starts WHERE at<?').run(this.now()-90*DAY);}
+  hostStartsAfter(at) {return this.db.prepare('SELECT at FROM host_starts WHERE at>? ORDER BY at LIMIT 10').all(at).map(row=>row.at);}
+  experiments(taskId) {return this.db.prepare('SELECT body FROM experiments WHERE taskId=? ORDER BY rowid DESC').all(taskId).map(row=>JSON.parse(row.body));}
+  experiment(taskId,id) {const row=this.db.prepare('SELECT body FROM experiments WHERE id=? AND taskId=?').get(id,taskId);if(!row)throw new Error('Unknown experiment for this objective');return JSON.parse(row.body);}
+  createExperiment(taskId,input,token) {return this.transaction(()=>{
+    this.assertRunnable(taskId,token);
+    const all=this.experiments(taskId);
+    if(all.filter(item=>item.status!=='CONCLUDED').length>=3)throw new Error('This objective already has three open experiments; evaluate one first');
+    if(all.length>=30)this.db.prepare('DELETE FROM experiments WHERE id=?').run(all.at(-1).id);
+    const experiment={id:randomUUID(),taskId,...input,status:'BASELINE',changeAt:null,changeNote:null,changeActor:null,result:null};
+    this.db.prepare('INSERT INTO experiments VALUES(?,?,?)').run(experiment.id,taskId,JSON.stringify(experiment));
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_STARTED',JSON.stringify({id:experiment.id,metric:experiment.metric,baseline:{count:experiment.baseline.count,median:experiment.baseline.median}}));
+    return experiment;
+  });}
+  markExperimentChange(taskId,id,{note,actor},token) {return this.transaction(()=>{
+    this.assertRunnable(taskId,token);
+    const experiment=this.experiment(taskId,id);
+    if(experiment.status!=='BASELINE')throw new Error('The change for this experiment is already recorded');
+    Object.assign(experiment,{status:'CHANGED',changeAt:this.now(),changeNote:String(note||'').slice(0,500),changeActor:String(actor||'Nethra').slice(0,60)});
+    this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_CHANGED',JSON.stringify({id,actor:experiment.changeActor}));
+    return experiment;
+  });}
+  saveExperimentResult(taskId,id,result,conclude) {return this.transaction(()=>{
+    const experiment=this.experiment(taskId,id);if(experiment.status==='CONCLUDED')return experiment;
+    experiment.result=result;if(conclude)experiment.status='CONCLUDED';
+    this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
+    if(conclude)this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_CONCLUDED',JSON.stringify({id,result}));
+    return experiment;
   });}
   update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   control(id,action,revision,requestId) {return this.transaction(()=>{
@@ -302,6 +337,7 @@ class NethraStore {
       this.db.prepare('DELETE FROM approvals WHERE taskId=?').run(id);
       for(const row of this.db.prepare('SELECT actionKey,body FROM actions').all())if(JSON.parse(row.body).taskId===id)this.db.prepare('DELETE FROM actions WHERE actionKey=?').run(row.actionKey);
       this.db.prepare('DELETE FROM children WHERE parentId=?').run(id);
+      this.db.prepare('DELETE FROM experiments WHERE taskId=?').run(id);
       this.db.prepare('DELETE FROM events WHERE taskId=?').run(id);
       this.db.prepare('DELETE FROM tasks WHERE id=?').run(id);
       for(const other of this.list())if((other.dependencies||[]).includes(id)){other.dependencies=other.dependencies.filter(dep=>dep!==id);this.save(other,'DEPENDENCY_REMOVED',{id});}

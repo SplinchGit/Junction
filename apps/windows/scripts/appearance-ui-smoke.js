@@ -35,6 +35,7 @@ app.on("browser-window-created", (_event, window) => {
       })()`);
       const store = new NethraStore(path.join(directory, "nethra"));
       store.update(seeded.task, { status: "SLEEPING", nextWakeAt: Date.now() + 5 * 3600_000, wakeReason: { kind: "MONITOR", detail: "Routine daily monitoring check; a source change wakes it sooner", at: Date.now() + 5 * 3600_000 }, plan: ["Check the operator timetable page"], completedSteps: ["Check the operator timetable page"], pendingSteps: [], evidence: [{ tool: "web_search", result: { evidence: { query: "Oban ferry timetable", sources: [{ title: "CalMac timetable" }] } } }], summary: "Winter timetable unchanged; next check tomorrow." }, "nethra_tool_result");
+      store.createExperiment(seeded.task, { hypothesis: "Earlier warm-up shortens replies", metric: "chat_response_ms", changeKind: "setting", model: "qwen3:30b", workId: null, startedAt: Date.now(), baseline: { values: [7000, 7100, 7200, 7300, 7400], count: 5, median: 7200, from: Date.now() - 60_000, to: Date.now() } });
       store.close();
       const state = await window.webContents.executeJavaScript(`(async()=>{
         await openConversation(${JSON.stringify(seeded.chat)});
@@ -69,14 +70,14 @@ app.on("browser-window-created", (_event, window) => {
         document.getElementById('objective-status').click();
         for(let i=0;i<100&&!document.querySelector('#view-tasks .tracking');i++)await new Promise(r=>setTimeout(r,30));
         const text=document.querySelector('#view-tasks .tracking')?.textContent||'';document.querySelector('#view-tasks .tracking')?.scrollIntoView({block:'center'});
-        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',metrics:document.querySelector('.task-performance')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
+        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',metrics:document.querySelector('.task-performance')?.textContent||'',experiments:document.querySelector('.task-experiments')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
       })()`);
       assert.match(tracking.text, /Routine daily monitoring/); assert.match(tracking.text, /Searched the web/);
-      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.match(tracking.metrics,/No measured samples/);
+      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);
       const drawer = await shot("appearance-task-tracking.png");
-      const settings = await window.webContents.executeJavaScript(`(async()=>{document.getElementById('objective-status').click();showView('settings');await new Promise(r=>setTimeout(r,200));return {appearance:!!document.getElementById('appearance-settings'),readiness:document.querySelector('.settings').textContent.includes('Keep loaded after last use')};})()`);
-      assert.deepEqual(settings, { appearance: true, readiness: true });
+      const settings = await window.webContents.executeJavaScript(`(async()=>{document.getElementById('objective-status').click();showView('settings');await new Promise(r=>setTimeout(r,200));return {appearance:!!document.getElementById('appearance-settings'),readiness:document.querySelector('.settings').textContent.includes('Keep loaded after last use'),advisors:document.querySelector('.settings').textContent.includes('Self-improvement advisors')&&document.querySelector('.settings').textContent.includes('Keep for my own use')};})()`);
+      assert.deepEqual(settings, { appearance: true, readiness: true, advisors: true });
       const settingsShot = await shot("appearance-settings.png");
       await window.webContents.executeJavaScript(`(async()=>{window.JunctionAppearance.apply(await window.junction.setAppearance({mode:'system',palette:'moss',artwork:'none'}));showView('chat');})()`);
       const moss = await shot("appearance-moss-clean.png");

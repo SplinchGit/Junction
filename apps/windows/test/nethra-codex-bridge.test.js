@@ -5,6 +5,8 @@ const {EventEmitter}=require('node:events');
 const {NethraTools}=require('../src/nethra-tools');
 const {sendCodexChat,getCodexStatus}=require('../src/codex-client');
 const {createCodeWorkProposer}=require('../src/nethra-code-work');
+// Tests never query the owner's real plan usage.
+const openLimits=()=>({check:async provider=>({provider,available:true,windows:[]}),invalidate(){},recordClaude(){}});
 
 test('Codex login status on stderr still confirms ChatGPT subscription access',async()=>{
   const run=async(_command,args)=>args[0]==='--version'?{stdout:'codex-cli test\n',stderr:''}:{stdout:'',stderr:'Logged in using ChatGPT\n'};
@@ -29,20 +31,22 @@ test('Codex subprocess gets EOF on stdin even when a prompt argument is supplied
 });
 
 test('an objective can inspect real host limits and Codex readiness without asking the owner for logs',async()=>{
-  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:4096})});
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({installed:true,ready:true,subscription:true,version:'codex-cli test'}),claudeStatus:async()=>({installed:true,ready:true,subscription:true,version:'2.1 (Claude Code)'}),advisorLimits:openLimits(),hostDiagnostics:()=>({model:'qwen3:30b',contextTokens:4096})});
   const names=tools.definitions({task:{allowCodeWork:true}}).map(item=>item.function.name);
   assert.ok(names.includes('host_diagnostics'));
   assert.ok(names.includes('consult_codex'));
   assert.ok(!tools.definitions({task:{allowCodeWork:false}}).some(item=>item.function.name==='consult_codex'));
   const result=await tools.execute('host_diagnostics',{}, {id:'self-improvement'});
   assert.equal(result.codex.ready,true);
+  assert.equal(result.claude.ready,true);
+  assert.equal(result.codex.liveLimits,'Advisors are not enabled for this objective');
   assert.equal(result.model.contextTokens,4096);
   assert.ok(!tools.definitions({child:true}).some(item=>item.function.name==='consult_codex'));
 });
 
 test('Codex consultation is bounded, read-only, and associated with the current objective',async()=>{
   const calls=[];
-  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({ready:true}),codexConsult:async input=>{calls.push(input);return {content:'Measure first-token latency, then compare warm and cold turns.',model:'Codex test'};}});
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})},codexStatus:async()=>({ready:true}),advisorLimits:openLimits(),codexConsult:async input=>{calls.push(input);return {content:'Measure first-token latency, then compare warm and cold turns.',model:'Codex test'};}});
   const task={id:'self-improvement',goal:'Self Improvement',successCriteria:'Improve speed and awareness',workspace:'C:/task-workspace',allowCodeWork:true};
   const result=await tools.execute('consult_codex',{question:'How should I measure response latency?'},task);
   assert.match(result.advice,/first-token latency/);
@@ -57,29 +61,26 @@ test('Codex consultation is bounded, read-only, and associated with the current 
   assert.equal(calls.length,1);
 });
 
-test('an unattended task can reserve at most three Codex consultations per UTC day',async()=>{
+test('a resting advisor refuses with its reset time and never starts the CLI',async()=>{
   const live={id:'self-improvement',status:'ACTIVE',allowCodeWork:true};
-  let calls=0;
-  const store={get:()=>live,update:(_id,patch)=>Object.assign(live,patch)};
-  const tools=new NethraTools({store,codexStatus:async()=>({ready:true}),codexConsult:async()=>{calls++;return {content:'Advice'};}});
-  for(let i=0;i<3;i++)await tools.execute('consult_codex',{question:`Pass ${i}`},live);
-  await assert.rejects(tools.execute('consult_codex',{question:'Pass 4'},live),/three Codex consultations/);
-  assert.equal(calls,3);
+  let calls=0;const resetsAt=Date.parse('2026-10-26T00:52:37Z');
+  const limits={check:async()=>({available:false,detail:`Usage is at or above the 90% the owner allows (five_hour 100%). Available again at ${new Date(resetsAt).toISOString()}.`,nextAvailableAt:resetsAt}),invalidate(){},recordClaude(){}};
+  const tools=new NethraTools({store:{get:()=>live},codexStatus:async()=>({ready:true}),advisorLimits:limits,codexConsult:async()=>{calls++;return {content:'Advice'};}});
+  await assert.rejects(tools.execute('consult_codex',{question:'Pass'},live),/Codex is resting.*2026-10-26T00:52:37\.000Z.*Schedule a wake/);
+  assert.equal(calls,0);
 });
 
-test('the persisted Codex allowance is shared across objectives',t=>{
+test('consultations are journaled per advisor with no fixed daily count',t=>{
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const {NethraStore}=require('../src/nethra-store');
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-codex-budget-'));
   const store=new NethraStore(directory);
   t.after(()=>{store.close();fs.rmSync(directory,{recursive:true,force:true});});
   const first=store.create({goal:'Improve responsiveness'}),second=store.create({goal:'Improve task awareness'});
-  store.reserveCodexConsult(first.id);
-  store.reserveCodexConsult(second.id);
-  store.reserveCodexConsult(first.id);
-  assert.throws(()=>store.reserveCodexConsult(second.id),/three Codex consultations/);
-  assert.equal(store.get(first.id).codexConsultCount,2);
-  assert.equal(store.get(second.id).codexConsultCount,1);
+  for(let i=0;i<5;i++)store.recordConsult(i%2?second.id:first.id,'codex');
+  assert.deepEqual(store.recordConsult(first.id,'claude'),{todayAcrossObjectives:1});
+  assert.deepEqual(store.recordConsult(second.id,'codex'),{todayAcrossObjectives:6});
+  assert.throws(()=>store.recordConsult(first.id,'other'),/Unknown advisor/);
 });
 
 test('only an opted-in objective can draft scoped Codex development work',async()=>{
