@@ -53,7 +53,12 @@ function postOutcome(task,store,localData,{settings=null,date=new Date()}={}){
   if(!REPORTABLE.has(task.status)||!task.conversationId||!localData.conversation(task.conversationId))return false;
   const policy=deliveryPolicy(settings,date);
   if(settings&&(policy.quiet||!policy.outcomes))return false;
-  const digest=createHash('sha256').update(`${task.status}\n${task.summary||''}`).digest('hex').slice(0,16);
+  // The journal entry that put the task in this state identifies the episode: retries of one
+  // outcome stay single, but the same question asked again later is a new message. Hashing only
+  // status and text silently suppressed a repeat question forever (live, 25 October).
+  let episode=task.revision;
+  try{episode=(store.recentTaskEvents?.(task.id,100)||[]).find(event=>event.detail?.status===task.status)?.seq??episode;}catch{}
+  const digest=createHash('sha256').update(`${task.status}\n${task.summary||''}\n${episode}`).digest('hex').slice(0,16);
   const messageId=`nethra-outcome-${task.id}-${digest}`.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,160);
   return localData.addMessageOnce(task.conversationId,messageId,'assistant',outcomeText(task,store),'JUNCTION').created;
 }

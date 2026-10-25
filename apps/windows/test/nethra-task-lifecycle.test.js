@@ -121,3 +121,18 @@ test('an ongoing task that works continuously posts its steps; a plain ongoing m
     assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),expected,`continuous=${continuous}`);
   }
 });
+
+test('the same question asked again later is posted again; a retry of one question is not',async t=>{
+  const {postOutcome}=require('../src/nethra-conversation-report');
+  const f=fixture(t),settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
+  const {task}=await f.api.dispatch('nethra.create',{goal:'Self Improvement',continuous:true},'q1','desktop');
+  const ask=()=>{const claim=f.store.claim('a');f.store.update(task.id,{status:'WAITING_FOR_USER',summary:'I could not choose a permitted next action.'},'nethra_direction_required',claim.token);f.store.release(task.id,claim.token);};
+  ask();
+  assert.equal(postOutcome(f.store.get(task.id),f.store,f.localData,{settings}),true);
+  assert.equal(postOutcome(f.store.get(task.id),f.store,f.localData,{settings}),false,'sweep retry stays single');
+  f.store.answer(task.id,'Read src/nethra-runner.js first',f.store.get(task.id).revision,'answer-1');
+  ask();
+  assert.equal(postOutcome(f.store.get(task.id),f.store,f.localData,{settings}),true,'a later identical question is a new message');
+  const posts=f.localData.conversation(f.store.get(task.id).conversationId).messages.filter(m=>/could not choose/.test(m.content));
+  assert.equal(posts.length,2);
+});
