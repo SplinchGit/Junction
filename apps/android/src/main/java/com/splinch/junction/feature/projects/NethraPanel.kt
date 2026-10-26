@@ -7,6 +7,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -42,18 +47,22 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var watchCalendar by rememberSaveable { mutableStateOf(false) }
     var watchGmail by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var quickEditId by rememberSaveable { mutableStateOf<String?>(null) }
+    var quickDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val taskScroll = rememberScrollState()
     var objectives by remember { mutableStateOf<List<Map<*, *>>>(emptyList()) }
     var settings by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
     var hostStatus by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
     var reunion by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
     var detail by remember { mutableStateOf<Map<*, *>?>(null) }
+    var detailError by remember { mutableStateOf("") }
+    var detailLoading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var connected by remember { mutableStateOf(false) }
     var lastSyncedAt by remember { mutableStateOf<Long?>(null) }
     var error by remember { mutableStateOf("") }
     var answer by rememberSaveable(selectedId) { mutableStateOf("") }
-    var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showHistory by rememberSaveable { mutableStateOf(true) }
     var showCreate by rememberSaveable { mutableStateOf(!initialGoal.isNullOrBlank()) }
     var showHostDetails by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(initialGoal) {
@@ -71,12 +80,25 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
         lastSyncedAt = ObjectiveStatusMonitor.lastSyncedAt.value
     }
 
+    suspend fun loadDetail(id: String) {
+        detailLoading = true
+        try {
+            val response = client.request("nethra.get", mapOf("id" to id))
+            if (selectedId == id) {
+                detail = response
+                detailError = ""
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            if (selectedId == id) detailError = failure.message ?: "Could not load this task's work log."
+        } finally { if (selectedId == id) detailLoading = false }
+    }
     suspend fun refresh(status: Boolean = false) {
+        selectedId?.let { loadDetail(it) }
         val response = client.request("nethra.list")
         objectives = maps(response["objectives"])
         ObjectiveStatusMonitor.publish(context, objectives)
         settings = response["settings"] as? Map<*, *> ?: emptyMap<String, Any?>()
-        selectedId?.let { detail = client.request("nethra.get", mapOf("id" to it)) }
         if (status) {
             hostStatus = client.request("nethra.status")
             reunion = client.request("nethra.reunion", mapOf("since" to System.currentTimeMillis() - 86_400_000L))
@@ -105,6 +127,22 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             } finally { busy = false }
         }
     }
+    fun openTaskChat(id: String) {
+        if (busy) return
+        scope.launch {
+            busy = true
+            try {
+                val result = client.request("nethra.openChat", mapOf("id" to id))
+                val taskConversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
+                val app = context.applicationContext as JunctionApplication
+                if (app.container.database.chatDao().getSessionById(taskConversationId) == null) app.container.pairedConversationSyncManager.syncNow()
+                check(app.container.database.chatDao().getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
+                onOpenChat(taskConversationId)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
+            finally { busy = false }
+        }
+    }
     LaunchedEffect(Unit) {
         // Signed PC device commands; failures stay silent here and retry next minute.
         while (true) {
@@ -115,12 +153,14 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     }
     LaunchedEffect(selectedId) {
         detail = null
+        detailError = ""
+        detailLoading = selectedId != null
         while (true) {
             var refreshFailed = false
             if (!busy) {
                 try { refresh(status = hostStatus.isEmpty()); error = "" }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { refreshFailed = true; connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "The paired Windows host is unavailable." }
+                catch (failure: Exception) { refreshFailed = true; connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "The paired Windows host is unavailable."; detailLoading = false; if (selectedId != null && detail == null) detailError = error }
             }
             delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) { if (selectedId != null) 3_000L else 60_000L } else 180_000L)
         }
@@ -221,6 +261,15 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
             val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
             val ended = withStatus.filter { it.second.ended }.take(5)
+            if (quickDeleteId != null) {
+                AlertDialog(
+                    onDismissRequest = { quickDeleteId = null },
+                    title = { Text("Delete this task?") },
+                    text = { Text("Its history and drafts are removed from the PC. Its chat is kept. This cannot be undone.") },
+                    confirmButton = { TextButton(onClick = { val id = quickDeleteId; quickDeleteId = null; if (id != null) perform("nethra.delete", mapOf("id" to id, "confirm" to true)) }) { Text("Delete") } },
+                    dismissButton = { TextButton(onClick = { quickDeleteId = null }) { Text("Keep it") } }
+                )
+            }
             if (selectedId == null) {
                 if (open.isEmpty()) Text("Nethra has no open tasks. Ask her in chat to look after something.")
                 (open + ended).forEach { (objective, status) ->
@@ -241,37 +290,44 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         val tracking = objective["tracking"] as? Map<*, *>
                         tracking?.get("doing")?.toString()?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2) }
                         ObjectiveStatus.stepLine(objective)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        if (!status.ended) Text(if (objective["continuous"] == true) "Continuous passes on" else "Continuous passes off", style = MaterialTheme.typography.labelSmall)
+                        val revision = (objective["revision"] as? Number)?.toLong() ?: -1L
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            if (!status.ended) {
+                                Text("Continuous", style = MaterialTheme.typography.labelSmall)
+                                Switch(checked = objective["continuous"] == true, modifier = Modifier.padding(start = 4.dp).height(32.dp), enabled = !busy && connected, onCheckedChange = { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "continuous" to it)) })
+                                Spacer(Modifier.weight(1f))
+                                IconButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to if (objective["status"] == "PAUSED") "resume" else "pause", "revision" to revision)) }) { Icon(if (objective["status"] == "PAUSED") Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (objective["status"] == "PAUSED") "Resume task" else "Pause task", modifier = Modifier.size(20.dp)) }
+                                IconButton(enabled = !busy, onClick = { quickEditId = id; selectedId = id }) { Icon(Icons.Default.Edit, contentDescription = "Edit task", modifier = Modifier.size(20.dp)) }
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                            IconButton(enabled = !busy && connected, onClick = { quickDeleteId = id }) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete task", modifier = Modifier.size(20.dp)) }
+                        }
                     }
                 }
             } else TextButton(onClick = { selectedId = null; detail = null }) { Text("← All tasks") }
             val task = detail?.get("task") as? Map<*, *>
-            if (selectedId != null && task == null) Text("Loading this task's work log…", style = MaterialTheme.typography.bodyMedium)
+            if (selectedId != null && task == null) {
+                val cached = objectives.firstOrNull { it["id"]?.toString() == selectedId }
+                cached?.get("goal")?.toString()?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+                if (detailError.isNotBlank()) {
+                    Text("Could not load the work log: $detailError", color = MaterialTheme.colorScheme.error)
+                    TextButton(enabled = !busy && !detailLoading, onClick = { selectedId?.let { id -> scope.launch { loadDetail(id) } } }) { Text("Retry work log") }
+                } else Text(if (detailLoading) "Loading this task's work log…" else "Work log is not available yet.", style = MaterialTheme.typography.bodyMedium)
+            }
             if (task != null && task["id"]?.toString() == selectedId) {
                 HorizontalDivider()
                 Text(task["goal"]?.toString().orEmpty(), style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(enabled = !busy && connected, onClick = {
-                    val id = task["id"]?.toString() ?: return@OutlinedButton
-                    scope.launch {
-                        busy = true
-                        try {
-                            val result = client.request("nethra.openChat", mapOf("id" to id))
-                            val taskConversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
-                            val app = context.applicationContext as JunctionApplication
-                            if (app.container.database.chatDao().getSessionById(taskConversationId) == null) app.container.pairedConversationSyncManager.syncNow()
-                            check(app.container.database.chatDao().getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
-                            onOpenChat(taskConversationId)
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
-                        finally { busy = false }
-                    }
-                }) { Text("Open task chat") }
+                OutlinedButton(enabled = !busy && connected, onClick = { task["id"]?.toString()?.let(::openTaskChat) }) { Text("Open task chat") }
                 Text("${task["status"]} · ${wakeLabel(task["nextWakeAt"])}")
                 task["nextDirectionCheckAt"]?.let { Text("Direction review: ${dateLabel(it)}") }
                 task["lastExecutionAt"]?.let { Text("Last run: ${dateLabel(it)}") }
                 task["lastMeaningfulProgressAt"]?.let { Text("Last verified progress: ${dateLabel(it)}") }
                 TaskTracking(detail?.get("progress") as? Map<*, *>, detail?.get("performance") as? Map<*, *>, task["mode"]?.toString())
                 task["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Nethra's note: $it", style = MaterialTheme.typography.bodySmall) }
+                NethraValues("Plan", task["plan"])
+                NethraValues("Completed steps", task["completedSteps"])
+                NethraValues("Pending steps", task["pendingSteps"])
                 val id = task["id"].toString()
                 val revision = (task["revision"] as? Number)?.toLong() ?: -1L
                 val terminal = task["status"] in setOf("COMPLETED", "CANCELLED", "FAILED")
@@ -280,20 +336,18 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 PolicyChoice("Priority", task["priority"]?.toString() ?: "3", (1..5).map { it.toString() to "$it · Priority" }, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "priority" to it.toInt())) }
                 PolicyChoice("Direction check-in", task["checkIn"]?.toString() ?: "WEEKLY", listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MILESTONES" to "At milestones or blockers", "MANUAL" to "Manual only"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "checkIn" to it)) }
                 var confirm by remember(id) { mutableStateOf<String?>(null) }
-                var editing by remember(id) { mutableStateOf(false) }
+                var editing by remember(id, quickEditId) { mutableStateOf(quickEditId == id) }
                 var editGoal by remember(id) { mutableStateOf(task["goal"]?.toString().orEmpty()) }
                 var editCriteria by remember(id) { mutableStateOf(task["successCriteria"]?.toString()?.takeIf { it != task["goal"]?.toString() }.orEmpty()) }
-                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     val status = task["status"]?.toString()
                     if (!terminal) {
-                        if (status == "PAUSED") OutlinedButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to "resume", "revision" to revision)) }) { Text("Resume") }
-                        else if (status !in setOf("WAITING_FOR_USER", "BLOCKED")) OutlinedButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to "pause", "revision" to revision)) }) { Text("Pause") }
-                        if (status == "SLEEPING") OutlinedButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to "wake", "revision" to revision)) }) { Text("Check now") }
-                        OutlinedButton(enabled = !busy && connected, onClick = { editing = !editing }) { Text("Edit") }
-                        OutlinedButton(enabled = !busy && connected, onClick = { confirm = "stop" }) { Text("Stop task") }
+                        IconButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to if (status == "PAUSED") "resume" else "pause", "revision" to revision)) }) { Icon(if (status == "PAUSED") Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = if (status == "PAUSED") "Resume task" else "Pause task", modifier = Modifier.size(20.dp)) }
+                        IconButton(enabled = !busy, onClick = { quickEditId = null; editing = !editing }) { Icon(Icons.Default.Edit, contentDescription = "Edit task", modifier = Modifier.size(20.dp)) }
+                        if (status == "SLEEPING") TextButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to "wake", "revision" to revision)) }) { Text("Check now") }
                     }
-                    OutlinedButton(enabled = !busy && connected, onClick = { confirm = "delete" }) { Text("Delete") }
+                    IconButton(enabled = !busy && connected, onClick = { confirm = "delete" }) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete task", modifier = Modifier.size(20.dp)) }
+                    if (!terminal) TextButton(enabled = !busy && connected, onClick = { confirm = "stop" }) { Text("Stop task") }
                 }
                 if (!terminal) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     androidx.compose.material3.Switch(checked = task["continuous"] == true, enabled = !busy && connected, onCheckedChange = { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "continuous" to it)) })
@@ -305,7 +359,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     OutlinedTextField(editGoal, { if (it.length <= 12_000) editGoal = it }, label = { Text("Goal") }, minLines = 2, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     OutlinedTextField(editCriteria, { if (it.length <= 4000) editCriteria = it }, label = { Text("What does done look like? (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     Text("Completed steps and evidence are kept; Nethra re-plans from the new wording.", style = MaterialTheme.typography.bodySmall)
-                    Button(enabled = !busy && connected && editGoal.isNotBlank(), onClick = { editing = false; perform("nethra.edit", mapOf("id" to id, "revision" to revision, "goal" to editGoal.trim(), "successCriteria" to editCriteria.trim())) }) { Text("Save changes") }
+                    Button(enabled = !busy && connected && editGoal.isNotBlank(), onClick = { editing = false; quickEditId = null; perform("nethra.edit", mapOf("id" to id, "revision" to revision, "goal" to editGoal.trim(), "successCriteria" to editCriteria.trim())) }) { Text("Save changes") }
                 }
                 confirm?.let { action ->
                     androidx.compose.material3.AlertDialog(
@@ -320,9 +374,6 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         dismissButton = { TextButton(onClick = { confirm = null }) { Text("Keep it") } }
                     )
                 }
-                NethraValues("Plan", task["plan"])
-                NethraValues("Completed steps", task["completedSteps"])
-                NethraValues("Pending steps", task["pendingSteps"])
                 NethraValues("Evidence", task["evidence"])
                 NethraValues("Attention", detail?.get("attention"))
                 NethraValues("Errors", task["errors"])

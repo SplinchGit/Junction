@@ -36,6 +36,19 @@ test('plain local folders are accepted without adding Git metadata to them',asyn
  const workspace=await executor.prepare({id:'folder',repoPath:folder,...inspected},{id:'task'},()=>{},new AbortController().signal);
  assert.equal(fs.existsSync(path.join(folder,'.git')),false);assert.equal(fs.readFileSync(path.join(workspace,'scene.txt'),'utf8'),'home\n');
 });
+
+test('transient npm cache and test output do not block a source folder snapshot',async t=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-cache-scope-')),state=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-cache-state-'));
+ t.after(()=>{fs.rmSync(folder,{recursive:true,force:true});fs.rmSync(state,{recursive:true,force:true});});
+ fs.writeFileSync(path.join(folder,'source.js'),'module.exports = 1;\n');
+ for(const dir of ['.npm-cache','test-results']){fs.mkdirSync(path.join(folder,dir));fs.writeFileSync(path.join(folder,dir,'generated.bin'),Buffer.alloc(33*1024*1024));}
+ const executor=new ForemanExecutor(state,{server:{stop:async()=>{}}});
+ const inspected=await executor.inspect({repoPath:folder});
+ const workspace=await executor.prepare({id:'cache',repoPath:folder,...inspected},{id:'task'},()=>{},new AbortController().signal);
+ assert.equal(fs.readFileSync(path.join(workspace,'source.js'),'utf8'),'module.exports = 1;\n');
+ assert.equal(fs.existsSync(path.join(workspace,'.npm-cache')),false);
+ assert.equal(fs.existsSync(path.join(workspace,'test-results')),false);
+});
 test('a verified folder candidate is promoted with an external rollback backup',async()=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-promote-'));fs.writeFileSync(path.join(folder,'scene.txt'),'before\n');const state=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-promote-state-'));
  const executor=new ForemanExecutor(state,{server:{stop:async()=>{}}}),inspected=await executor.inspect({repoPath:folder}),project={id:'p',repoPath:folder,...inspected};

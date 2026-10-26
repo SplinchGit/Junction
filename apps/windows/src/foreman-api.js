@@ -1,6 +1,6 @@
 "use strict";
 const crypto=require('node:crypto');
-function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',objective:p.objective.slice(0,1200),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
+function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,objective:p.objective.slice(0,1200),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman){this.foreman=foreman;}
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){
@@ -34,7 +34,7 @@ class ForemanApi{
    let release;f.operations.set(p.id,new Promise(resolve=>release=resolve));
    try {
     if(type==='task.review'){const r=await f.executor.review(p);if(r.patch.length>200000)throw new Error('Diff is too large for in-app approval; review manually');p.reviewed={headSha:r.headSha,diffHash:r.diffHash,sourceHash:r.sourceHash};f.save(p,'REVIEWED',r.summary);return {...p.reviewed,summary:r.summary,patch:r.patch};}
-    const r=await f.executor.applyReviewed(p);f.save(p,'APPLIED',r.summary);return r;
+    const r=await f.executor.applyReviewed(p);p.appliedAt=f.now();p.nextAction='Reviewed patch applied and staged; inspect and commit it';f.save(p,'APPLIED',r.summary);return r;
    }finally{f.operations.delete(p.id);release();}
   }
   throw new Error('Unsupported project operation');

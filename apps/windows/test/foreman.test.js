@@ -18,6 +18,25 @@ test('creation and reopen never dispatch; completed work and logs persist',async
  await f.control(p.id,'start',p.revision,'first');await f.idle();assert.equal(f.get(p.id).status,'COMPLETED');assert.equal(calls,1);f.close();
  f=new Foreman(dir,{executor:e});assert.equal(f.get(p.id).status,'COMPLETED');assert.equal(calls,1);assert.ok(f.events(p.id).length>=3);f.close();
 });
+
+test('a Nethra-originated verified candidate stays isolated until owner review and apply',async t=>{
+ const dir=fixture();
+ const promotions=[];
+ const e={...executor,promoteVerified:async project=>{promotions.push(project.id);return {backup:'unexpected-original-checkout-write'};}};
+ const f=new Foreman(dir,{executor:e});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1'});
+ assert.equal(draft.status,'DRAFT');
+ await f.control(draft.id,'start',draft.revision,'start-reviewed-proposal');await f.idle();
+ const finished=f.get(draft.id);
+ assert.equal(finished.status,'COMPLETED');
+ assert.equal(finished.verifiedSha,'def');
+ assert.equal(finished.lastBackup??null,null);
+ assert.match(finished.nextAction,/review.*apply/i);
+ assert.deepEqual(promotions,[]);
+ const ordinary=await f.create(input);
+ await f.control(ordinary.id,'start',ordinary.revision,'ordinary-start');await f.idle();
+ assert.deepEqual(promotions,[ordinary.id]);
+});
 test('pause during work fences late success; explicit resume required after reopen',async()=>{
  const dir=fixture();let finish;const f=new Foreman(dir,{executor:{...executor,run:()=>new Promise(r=>finish=r)}});const p=await f.create(input);
  await f.control(p.id,'start',p.revision,'s');await new Promise(r=>setImmediate(r));

@@ -96,7 +96,7 @@ class Foreman {
     let p=this.get(id);
     if(p.retryAt>this.now()){this.schedule(id,p.retryAt);return;}
     const task=p.tasks.find(t=>t.status!=='COMPLETED');
-    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction='Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
+    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sourceObjectiveId?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
     p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
     const attempt={id:crypto.randomUUID(),startedAt:this.now(),status:'RUNNING'};task.attempts.push(attempt);
     this.save(p,'ATTEMPT',`${task.kind}: ${task.title}`);
@@ -106,9 +106,11 @@ class Foreman {
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);
       if(!Array.isArray(result.tests)||!result.tests.length||result.tests.some(t=>t.exitCode!==0))throw new Error('Verification failed; candidate retained for inspection');
-      const promoted=await this.executor.promoteVerified?.(p,result);
+      // Nethra-originated work has a second owner gate: a verified candidate stays
+      // in the isolated checkout until the owner reviews and applies that exact patch.
+      const promoted=p.sourceObjectiveId?null:await this.executor.promoteVerified?.(p,result);
       t.status='COMPLETED';Object.assign(t.attempts.at(-1),result,{status:'COMPLETED',finishedAt:this.now(),promoted});
-      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction='Next owner instruction';this.save(p,'VERIFIED',p.handoff);
+      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sourceObjectiveId?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
     }catch(error){
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});

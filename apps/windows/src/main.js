@@ -62,7 +62,7 @@ function situationFor({ surface, conversationId = null, session = null }) {
     const objectives = nethraStore.list(), liveTaskId = nethraStore.liveTaskId();
     const mine = objectives.filter(task => conversationId && task.conversationId === conversationId);
     const linkedTask = mine.find(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)) || mine[0] || null;
-    const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
+    const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, allowCodeWork: linkedTask.allowCodeWork === true, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
     const pendingApprovals = objectives.filter(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)).reduce((count, task) => count + nethraStore.approvals(task.id).filter(item => item.status === 'PENDING').length, 0);
     return situationContext({ surface, objectives, linked, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
   } catch (error) { recordStartupIssue('situation context', error); return ''; }

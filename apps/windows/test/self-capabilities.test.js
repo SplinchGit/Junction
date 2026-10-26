@@ -32,3 +32,11 @@ test('missing scheduling tools are not advertised as available', async () => {
   assert.match(result.content, /not available/i);
   assert.doesNotMatch(result.content, /I can create/);
 });
+
+test('coding capability answer describes objective proposal and owner gates', async () => {
+  const runtime = new LocalAgentRuntime({toolRegistry:{definitions:()=>['start_objective','delegate_to_codex'].map(name=>({type:'function',function:{name}})),execute:async()=>{throw Error('unexpected');},audit:()=>{}},fetchImpl:async()=>{throw Error('unexpected');}});
+  const result=await runtime.runNow({goal:'Can you implement code?',model:'test'});
+  assert.match(result.content,/propose_code_work/);
+  assert.match(result.content,/Codex.*review/i);
+  assert.match(result.content,/owner.*start.*review.*apply/i);
+});

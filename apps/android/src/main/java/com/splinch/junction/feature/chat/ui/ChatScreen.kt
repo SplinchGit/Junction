@@ -15,6 +15,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +77,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -121,7 +123,9 @@ import com.splinch.junction.feature.projects.NethraPanel
 import com.splinch.junction.feature.voice.ui.BluetoothThrower
 import com.splinch.junction.ui.component.JunctionTextField
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -162,12 +166,27 @@ fun ChatScreen(
     val taskList by ObjectiveStatusMonitor.objectives.collectAsState()
     val currentSessionId by chatManager.sessionId.collectAsState()
     val linkedTasks = ObjectiveStatus.forConversation(taskList, currentSessionId)
+    val linkedTaskId = linkedTasks.firstOrNull()?.get("id")?.toString()
+    var taskActions by remember(linkedTaskId) { mutableStateOf<List<Map<*, *>>>(emptyList()) }
     val taskHostConnected by ObjectiveStatusMonitor.connected.collectAsState()
     var objectiveFocusId by remember { mutableStateOf<String?>(null) }
     var objectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    LaunchedEffect(linkedTaskId) {
+        if (linkedTaskId == null) return@LaunchedEffect
+        val taskClient = NethraClient(context)
+        while (true) {
+            try {
+                val result = taskClient.request("nethra.get", mapOf("id" to linkedTaskId))
+                val progress = result["progress"] as? Map<*, *>
+                taskActions = (progress?.get("activity") as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the last recorded actions while the PC is offline. */ }
+            delay(5_000)
+        }
+    }
     val prefs = remember(context) { UserPrefsRepository(context) }
     val verbose by prefs.chatVerboseFlow.collectAsState(initial = true)
     val appearance by prefs.appearanceFlow.collectAsState(initial = com.splinch.junction.data.preference.AppearancePrefs())
@@ -465,7 +484,19 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message, verbose)
+                    MessageBubble(message, verbose, taskLayout = linkedTasks.isNotEmpty())
+                }
+                if (linkedTaskId != null && taskActions.isNotEmpty()) {
+                    item(key = "task-actions-$linkedTaskId") {
+                        OutlinedCard(shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Recorded task actions", style = MaterialTheme.typography.titleSmall)
+                                taskActions.take(10).forEach { action ->
+                                    Text("${action["line"] ?: "Action recorded"} · ${action["actor"] ?: "Junction"}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
                 }
                 streaming?.let { active ->
                     item(key = active.itemId) {
@@ -476,7 +507,8 @@ fun ChatScreen(
                                 sender = Sender.ASSISTANT,
                                 content = active.content
                             ),
-                            verbose = verbose
+                            verbose = verbose,
+                            taskLayout = linkedTasks.isNotEmpty()
                         )
                     }
                 }
@@ -1081,7 +1113,7 @@ private fun PlanStepRow(step: Step, showResolvedPayload: Boolean) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, verbose: Boolean = true) {
+private fun MessageBubble(message: ChatMessage, verbose: Boolean = true, taskLayout: Boolean = false) {
     val isUser = message.sender == Sender.USER
     val bubbleColor = when (message.sender) {
         Sender.USER -> MaterialTheme.colorScheme.primaryContainer
@@ -1092,14 +1124,14 @@ private fun MessageBubble(message: ChatMessage, verbose: Boolean = true) {
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+        horizontalArrangement = if (isUser && !taskLayout) Arrangement.End else Arrangement.Start
     ) {
         Column(
             modifier = Modifier
-                .sizeIn(maxWidth = 280.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(bubbleColor)
-                .padding(12.dp)
+                .then(if (taskLayout) Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp)) else Modifier.sizeIn(maxWidth = 280.dp))
+                .clip(RoundedCornerShape(if (taskLayout) 4.dp else 12.dp))
+                .background(if (taskLayout && !isUser) MaterialTheme.colorScheme.surface else bubbleColor)
+                .padding(if (taskLayout) 16.dp else 12.dp)
         ) {
             if (message.sender == Sender.ASSISTANT && !message.modelLabel.isNullOrBlank()) {
                 Text(

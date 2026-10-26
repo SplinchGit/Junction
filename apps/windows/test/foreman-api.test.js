@@ -38,5 +38,17 @@ test('shutdown drains an authorized apply before storage closes',async()=>{
  const executor={inspect:async()=>({}),applyReviewed:()=>new Promise(resolve=>release=()=>resolve({summary:'applied'})),stop:async()=>{}};
  const f=new Foreman(dir,{executor}),api=new ForemanApi(f);const p=await f.create({name:'Apply',objective:'Apply reviewed work',repoPath:'demo',tasks:[{title:'Task',acceptance:'Pass'}]});
  const apply=api.dispatch('task.apply',{id:p.id,revision:p.revision});let quitFinished=false;const quitting=f.shutdown().then(()=>quitFinished=true);
- await new Promise(resolve=>setImmediate(resolve));assert.equal(quitFinished,false);release();await apply;await quitting;assert.equal(f.events(p.id).at(-1).kind,'APPLIED');f.close();
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(quitFinished,false);release();await apply;await quitting;assert.equal(f.events(p.id).at(-1).kind,'APPLIED');assert.ok(Number.isSafeInteger(f.get(p.id).appliedAt));f.close();
+});
+
+test('Work Activity detail identifies a Nethra draft and its exact reviewed candidate',async()=>{
+ const f=new Foreman(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-nethra-detail-')),{executor:{inspect:async()=>({})}}),api=new ForemanApi(f);
+ const draft=await f.create({name:'Nethra review',objective:'Reviewed proposal',repoPath:'demo',sourceObjectiveId:'objective-1',tasks:[{title:'Improve token counts',acceptance:'Measured counts'}]});
+ let detail=(await api.dispatch('project.get',{id:draft.id})).project;
+ assert.equal(detail.sourceObjectiveId,'objective-1');
+ assert.equal(detail.status,'DRAFT');
+ const live=f.get(draft.id);live.verifiedSha='candidate-1';live.reviewed={headSha:'candidate-1',diffHash:'exact-diff'};f.save(live,'VERIFIED','Ready for review');
+ detail=(await api.dispatch('project.get',{id:draft.id})).project;
+ assert.deepEqual(detail.reviewed,{headSha:'candidate-1',diffHash:'exact-diff'});
+ f.close();
 });

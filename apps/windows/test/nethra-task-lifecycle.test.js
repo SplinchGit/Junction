@@ -30,6 +30,18 @@ test('a continuous task keeps working step after step while it makes progress',a
   saved=f.store.get(task.id);assert.equal(saved.nextWakeAt,f.now()+300_000);
 });
 
+test('a productive continuous pass keeps the next step near even when the model schedules later',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Research and compare options',continuous:true});
+  const scheduler=new NethraScheduler({store:f.store,now:f.now,execute:async(_task,{checkpoint,token})=>{
+    checkpoint({plan:['Research','Compare'],completedSteps:['Research'],pendingSteps:['Compare'],evidence:[{tool:'web_search',result:{title:'Verified source'}}]});
+    return {status:'SLEEPING',nextWakeAt:f.now()+86_400_000,wakeReason:{kind:'SCHEDULED',detail:'Check tomorrow',at:f.now()+86_400_000}};
+  }});
+  await scheduler.tick();
+  const saved=f.store.get(task.id);
+  assert.equal(saved.nextWakeAt,f.now()+CONTINUOUS_GAP_MS);
+  assert.equal(saved.wakeReason.kind,'CONTINUE');
+});
+
 test('switching continuous work on wakes a sleeping task; off keeps normal pacing',t=>{
   const f=fixture(t),task=f.store.create({goal:'Draft a packing list'});
   f.store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+86_400_000},'SETUP');
@@ -136,6 +148,7 @@ test('a productive cycle posts what was actually done to the task chat, once',as
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'idempotent');
   const message=f.localData.conversation(task.conversationId).messages.at(-1).content;
   assert.match(message,/Searched the web for “standing desk reviews”/);assert.match(message,/1 of 2 steps done/);assert.match(message,/Next: Compare prices/);assert.match(message,/Continuing now/);assert.match(message,/My note: Two strong options/);
+  assert.match(message,/Recorded actions:/);assert.match(message,/• Searched the web for “standing desk reviews”/);
   f.store.update(task.id,{lastCycleProgressed:false},'EXECUTED');
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'no progress, no post');
 });

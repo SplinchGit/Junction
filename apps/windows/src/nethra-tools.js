@@ -35,8 +35,8 @@ const definitions = [
   ['performance_report','Full seven-day timing report for local chat and this objective\'s model calls. A summary is already in your seed as hostFacts each wake; a snapshot never proves an improvement.',{}],
   ['consult_codex','Ask the locally signed-in Codex tutor one focused question. Read-only advice: it cannot change files or start a coding job. Allowed while the owner\'s live Codex usage is below their reserve; if not, the error says when it resets.',{question:str(1200)}],
   ['consult_claude','Ask the locally signed-in Claude advisor one focused question. Read-only advice with no tools. Allowed while the owner\'s live Claude usage is below their reserve; if not, the error says when it resets.',{question:str(1200)}],
-  ['experiment','Measure whether a change helped. start freezes a baseline of metric; mark_change records when the change was applied (code changes count from the next Junction start); evaluate compares samples since then. Only evaluate verdicts may be reported as improvements.',{action:{type:'string',enum:['start','mark_change','evaluate']},id:{...str(64),optional:true},metric:{type:'string',enum:Object.keys(METRICS),optional:true},hypothesis:{...str(500),optional:true},changeKind:{type:'string',enum:['code','setting','other'],optional:true},workId:{...str(64),optional:true},note:{...str(500),optional:true}}],
-  ['propose_code_work','Prepare one scoped Junction development draft in Work Activity. Works even while Codex is resting: Codex only runs when the owner starts the draft, and main-checkout changes still require review.',{task:str(1000),acceptance:str(1000)}],
+  ['experiment','List saved experiments and IDs before starting another. start freezes a baseline; mark_change records an applied change; evaluate compares samples; abandon closes an unused baseline with a reason but proves no improvement.',{action:{type:'string',enum:['list','start','mark_change','evaluate','abandon']},id:{...str(64),optional:true},metric:{type:'string',enum:Object.keys(METRICS),optional:true},hypothesis:{...str(500),optional:true},changeKind:{type:'string',enum:['code','setting','other'],optional:true},workId:{...str(64),optional:true},note:{...str(500),optional:true}}],
+  ['propose_code_work','Ask Codex to review this exact proposal read-only, then save a scoped draft in Work Activity. The owner must start implementation and later review and apply the verified patch.',{task:str(1000),acceptance:str(1000)}],
   ['delegate_task','Run a bounded sequential child of this same model. Review its evidence before acting.',{task:str(1500)}]
 ].map(([name,description,properties])=>({type:'function',function:{name,description,parameters:{type:'object',additionalProperties:false,required:Object.keys(properties).filter(k=>!properties[k].optional),properties:Object.fromEntries(Object.entries(properties).map(([k,v])=>{const {optional,...schema}=v;return [k,schema];}))}}}));
 // Deliberately small validator for this closed schema vocabulary; fail closed.
@@ -152,18 +152,23 @@ class NethraTools {
     if(name==='experiment'){
       if(!this.localData||!task.allowCodeWork)throw Error('Measured experiments are not enabled for this objective');
       const view=item=>({id:item.id,metric:item.metric,hypothesis:item.hypothesis,changeKind:item.changeKind,status:item.status,baseline:{count:item.baseline.count,median:item.baseline.median},changeAt:item.changeAt,changeActor:item.changeActor,result:item.result});
+      if(args.action==='list')return (this.store.experiments?.(task.id)||[]).slice(0,30).map(view);
       if(args.action==='start'){
         if(!args.metric||!args.hypothesis)throw Error('start needs metric and hypothesis');
         return view(startExperiment({store:this.store,localData:this.localData,task,args,now:this.store.now?.()??Date.now(),token}));
       }
       if(!args.id){const open=(this.store.experiments?.(task.id)||[]).filter(item=>item.status!=='CONCLUDED').map(item=>`${item.id} (${item.metric})`);throw Error(`${args.action} needs id. Open experiments: ${open.join(', ')||'none'}`);}
+      if(args.action==='abandon')return view(this.store.abandonExperiment(task.id,args.id,args.note,token));
       if(args.action==='mark_change')return view(this.store.markExperimentChange(task.id,args.id,{note:args.note,actor:'Nethra'},token));
       return view(evaluateExperiment({store:this.store,localData:this.localData,task,experiment:this.store.experiment(task.id,args.id),workStatus:this.workStatus,now:this.store.now?.()??Date.now()}));
     }
     if(name==='propose_code_work'){
       if(!task.allowCodeWork||!this.proposeCodeWork)throw Error('Codex development work is not enabled for this objective');
-      const work=await withSignal(this.proposeCodeWork({objective:task,description:args.task,acceptance:args.acceptance}),signal);
-      return {workId:work.id,status:work.status,note:'Draft saved in Work Activity. Ask the owner to start it; Codex has not run yet, and main-checkout changes still require review.'};
+      const question=`Review this exact Junction code proposal for scope, risks and testability. Do not implement. Task: ${args.task.slice(0,400)} Acceptance: ${args.acceptance.slice(0,400)}`;
+      const review=await this.execute('consult_codex',{question},task,{signal,token});
+      if(!review.advice?.trim())throw Error('Codex returned no review; the code draft was not created');
+      const work=await withSignal(this.proposeCodeWork({objective:task,description:args.task,acceptance:args.acceptance,review}),signal);
+      return {workId:work.id,status:work.status,reviewedBy:review.model,note:'Codex reviewed this proposal. Draft saved in Work Activity. The owner must start implementation, then review and apply the exact verified patch.'};
     }
     if(name==='web_search'){
       if(!this.research)throw Error('Web research is unavailable');

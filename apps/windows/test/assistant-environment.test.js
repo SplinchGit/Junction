@@ -1,7 +1,16 @@
 "use strict";
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {environmentContext,workSnapshot}=require('../src/assistant-environment');
+const {environmentContext,workSnapshot,situationContext}=require('../src/assistant-environment');
+
+test('linked objective explains the reviewed code path without claiming chat can code',()=>{
+  const context=situationContext({linked:{goal:'Improve Junction',status:'RUNNING',allowCodeWork:true},capabilities:['start_objective']});
+  assert.match(context,/propose_code_work/);
+  assert.match(context,/Codex reviews/);
+  assert.match(context,/owner.*start.*review.*apply/i);
+  const disabled=situationContext({linked:{goal:'Improve Junction',status:'RUNNING',allowCodeWork:false}});
+  assert.doesNotMatch(disabled,/propose_code_work/);
+});
 
 test('phone deployment describes actual local tools without inventing phone access',()=>{
   const context=environmentContext({surface:'android-lan',model:'qwen3:14b',capabilities:['web_search']});

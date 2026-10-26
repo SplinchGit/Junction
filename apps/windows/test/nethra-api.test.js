@@ -68,6 +68,9 @@ test('Windows and Android share durable autonomy, priority, check-in and attenti
   assert.equal((await api.dispatch('nethra.list')).objectives[0].checkIn,'MILESTONES');
   const detail=await api.dispatch('nethra.get',{id:task.id},'get','android');
   assert.equal(detail.task.priority,2);
+  assert.equal(detail.task.continuous,false);
+  await api.dispatch('nethra.configure',{id:task.id,revision:changed.task.revision,continuous:true},'continuous','android');
+  assert.equal((await api.dispatch('nethra.get',{id:task.id},'continuous-detail','android')).task.continuous,true);
   assert.ok(Array.isArray(detail.attention));
   await assert.rejects(api.dispatch('nethra.configure',{id:task.id,revision:task.revision,autonomy:'UNBOUNDED'},'bad','android'),/autonomy/i);
 });

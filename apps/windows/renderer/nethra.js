@@ -80,24 +80,31 @@
  const stateOf=row=>row.live?'working':['WAITING_FOR_USER','BLOCKED'].includes(row.status)||needsOwner(row.tracking?.waitingFor?.kind)?'needs':row.status==='PAUSED'?'paused':row.status==='COMPLETED'?'done':['FAILED','CANCELLED'].includes(row.status)?'ended':row.status==='SLEEPING'?'sleeping':'queued';
  const stateLabel=row=>({working:'Working now',needs:'Needs you',paused:'Paused',done:'Done',ended:row.status==='CANCELLED'?'Stopped':'Failed',sleeping:row.tracking?.waitingFor?.kind==='budget'?'Daily limit reached':row.continuous&&row.tracking?.wake?.kind==='CONTINUE'?'Continuing shortly':row.mode==='ONGOING'?'Monitoring':'Sleeping',queued:row.continuous?'Queued for next pass':'Queued'})[stateOf(row)];
  async function refresh(){if(loading){refreshAgain=true;return;}loading=true;try{
-   const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;updateObjectiveStatus(result.objectives);updateStrip();
+   const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;window.junctionTaskByChat=new Map(result.objectives.filter(row=>row.conversationId).map(row=>[row.conversationId,row.id]));window.junctionTaskChats=new Set(window.junctionTaskByChat.keys());document.getElementById('messages')?.classList.toggle('task-chat',window.junctionTaskChats.has(activeConversationId));updateObjectiveStatus(result.objectives);updateStrip();
    const answerDrafts=new Map([...document.querySelectorAll('#view-tasks article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
    list.replaceChildren();detailPane.replaceChildren(Object.assign(el('p','Select a task to see what Nethra is doing, what it needs from you, and its controls.'),{className:'task-line'}));const activeRows=result.objectives.filter(visible);if(!activeRows.length)list.append(el('p','No active tasks. Start one from the chat draft.'));
    const recentEnded=result.objectives.filter(row=>!visible(row)).slice(0,5);
    const rows=[...activeRows,...recentEnded];if((selectedId===null||(selectedId&&!rows.some(row=>row.id===selectedId)))&&activeRows.length)selectedId=activeRows[0].id;
+   const openTaskChat=async row=>{const opened=await api('nethra.openChat',{id:row.id});await openConversation(opened.conversationId);setDrawerOpen(false);showView('chat');};
    for(const row of rows){
      if(row===recentEnded[0])list.append(el('h3','Recent work'));
      const card=el('article');card.className='task-card';card.dataset.objectiveId=row.id;card.dataset.state=stateOf(row);
      const head=el('div');head.className='task-head';
      const chip=el('span',stateLabel(row));chip.className='task-chip';
-     const title=el('button',row.goal);title.type='button';title.className='task-index-row task-title';title.setAttribute('aria-expanded',String(selectedId===row.id));title.onclick=()=>{selectedId=selectedId===row.id?'':row.id;refresh();};
-     const chat=button(row.conversationId?'Open chat':'Create chat',async()=>{const result=await api('nethra.openChat',{id:row.id});await openConversation(result.conversationId);setDrawerOpen(false);});chat.className='task-link';
-     head.append(chip,title,chat);card.append(head);
+     const title=button(row.goal,()=>openTaskChat(row));title.className='task-index-row task-title';title.title='Open task chat';
+     const inspect=el('button','Details');inspect.type='button';inspect.className='task-link';inspect.onclick=()=>{selectedId=row.id;refresh();};
+     head.append(chip,title,inspect);card.append(head);
+     card.onclick=event=>{if(event.target.closest('button,label,input,textarea,select'))return;perform(()=>openTaskChat(row));};
      const line=row.tracking?((needsOwner(row.tracking.waitingFor?.kind)?`Needs you: ${row.tracking.waitingFor.detail||''}`:row.tracking.waitingFor?.kind==='budget'?row.tracking.waitingFor.detail:row.tracking.doing)||''):(row.step||'');
      if(line)card.append(Object.assign(el('p',line),{className:'task-line'}));
      if(row.progress?.total){const count=el('p',`${row.progress.done} of ${row.progress.total} steps ${row.mode==='ONGOING'?'this cycle':'done'}`);count.className='task-card-progress';const bar=el('progress');bar.max=row.progress.total;bar.value=row.progress.done;bar.setAttribute('aria-label','Completed task steps');card.append(bar,count);}
-     // A visible continuous switch on every open task.
-     if(!['COMPLETED','CANCELLED','FAILED'].includes(row.status)){const quick=checkbox(' Continuous passes',row.continuous===true);quick.label.className='task-toggle task-quick';quick.label.title='Continue useful plan steps in short passes';quick.input.onchange=()=>perform(()=>api('nethra.configure',{id:row.id,revision:row.revision,continuous:quick.input.checked}));card.append(quick.label);}
+     const quickActions=el('div');quickActions.className='task-actions task-card-actions';
+     if(!['COMPLETED','CANCELLED','FAILED'].includes(row.status)){
+       const quick=checkbox(' Continuous',row.continuous===true);quick.label.className='task-toggle task-quick';quick.label.title='Continue useful plan steps in short passes';quick.input.onchange=()=>perform(()=>api('nethra.configure',{id:row.id,revision:row.revision,continuous:quick.input.checked}));quickActions.append(quick.label);
+       quickActions.append(button(row.status==='PAUSED'?'Resume':'Pause',()=>api('nethra.control',{id:row.id,action:row.status==='PAUSED'?'resume':'pause',revision:row.revision})));
+       const quickEdit=el('button','Edit');quickEdit.type='button';quickEdit.onclick=async()=>{selectedId=row.id;await refresh();const editor=detailPane.querySelector('.task-editor');if(editor){editor.hidden=false;editor.querySelector('textarea')?.focus();}};quickActions.append(quickEdit);
+     }
+     const quickDelete=button('Delete',async()=>{if(!window.confirm('Delete this task, its history and drafts? Its chat is kept. This cannot be undone.'))return;await api('nethra.delete',{id:row.id,confirm:true});if(selectedId===row.id)selectedId=null;});quickDelete.className='danger';quickActions.append(quickDelete);card.append(quickActions);
      list.append(card);
      if(selectedId!==row.id)continue;
      card.classList.add('selected');const detailCard=el('article');detailCard.className='task-detail';detailCard.dataset.objectiveId=row.id;

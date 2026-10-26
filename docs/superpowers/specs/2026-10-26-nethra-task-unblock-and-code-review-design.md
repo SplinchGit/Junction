@@ -1,0 +1,9 @@
+# Nethra task continuation and code review
+
+Nethra should keep working through a task without asking the owner for facts already in Junction. In the live Self Improvement objective, three baseline experiments were open, but the runner did not receive their IDs. It tried to start a fourth, then stopped to ask for an ID. A code proposal separately failed because the Work Activity folder snapshot included a large local npm cache file.
+
+The task runner will receive a bounded list of its own open experiments at each pass and expose a read-only list action within a pass. It may abandon an unused baseline with a recorded reason; this is not an improvement verdict. If it nevertheless asks for an experiment ID already present, the tool will return the available IDs to the model and keep the pass running. Existing explicit owner decisions remain waiting states.
+
+Nethra may prepare a scoped code proposal. The proposal goes to Codex for read-only review and is saved as a Work Activity draft with that review. The owner must explicitly start the draft before Codex implements in an isolated checkout. For work originating from Nethra, verified code stays in that checkout until the owner reviews the exact patch and explicitly applies it. Ordinary read-only task work continues without a coding approval. The previously deferred THINKING_BUDGET.complex change stays deferred unless the owner changes direction.
+
+Work Activity will show Start, Review patch, and Apply reviewed patch controls for this path. The folder snapshot excludes transient npm cache and test output while preserving source, tests, and package files. Tests will cover the live experiment trap, proposal preflight, snapshot bounds, and the no-auto-promotion rule. Existing uncommitted Claude UI changes will be preserved and verified together with these repairs.

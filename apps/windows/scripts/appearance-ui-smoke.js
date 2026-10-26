@@ -76,13 +76,20 @@ app.on("browser-window-created", (_event, window) => {
       assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);
       const drawer = await shot("appearance-task-tracking.png");
+      const taskChat = await window.webContents.executeJavaScript(`(async()=>{
+        document.querySelector('.task-card .task-title').click();
+        for(let i=0;i<100&&!document.querySelector('.task-chat-activity');i++)await new Promise(r=>setTimeout(r,30));
+        return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),emptyHome:!!document.querySelector('#messages .chat-home'),actions:document.querySelector('.task-chat-activity')?.textContent||'',controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
+      })()`);
+      assert.equal(taskChat.visible,true);assert.equal(taskChat.boxed,true);assert.equal(taskChat.emptyHome,false);assert.match(taskChat.actions,/Searched the web/);assert.deepEqual(taskChat.controls,['Pause','Edit','Delete']);
+      const taskChatShot = await shot("appearance-task-chat.png");
       const settings = await window.webContents.executeJavaScript(`(async()=>{document.getElementById('objective-status').click();showView('settings');await new Promise(r=>setTimeout(r,200));return {appearance:!!document.getElementById('appearance-settings'),readiness:document.querySelector('.settings').textContent.includes('Keep loaded after last use'),advisors:document.querySelector('.settings').textContent.includes('Self-improvement advisors')&&document.querySelector('.settings').textContent.includes('Keep for my own use')};})()`);
       assert.deepEqual(settings, { appearance: true, readiness: true, advisors: true });
       const settingsShot = await shot("appearance-settings.png");
       await window.webContents.executeJavaScript(`(async()=>{window.JunctionAppearance.apply(await window.junction.setAppearance({mode:'system',palette:'moss',artwork:'none'}));showView('chat');})()`);
       const moss = await shot("appearance-moss-clean.png");
       assert.deepEqual(errors, [], "Renderer errors");
-      console.log(JSON.stringify({ passed: true, state, reduced, persisted, tracking: { ...tracking, text: tracking.text.slice(0, 200) }, screenshots: [chatDark, chatLight, drawer, settingsShot, moss] }));
+      console.log(JSON.stringify({ passed: true, state, reduced, persisted, tracking: { ...tracking, text: tracking.text.slice(0, 200) }, screenshots: [chatDark, chatLight, drawer, taskChatShot, settingsShot, moss] }));
       clearTimeout(deadline); app.exit(0);
     } catch (error) { console.error(error.stack); console.error(JSON.stringify(errors)); clearTimeout(deadline); app.exit(1); }
   });

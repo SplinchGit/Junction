@@ -29,6 +29,14 @@ test('the rank test separates clearly different timings and not identical ones',
   assert.ok(mannWhitneyP([7000,7100,6900,7050,6950],[7020,6980,7080,6920,7010])>0.3);
 });
 
+test('abandoning an unused baseline appears in task progress',async t=>{
+  const h=harness(t);
+  for(const ms of [7000,7100,7200,7300,7400])h.chat(ms);
+  const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Unused baseline'});
+  await h.run({action:'abandon',id:started.id,note:'No implementation is approved'});
+  assert.match(progressView(h.store.get(h.task.id),h.store).activity.map(item=>item.line).join(' '),/Abandoned.*baseline/i);
+});
+
 test('a speedup is only reported after a frozen baseline, a recorded change and enough new samples',async t=>{
   const h=harness(t);
   for(const ms of [7100,7400]) h.chat(ms);
@@ -107,4 +115,20 @@ test('chat experiments compare the same model, experiments need self-improvement
   h.store.control(h.task.id,'cancel',h.store.get(h.task.id).revision,'cancel-1');
   h.store.remove(h.task.id,'remove-1');
   assert.deepEqual(h.store.experiments(h.task.id),[]);
+});
+
+test('Nethra can inspect and abandon its own unused baselines without claiming a result',async t=>{
+  const h=harness(t);
+  for(const ms of [7000,7100,7200,7300,7400])h.chat(ms);
+  const ids=[];
+  for(let i=0;i<3;i++)ids.push((await h.run({action:'start',metric:'chat_response_ms',hypothesis:`Candidate ${i}`})).id);
+  const listed=await h.run({action:'list'});
+  assert.deepEqual(listed.filter(item=>item.status==='BASELINE').map(item=>item.id),ids.slice().reverse());
+  await assert.rejects(h.run({action:'start',metric:'chat_response_ms',hypothesis:'Fourth candidate'}),/three open experiments/);
+  const abandoned=await h.run({action:'abandon',id:ids[0],note:'Owner deferred this change'});
+  assert.equal(abandoned.status,'CONCLUDED');
+  assert.equal(abandoned.result.verdict,'ABANDONED');
+  assert.equal(h.store.events(h.task.id).at(-1).kind,'EXPERIMENT_ABANDONED');
+  assert.equal((await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Fourth candidate'})).status,'BASELINE');
+  await assert.rejects(h.run({action:'abandon',id:ids[1],note:''}),/note/);
 });

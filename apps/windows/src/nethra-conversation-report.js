@@ -79,6 +79,9 @@ function postProgress(task,store,localData,{settings=null,date=new Date(),liveTa
   if(!view.lastAccomplished)return false;
   const clock=at=>new Date(at).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
   const lines=[`Progress on "${String(task.goal||'').slice(0,120)}": ${view.lastAccomplished.line}.`];
+  const passStart=view.activity.findIndex(item=>item.event==='CLAIMED');
+  const actions=(passStart<0?view.activity:view.activity.slice(0,passStart)).filter(item=>['verified','advice','error'].includes(item.kind)).slice(0,4).reverse();
+  if(actions.length)lines.push('Recorded actions:',...actions.map(item=>`• ${item.line} — ${item.actor}`));
   if(view.counts.total)lines.push(`${view.counts.done} of ${view.counts.total} steps done.`);
   if(view.next)lines.push(`Next: ${view.next}.`);
   if(view.wake)lines.push(view.wake.kind==='CONTINUE'&&task.continuous?'Continuing now.':`Next run ${clock(view.wake.at)}: ${view.wake.reason}.`);

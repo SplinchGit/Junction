@@ -207,6 +207,16 @@ class NethraStore {
     if(conclude)this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_CONCLUDED',JSON.stringify({id,result}));
     return experiment;
   });}
+  abandonExperiment(taskId,id,note,token) {return this.transaction(()=>{
+    this.assertRunnable(taskId,token);
+    if(typeof note!=='string'||!note.trim()||note.length>500)throw new Error('A reason is required to abandon an experiment');
+    const experiment=this.experiment(taskId,id);
+    if(experiment.status!=='BASELINE')throw new Error('Only an unused baseline can be abandoned');
+    experiment.status='CONCLUDED';experiment.result={verdict:'ABANDONED',detail:note.trim(),evaluatedAt:this.now()};
+    this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_ABANDONED',JSON.stringify({id,reason:note.trim()}));
+    return experiment;
+  });}
   update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   control(id,action,revision,requestId) {return this.transaction(()=>{
     if(!['pause','resume','cancel','wake'].includes(action))throw new Error('Invalid Nethra action');

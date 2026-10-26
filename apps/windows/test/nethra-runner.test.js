@@ -30,6 +30,29 @@ test('runner uses native messages, explicit completion and never persists thinki
   assert.equal(result.status,'COMPLETED');assert.equal(result.summary,'Report ready');assert.equal(seen[1].at(-1).role,'tool');
   assert.equal(JSON.stringify(f.task).includes('private reasoning'),false);
 });
+test('one work pass can perform more than ten distinct steps before yielding',async t=>{
+  const f=fixture(t);for(let i=0;i<11;i++)fs.writeFileSync(path.join(f.root,`source-${i}.txt`),`Report evidence ${i}`);
+  let calls=0;const wakeAt=Date.now()+600_000;
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[{function:calls<11?{name:'read_file',arguments:{path:`source-${calls++}.txt`}}:{name:'schedule_wake',arguments:{at:wakeAt,reason:'Review the gathered evidence next pass'}}}]}})};
+  const result=await new NethraRunner({store:f.store,runtime}).execute(f.task);
+  assert.equal(calls,11);assert.equal(result.status,'SLEEPING');assert.equal(result.evidence.length,11);
+});
+
+test('a question for an experiment ID already in host records keeps the pass running',async t=>{
+  const f=fixture(t),id='f59db726-9373-4ef4-a021-8fe3e8d195e4';
+  f.task.allowCodeWork=true;
+  f.store.experiments=()=>[{id,metric:'task_model_ms',status:'BASELINE',hypothesis:'Measure latency'}];
+  let calls=0;
+  const runtime={withInference:fn=>fn(),chat:async(_model,messages)=>{
+    calls++;
+    if(calls===1)return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'request_input',arguments:{question:'Please provide the ID of the experiment to evaluate.'}}}]}};
+    assert.ok(messages.some(message=>String(message.content).includes(id)));
+    return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'schedule_wake',arguments:{at:Date.now()+600_000,reason:'Continue after evaluating saved experiments'}}}]}};
+  }};
+  const result=await new NethraRunner({store:f.store,runtime,localData:{usage:()=>[]}}).execute(f.task);
+  assert.equal(calls,2);
+  assert.equal(result.status,'SLEEPING');
+});
 test('an ongoing objective saves a verified milestone and sleeps instead of completing',async t=>{
   const {NethraStore}=require('../src/nethra-store');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-monitor-'));
