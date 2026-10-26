@@ -168,7 +168,7 @@ class NethraTools {
       if(typeof args.acceptance!=='string'||args.acceptance.trim().length<30)throw Error('Provide measurable acceptance criteria before asking Codex to review a code proposal');
       const question=`Review this exact Junction code proposal for scope, risks, internal consistency and testability. Do not implement. Begin with exactly VERDICT: READY if the task and acceptance are coherent and testable, or VERDICT: REVISE if they are contradictory, unclear or unsafe. Explain concrete revisions when needed. Task: ${args.task} Acceptance: ${args.acceptance}`;
       const review=await this.execute('consult_codex',{question},task,{signal,token});
-      if(reviewVerdict(review.advice)!=='READY')throw Error(`Codex requested revision; the code draft was not created: ${String(review.advice||'No clear verdict').slice(0,800)}`);
+      if(reviewVerdict(review.advice)!=='READY')return {status:'REVISE',draftCreated:false,reviewedBy:review.model,review:String(review.advice||'Codex did not give a clear verdict').slice(0,2800),note:'Codex requested changes to this proposal. Revise the task and acceptance criteria; no draft was created and no code was changed.'};
       const work=await withSignal(this.proposeCodeWork({objective:task,description:args.task,acceptance:args.acceptance,review}),signal);
       return {workId:work.id,status:work.status,reviewedBy:review.model,note:'Codex reviewed this proposal. Draft saved in Work Activity. The owner must start implementation, then review and apply the exact verified patch.'};
     }

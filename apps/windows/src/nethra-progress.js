@@ -24,7 +24,7 @@ function evidenceLine(item){
   if(item.tool==='consult_codex')return 'Asked Codex for advice; no code was changed';
   if(item.tool==='consult_claude')return 'Asked Claude for advice; no code was changed';
   if(item.tool==='experiment')return result.result?verdictLine(result.result):result.status==='CHANGED'?'Recorded when the experiment change was applied':`Started an experiment with a baseline of ${result.baseline?.count??'?'} samples`;
-  if(item.tool==='propose_code_work')return 'Prepared a development draft for owner review';
+  if(item.tool==='propose_code_work')return result.status==='REVISE'?'Codex requested a clearer code proposal; no draft was created':'Prepared a development draft for owner review';
   return `${short(item.tool,40)} returned a result`;
 }
 

@@ -5,6 +5,7 @@ const {EventEmitter}=require('node:events');
 const {NethraTools}=require('../src/nethra-tools');
 const {sendCodexChat,getCodexStatus}=require('../src/codex-client');
 const {createCodeWorkProposer}=require('../src/nethra-code-work');
+const {evidenceLine}=require('../src/nethra-progress');
 // Tests never query the owner's real plan usage.
 const openLimits=()=>({check:async provider=>({provider,available:true,windows:[]}),invalidate(){},recordClaude(){}});
 
@@ -115,7 +116,11 @@ test('a code draft is saved only after Codex reviews that exact proposal',async(
   assert.match(calls[1],/END_ACCEPTANCE/);
   assert.match(drafts[0].review.advice,/exclude private text/);
   const cautious=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:true}),advisorLimits:openLimits(),codexConsult:async()=>({content:'VERDICT: REVISE\nThe acceptance criteria contradict each other.',model:'Codex test'}),proposeCodeWork:async()=>{throw Error('Draft must not be created after a revise verdict');}});
-  await assert.rejects(cautious.execute('propose_code_work',{task:'Contradictory change',acceptance:'Keep exact prompt bytes and reduce prompt tokens'},task),/Codex requested revision/i);
+  const revise=await cautious.execute('propose_code_work',{task:'Contradictory change',acceptance:'Keep exact prompt bytes and reduce prompt tokens'},task);
+  assert.equal(revise.status,'REVISE');
+  assert.equal(revise.draftCreated,false);
+  assert.match(revise.review,/contradict each other/);
+  assert.match(evidenceLine({tool:'propose_code_work',result:revise}),/no draft was created/i);
   await assert.rejects(tools.execute('propose_code_work',{task:'Another change',acceptance:'Yes'},task),/measurable acceptance/i);
   assert.equal(drafts.length,2);
   assert.equal(calls.length,2);
