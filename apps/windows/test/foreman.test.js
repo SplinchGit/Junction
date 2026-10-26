@@ -24,7 +24,7 @@ test('a Nethra-originated verified candidate stays isolated until owner review a
  const promotions=[];
  const e={...executor,promoteVerified:async project=>{promotions.push(project.id);return {backup:'unexpected-original-checkout-write'};}};
  const f=new Foreman(dir,{executor:e});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
- const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1'});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',tasks:[{...input.tasks[0],acceptance:'Existing checks pass and changes remain isolated until owner review'}]});
  assert.equal(draft.status,'DRAFT');
  await f.control(draft.id,'start',draft.revision,'start-reviewed-proposal');await f.idle();
  const finished=f.get(draft.id);
@@ -36,6 +36,12 @@ test('a Nethra-originated verified candidate stays isolated until owner review a
  const ordinary=await f.create(input);
  await f.control(ordinary.id,'start',ordinary.revision,'ordinary-start');await f.idle();
  assert.deepEqual(promotions,[ordinary.id]);
+});
+test('a Nethra draft with a vague acceptance cannot be started',async t=>{
+ const dir=fixture(),f=new Foreman(dir,{executor});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',tasks:[{title:'Refactor context',kind:'codex',acceptance:'Yes'}]});
+ await assert.rejects(f.control(draft.id,'start',draft.revision,'start-vague'),/measurable acceptance/i);
+ assert.equal(f.get(draft.id).status,'DRAFT');
 });
 test('pause during work fences late success; explicit resume required after reopen',async()=>{
  const dir=fixture();let finish;const f=new Foreman(dir,{executor:{...executor,run:()=>new Promise(r=>finish=r)}});const p=await f.create(input);

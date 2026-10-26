@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const {measurableAcceptance}=require('./nethra-code-work');
 const { DatabaseSync } = require('node:sqlite');
 const ACTIVE = new Set(['RUNNING', 'WAITING_CODEX', 'VERIFYING']);
 const text = (value, max, label) => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`Invalid ${label}`); return value.trim(); };
@@ -74,6 +75,7 @@ class Foreman {
     if(!['start','resume','pause','stop'].includes(action))throw new Error('Invalid task control');
     if(action==='start'||action==='resume') {
       if(this.closed)throw new Error('Junction is quitting');
+        if(p.sourceObjectiveId&&p.tasks.some(task=>!measurableAcceptance(task.acceptance)))throw new Error('Provide measurable acceptance criteria before starting Nethra code work');
       if(ACTIVE.has(p.status)||p.status==='COMPLETED'||this.jobs.has(id))throw new Error('Task is already active or finishing');
       if(action==='start'&&p.status!=='DRAFT')throw new Error('Use Resume for existing work');
       if(this.enabled.size)throw new Error('Pause the active project before starting another');

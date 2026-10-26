@@ -164,6 +164,7 @@ class NethraTools {
     }
     if(name==='propose_code_work'){
       if(!task.allowCodeWork||!this.proposeCodeWork)throw Error('Codex development work is not enabled for this objective');
+      if(typeof args.acceptance!=='string'||args.acceptance.trim().length<30)throw Error('Provide measurable acceptance criteria before asking Codex to review a code proposal');
       const question=`Review this exact Junction code proposal for scope, risks and testability. Do not implement. Task: ${args.task.slice(0,400)} Acceptance: ${args.acceptance.slice(0,400)}`;
       const review=await this.execute('consult_codex',{question},task,{signal,token});
       if(!review.advice?.trim())throw Error('Codex returned no review; the code draft was not created');

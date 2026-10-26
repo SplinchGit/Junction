@@ -109,8 +109,11 @@ test('a code draft is saved only after Codex reviews that exact proposal',async(
   assert.match(calls[0],/Show token counts for chats/);
   assert.match(calls[0],/Show measured counts without message text/);
   assert.match(drafts[0].review.advice,/exclude private text/);
+  await assert.rejects(tools.execute('propose_code_work',{task:'Another change',acceptance:'Yes'},task),/measurable acceptance/i);
+  assert.equal(drafts.length,1);
+  assert.equal(calls.length,1);
   const unavailable=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:false}),advisorLimits:openLimits(),proposeCodeWork:async()=>{throw Error('Draft must not be created');}});
-  await assert.rejects(unavailable.execute('propose_code_work',{task:'Another change',acceptance:'Pass tests'},task),/Codex is not signed in/);
+  await assert.rejects(unavailable.execute('propose_code_work',{task:'Another change',acceptance:'The measured tests pass without regressions'},task),/Codex is not signed in/);
 });
 
 test('a scoped code proposal creates one paused Work Activity draft and reuses it on retry',async t=>{
@@ -128,7 +131,12 @@ test('a scoped code proposal creates one paused Work Activity draft and reuses i
   assert.match(projects[0].objective,/Measure baseline first/);
   assert.equal((await propose(input)).id,result.id);
   assert.equal(projects.length,1);
-  await propose({...input,description:'Expose task activity',acceptance:'Progress is visible'});
+  await propose({...input,description:'Expose task activity',acceptance:'Recorded progress is visible in the task chat'});
   assert.equal(projects.length,2);
+  const longDescription='Improve task context. '+ 'Keep the full scoped proposal and its acceptance criteria available to the owner and implementation agent. '.repeat(4);
+  await propose({...input,description:longDescription});
+  assert.equal(projects.length,3);
+  assert.ok(projects[2].tasks[0].title.length<=240);
+  assert.match(projects[2].objective,/full scoped proposal/);
   await assert.rejects(propose({...input,objective:{...objective,readRoots:[]}}),/Approve the Junction read folder/);
 });
