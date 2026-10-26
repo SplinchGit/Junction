@@ -98,7 +98,9 @@ app.on("browser-window-created", (_event, window) => {
         if(document.getElementById('nethra-task-drawer').classList.contains('open'))document.getElementById('objective-status').click();
         document.getElementById('objective-status').click();
         let input;
-        for(let i=0;i<100&&!input;i++){const waiting=document.querySelector('#nethra-task-drawer article[data-objective-id="${waiting.id}"] .task-index-row');if(waiting&&waiting.getAttribute('aria-expanded')==='false')waiting.click();input=document.querySelector('textarea[aria-label="Answer Nethra"]');if(!input)await new Promise(resolve=>setTimeout(resolve,20));}
+        // Tasks is a page now: a row opens the task chat, and "Details" opens the panel with the answer box.
+        let opened=false;
+        for(let i=0;i<100&&!input;i++){const details=document.querySelector('#view-tasks article[data-objective-id="${waiting.id}"] .task-link');if(details&&!opened){details.click();opened=true;}input=document.querySelector('textarea[aria-label="Answer Nethra"]');if(!input)await new Promise(resolve=>setTimeout(resolve,20));}
         if(!input)throw Error('Owner answer field missing');
         input.focus();input.value='Owner answer in progress';
         await new Promise(resolve=>setTimeout(resolve,5500));
