@@ -10,6 +10,7 @@ const {getClaudeStatus,sendClaudeConsult}=require('./claude-client');
 const {AdvisorLimits}=require('./advisor-limits');
 const {CONTEXT_TOKENS}=require('./model-context');
 const {METRICS,startExperiment,evaluateExperiment}=require('./nethra-experiments');
+const {gitRoot,commitInfo}=require('./nethra-brief');
 const {reviewVerdict}=require('./nethra-code-work');
 
 const CATEGORIES = Object.freeze({READ_ONLY:'READ_ONLY',LOCAL_WRITE:'LOCAL_WRITE',EXTERNAL_WRITE:'EXTERNAL_WRITE',SENSITIVE:'SENSITIVE',DESTRUCTIVE:'DESTRUCTIVE'});
@@ -36,7 +37,7 @@ const definitions = [
   ['performance_report','Full seven-day timing report for local chat and this objective\'s model calls. A summary is already in your seed as hostFacts each wake; a snapshot never proves an improvement.',{}],
   ['consult_codex','Ask the locally signed-in Codex tutor one focused question. Read-only advice: it cannot change files or start a coding job. Allowed while the owner\'s live Codex usage is below their reserve; if not, the error says when it resets.',{question:str(3000)}],
   ['consult_claude','Ask the locally signed-in Claude advisor one focused question. Read-only advice with no tools. Allowed while the owner\'s live Claude usage is below their reserve; if not, the error says when it resets.',{question:str(1200)}],
-  ['experiment','List saved experiments and IDs before starting another. start freezes a baseline; mark_change records an applied change; evaluate compares samples; abandon closes an unused baseline with a reason but proves no improvement.',{action:{type:'string',enum:['list','start','mark_change','evaluate','abandon']},id:{...str(64),optional:true},metric:{type:'string',enum:Object.keys(METRICS),optional:true},hypothesis:{...str(500),optional:true},changeKind:{type:'string',enum:['code','setting','other'],optional:true},workId:{...str(64),optional:true},note:{...str(500),optional:true}}],
+  ['experiment','List saved experiments and IDs before starting another. start freezes a baseline; mark_change records an applied change (code changes need workId or a verified commit sha); evaluate compares samples; abandon closes an unused baseline with a reason but proves no improvement.',{action:{type:'string',enum:['list','start','mark_change','evaluate','abandon']},id:{...str(64),optional:true},metric:{type:'string',enum:Object.keys(METRICS),optional:true},hypothesis:{...str(500),optional:true},changeKind:{type:'string',enum:['code','setting','other'],optional:true},workId:{...str(64),optional:true},commit:{...str(40),optional:true},note:{...str(500),optional:true}}],
   ['propose_code_work','Ask Codex to review this exact proposal read-only, then save a scoped draft in Work Activity. The owner must start implementation and later review and apply the verified patch.',{task:str(1000),acceptance:str(1000)}],
   ['delegate_task','Run a bounded sequential child of this same model. Review its evidence before acting.',{task:str(1500)}]
 ].map(([name,description,properties])=>({type:'function',function:{name,description,parameters:{type:'object',additionalProperties:false,required:Object.keys(properties).filter(k=>!properties[k].optional),properties:Object.fromEntries(Object.entries(properties).map(([k,v])=>{const {optional,...schema}=v;return [k,schema];}))}}}));
@@ -160,7 +161,18 @@ class NethraTools {
       }
       if(!args.id){const open=(this.store.experiments?.(task.id)||[]).filter(item=>item.status!=='CONCLUDED').map(item=>`${item.id} (${item.metric})`);throw Error(`${args.action} needs id. Open experiments: ${open.join(', ')||'none'}`);}
       if(args.action==='abandon')return view(this.store.abandonExperiment(task.id,args.id,args.note,token));
-      if(args.action==='mark_change')return view(this.store.markExperimentChange(task.id,args.id,{note:args.note,actor:'Nethra'},token));
+      if(args.action==='mark_change'){
+        const experiment=this.store.experiment(task.id,args.id);
+        if(experiment.changeKind!=='code')return view(this.store.markExperimentChange(task.id,args.id,{note:args.note,actor:'Nethra (declared, not verified)'},token));
+        // Code changes are host facts, never Nethra's word: a Work Activity draft or a verified commit.
+        if(args.workId)return view(this.store.markExperimentChange(task.id,args.id,{note:args.note,workId:args.workId},token));
+        if(!args.commit)throw Error('A code change must be verified: pass workId (the Work Activity draft that makes it) or commit (a sha that changed apps/windows/src after the baseline). Nothing was recorded.');
+        const root=gitRoot(task),commit=root&&commitInfo(root,args.commit);
+        if(!commit)throw Error(`Commit ${args.commit} was not found in the approved repository. Nothing was recorded.`);
+        if(!commit.touchesHost)throw Error(`Commit ${commit.sha} (${commit.subject}) does not change apps/windows/src, so it cannot be this code change.`);
+        if(commit.at<=experiment.startedAt)throw Error(`Commit ${commit.sha} predates this experiment's baseline, so its effect is already in the baseline.`);
+        return view(this.store.markExperimentChange(task.id,args.id,{note:args.note,actor:`Junction (commit ${commit.sha}: ${commit.subject})`,at:commit.at},token));
+      }
       return view(evaluateExperiment({store:this.store,localData:this.localData,task,experiment:this.store.experiment(task.id,args.id),workStatus:this.workStatus,now:this.store.now?.()??Date.now()}));
     }
     if(name==='propose_code_work'){

@@ -10,7 +10,16 @@ const {progressView}=require('../src/nethra-progress');
 const {mannWhitneyP}=require('../src/nethra-experiments');
 
 const START=Date.parse('2026-10-20T12:00:00Z'),MIN=60_000;
-function harness(t){
+/** A real Git repository whose commits are dated on the test clock, so the host can verify them. */
+function repo(t){
+  const {execFileSync}=require('node:child_process');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-exp-repo-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const git=(args,at)=>execFileSync('git',['-C',root,'-c','user.name=Test','-c','user.email=test@example.com',...args],{encoding:'utf8',stdio:['ignore','pipe','ignore'],env:{...process.env,...(at?{GIT_AUTHOR_DATE:`@${Math.floor(at/1000)} +0000`,GIT_COMMITTER_DATE:`@${Math.floor(at/1000)} +0000`}:{})}}).trim();
+  git(['init','-q']);
+  const commit=(file,at)=>{fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});fs.writeFileSync(path.join(root,file),String(at));git(['add','-A']);git(['commit','-q','-m',`change ${file}`],at);return git(['rev-parse','--short','HEAD']);};
+  return {root,commit};
+}
+function harness(t,{readRoots=[]}={}){
   let now=START;
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-experiments-'));
   const store=new NethraStore(directory,{now:()=>now});
@@ -18,7 +27,7 @@ function harness(t){
   const usage=[];
   const localData={usage:()=>[...usage].sort((a,b)=>b.createdAt-a.createdAt)};
   const chat=(durationMs,model='qwen3:30b')=>{usage.push({providerId:'local',model,createdAt:now,durationMs,tokensPerSecond:17});now+=MIN;};
-  const task=store.create({goal:'Self Improvement',allowCodeWork:true});
+  const task=store.create({goal:'Self Improvement',allowCodeWork:true,readRoots});
   const tools=new NethraTools({store,localData});
   const run=args=>tools.execute('experiment',args,store.get(task.id));
   return {store,task,tools,run,chat,advance:ms=>{now+=ms;},now:()=>now};
@@ -74,12 +83,30 @@ test('a slower result is reported as a regression, and noise as no clear change'
   assert.equal((await h.run({action:'evaluate',id:worse.id})).result.verdict,'REGRESSED');
 });
 
+test('Nethra cannot declare a code change; only a verified commit or Work Activity draft counts',async t=>{
+  // Live, 26 October: Nethra marked two code changes that were never made and asked for a restart.
+  const r=repo(t),early=r.commit('apps/windows/src/before.js',START-MIN),docs=r.commit('docs/note.md',START+30*MIN);
+  const h=harness(t,{readRoots:[r.root]});
+  for(const ms of [7000,7100,7200,7300,7400]) h.chat(ms);
+  const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Faster prompt assembly'});
+  await assert.rejects(h.run({action:'mark_change',id:started.id,note:'I changed it'}),/must be verified.*Nothing was recorded/);
+  await assert.rejects(h.run({action:'mark_change',id:started.id,commit:'0123abc'}),/not found/);
+  await assert.rejects(h.run({action:'mark_change',id:started.id,commit:docs}),/does not change apps\/windows\/src/);
+  await assert.rejects(h.run({action:'mark_change',id:started.id,commit:early}),/predates/);
+  assert.equal(h.store.experiment(h.task.id,started.id).status,'BASELINE');
+  // An old record where Nethra declared a code change is ignored, not trusted.
+  h.store.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify({...h.store.experiment(h.task.id,started.id),status:'CHANGED',changeAt:h.now(),changeActor:'Nethra'}),started.id);
+  assert.equal((await h.run({action:'evaluate',id:started.id})).result.verdict,'WAITING_FOR_CHANGE');
+});
+
 test('a code change only counts samples from a Junction process started after it',async t=>{
-  const h=harness(t);
+  const r=repo(t),h=harness(t,{readRoots:[r.root]});
   for(const ms of [7000,7100,7200,7300,7400]) h.chat(ms);
   const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Faster prompt assembly'});
   assert.equal(started.changeKind,'code');
-  await h.run({action:'mark_change',id:started.id});
+  const sha=r.commit('apps/windows/src/runtime.js',h.now()+MIN);h.advance(2*MIN);
+  const marked=await h.run({action:'mark_change',id:started.id,commit:sha});
+  assert.match(marked.changeActor,new RegExp(`^Junction \\(commit ${sha}`));
   for(const ms of [4000,4100,4200,4300,4400]) h.chat(ms);
   assert.equal((await h.run({action:'evaluate',id:started.id})).result.verdict,'WAITING_FOR_RESTART');
   h.advance(MIN);h.store.recordHostStart();h.advance(MIN);
@@ -103,9 +130,9 @@ test('a linked development draft sets the change point when Work Activity promot
 test('chat experiments compare the same model, experiments need self-improvement, and deletion removes them',async t=>{
   const h=harness(t);
   for(const ms of [7000,7100,7200,7300,7400]) h.chat(ms);
-  const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Model-specific'});
+  const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Model-specific',changeKind:'setting'});
   assert.equal(h.store.experiment(h.task.id,started.id).model,'qwen3:30b');
-  await h.run({action:'mark_change',id:started.id});
+  assert.equal((await h.run({action:'mark_change',id:started.id})).changeActor,'Nethra (declared, not verified)');
   h.advance(MIN);h.store.recordHostStart();
   for(const ms of [1000,1100,1200,1300,1400]) h.chat(ms,'qwen3:8b');
   assert.equal((await h.run({action:'evaluate',id:started.id})).result.verdict,'INSUFFICIENT_DATA');
@@ -131,4 +158,14 @@ test('Nethra can inspect and abandon its own unused baselines without claiming a
   assert.equal(h.store.events(h.task.id).at(-1).kind,'EXPERIMENT_ABANDONED');
   assert.equal((await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Fourth candidate'})).status,'BASELINE');
   await assert.rejects(h.run({action:'abandon',id:ids[1],note:''}),/note/);
+});
+
+test('withdrawing an experiment whose change was never made is journaled and shown as invalid',async t=>{
+  const h=harness(t);
+  for(const ms of [7000,7100,7200,7300,7400]) h.chat(ms);
+  const started=await h.run({action:'start',metric:'chat_response_ms',hypothesis:'Phantom change',changeKind:'setting'});
+  const withdrawn=h.store.invalidateExperiment(h.task.id,started.id,'The declared change was never made');
+  assert.equal(withdrawn.status,'CONCLUDED');assert.equal(withdrawn.result.verdict,'INVALID');
+  const lines=progressView(h.store.get(h.task.id),h.store).activity.map(item=>item.line).join(' ');
+  assert.match(lines,/withdrawn as invalid: The declared change was never made/);
 });

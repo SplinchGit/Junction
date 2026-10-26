@@ -191,13 +191,15 @@ class NethraStore {
     this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_STARTED',JSON.stringify({id:experiment.id,metric:experiment.metric,baseline:{count:experiment.baseline.count,median:experiment.baseline.median}}));
     return experiment;
   });}
-  markExperimentChange(taskId,id,{note,actor},token) {return this.transaction(()=>{
+  /** at is set only for host-verified changes (a commit's time); workId links a Work Activity draft whose promotion is the change. */
+  markExperimentChange(taskId,id,{note,actor,at=null,workId=null},token) {return this.transaction(()=>{
     this.assertRunnable(taskId,token);
     const experiment=this.experiment(taskId,id);
     if(experiment.status!=='BASELINE')throw new Error('The change for this experiment is already recorded');
-    Object.assign(experiment,{status:'CHANGED',changeAt:this.now(),changeNote:String(note||'').slice(0,500),changeActor:String(actor||'Nethra').slice(0,60)});
+    if(workId)Object.assign(experiment,{workId:String(workId).slice(0,64),changeNote:String(note||'').slice(0,500)});
+    else Object.assign(experiment,{status:'CHANGED',changeAt:Number.isSafeInteger(at)?at:this.now(),changeNote:String(note||'').slice(0,500),changeActor:String(actor||'Nethra').slice(0,160)});
     this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
-    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_CHANGED',JSON.stringify({id,actor:experiment.changeActor}));
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),workId?'EXPERIMENT_LINKED':'EXPERIMENT_CHANGED',JSON.stringify({id,actor:experiment.changeActor||null,workId:experiment.workId||null}));
     return experiment;
   });}
   saveExperimentResult(taskId,id,result,conclude) {return this.transaction(()=>{
@@ -215,6 +217,15 @@ class NethraStore {
     experiment.status='CONCLUDED';experiment.result={verdict:'ABANDONED',detail:note.trim(),evaluatedAt:this.now()};
     this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
     this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_ABANDONED',JSON.stringify({id,reason:note.trim()}));
+    return experiment;
+  });}
+  /** Host maintenance: withdraws an experiment whose change point was never real. Journaled, never silent. */
+  invalidateExperiment(taskId,id,reason) {return this.transaction(()=>{
+    if(typeof reason!=='string'||!reason.trim())throw new Error('A reason is required to invalidate an experiment');
+    const experiment=this.experiment(taskId,id);
+    experiment.status='CONCLUDED';experiment.result={verdict:'INVALID',detail:reason.trim().slice(0,500),previous:experiment.result||null,evaluatedAt:this.now()};
+    this.db.prepare('UPDATE experiments SET body=? WHERE id=?').run(JSON.stringify(experiment),id);
+    this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_INVALIDATED',JSON.stringify({id,reason:experiment.result.detail}));
     return experiment;
   });}
   update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const progressed=(Array.isArray(patch.evidence)&&patch.evidence.length>(task.evidence||[]).length)||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','evidence','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}

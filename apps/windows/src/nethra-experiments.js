@@ -47,11 +47,17 @@ function startExperiment({store,localData,task,args,now=Date.now(),token}){
   return store.createExperiment(task.id,{hypothesis:String(args.hypothesis||'').slice(0,500),metric:args.metric,changeKind,model,workId:typeof args.workId==='string'?args.workId.slice(0,64):null,startedAt:now,baseline:{values,...summary(values),from:Math.min(...samples.map(item=>item.at)),to:now}},token);
 }
 
-/** Where the "after" window starts, or why it has not started yet. Host facts win over Nethra's word. */
+/**
+ * Where the "after" window starts, or why it has not started yet. A code change is only ever a
+ * host fact: a promoted Work Activity draft or a commit the host verified. Nethra's own word counts
+ * for settings and other changes only (live, 26 October, it twice declared code changes that were
+ * never made and asked the owner to restart for them).
+ */
 function changePoint(experiment,{store,workStatus,now}){
-  let at=experiment.changeAt,actor=experiment.changeActor;
+  const code=experiment.changeKind==='code';
+  let at=code&&!String(experiment.changeActor||'').startsWith('Junction')?null:experiment.changeAt,actor=experiment.changeActor;
   if(!at&&experiment.workId&&workStatus){const work=workStatus(experiment.workId);if(work?.promotedAt>experiment.startedAt){at=work.promotedAt;actor='Junction (Work Activity promotion)';}}
-  if(!at)return {waiting:'WAITING_FOR_CHANGE',detail:experiment.workId?'The linked development draft has not been verified and promoted yet.':'Mark the experiment change once it has been applied.'};
+  if(!at)return {waiting:'WAITING_FOR_CHANGE',detail:code?(experiment.workId?'The linked development draft has not been verified and promoted yet.':'No verified code change yet. Use mark_change with workId (a Work Activity draft) or commit (a sha that changed apps/windows/src after the baseline).'):'Mark the experiment change once it has been applied.'};
   if(experiment.changeKind!=='code')return {at,actor};
   // Code only takes effect in a Junction process started after the change.
   const started=store.hostStartsAfter?.(at)?.[0];
@@ -62,7 +68,7 @@ function changePoint(experiment,{store,workStatus,now}){
 function evaluateExperiment({store,localData,task,experiment,workStatus=null,now=Date.now()}){
   if(experiment.status==='CONCLUDED')return experiment;
   const metric=METRICS[experiment.metric],point=changePoint(experiment,{store,workStatus,now});
-  const base={metric:experiment.metric,label:metric.label,unit:metric.unit,better:metric.better,before:{count:experiment.baseline.count,median:experiment.baseline.median},evaluatedAt:now};
+  const base={metric:experiment.metric,label:metric.label,unit:metric.unit,better:metric.better,before:{count:experiment.baseline.count,median:experiment.baseline.median},evaluatedAt:now,...(point.actor?{changeRecordedBy:point.actor}:{})};
   if(point.waiting)return store.saveExperimentResult(task.id,experiment.id,{...base,verdict:point.waiting,detail:point.detail},false);
   const after=metricSamples({store,localData,taskId:task.id,metric:experiment.metric,since:point.at,until:now,model:experiment.model}).map(item=>item.value);
   if(after.length<MIN_SAMPLES)return store.saveExperimentResult(task.id,experiment.id,{...base,afterFrom:point.at,after:summary(after),verdict:'INSUFFICIENT_DATA',detail:`${after.length} of ${MIN_SAMPLES} samples since the change point.`},false);
@@ -80,6 +86,8 @@ function verdictLine(result){
   if(result.verdict==='IMPROVED')return `Experiment: ${result.label} improved ${pct} (${result.before.count} vs ${result.after.count} samples)`;
   if(result.verdict==='REGRESSED')return `Experiment: ${result.label} got worse by ${pct} (${result.before.count} vs ${result.after.count} samples)`;
   if(result.verdict==='NO_CLEAR_CHANGE')return `Experiment: no clear change in ${result.label} (${result.before.count} vs ${result.after.count} samples)`;
+  if(result.verdict==='INVALID')return `Experiment withdrawn as invalid: ${String(result.detail||'').slice(0,160)}`;
+  if(result.verdict==='ABANDONED')return `Experiment abandoned: ${String(result.detail||'').slice(0,160)}`;
   return `Experiment waiting: ${String(result.detail||result.verdict).slice(0,160)}`;
 }
 

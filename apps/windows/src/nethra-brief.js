@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs');
 const path=require('node:path');
-const {execFile}=require('node:child_process');
+const {execFile,execFileSync}=require('node:child_process');
 const {promisify}=require('node:util');
 
 const execFileAsync=promisify(execFile);
@@ -22,6 +22,19 @@ async function recentChanges(root,{run=execFileAsync,days=7,limit=12}={}){
   try{
     const {stdout}=await run('git',['-C',root,'log',`--since=${days}.days`,'--no-merges',`-n${limit}`,'--format=%h %cI %s'],{windowsHide:true,timeout:5000});
     return String(stdout).split(/\r?\n/).filter(Boolean).map(line=>line.slice(0,140));
+  }catch{return null;}
+}
+
+/** The objective's Git read root, if it has one. */
+function gitRoot(task,exists=fs.existsSync){return (task.readRoots||[]).find(item=>{try{return exists(path.join(item,'.git'));}catch{return false;}})||null;}
+
+/** A commit as the host sees it, so a cited code change can be verified rather than taken on trust. */
+function commitInfo(root,sha,{run=execFileSync}={}){
+  if(typeof sha!=='string'||!/^[0-9a-f]{7,40}$/i.test(sha))return null;
+  try{
+    const [short,seconds,...subject]=String(run('git',['-C',root,'show','-s','--format=%h %ct %s',sha],{windowsHide:true,timeout:5000,encoding:'utf8',stdio:['ignore','pipe','ignore']})).trim().split(' ');
+    const files=String(run('git',['-C',root,'diff-tree','--root','--no-commit-id','--name-only','-r',sha,'--','apps/windows/src'],{windowsHide:true,timeout:5000,encoding:'utf8',stdio:['ignore','pipe','ignore']})).trim();
+    return {sha:short,at:Number(seconds)*1000,subject:subject.join(' ').slice(0,120),touchesHost:Boolean(files)};
   }catch{return null;}
 }
 
@@ -52,4 +65,4 @@ async function objectiveBrief({task,tools,exists=fs.existsSync,read=fs.readFileS
   return brief;
 }
 
-module.exports={objectiveBrief,repositoryGuide,recentChanges};
+module.exports={objectiveBrief,repositoryGuide,recentChanges,gitRoot,commitInfo};
