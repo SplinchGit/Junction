@@ -49,6 +49,10 @@ app.on("browser-window-created", (_event, window) => {
       assert.ok(["unavailable", "unknown"].includes(state.pill), `offline pill state: ${state.pill}`);
       window.focus(); await wait(400);
       const chatDark = await shot("appearance-sakura-dark.png");
+      // The chat header shows how long the chat is and how much of it Nethra reads.
+      const tokenLine = await window.webContents.executeJavaScript(`(()=>{renderMessages(Array.from({length:20},(_,i)=>({id:'m'+i,role:i%2?'assistant':'user',content:'y'.repeat(900),provenance:i%2?'JUNCTION':'OWNER',createdAt:Date.now(),...(i===19?{telemetry:{inputTokens:2411}}:{})})));return document.getElementById('chat-tokens').textContent;})()`);
+      assert.match(tokenLine, /≈5\.2k tokens in this chat · Nethra reads the latest ≈1\.0k \(4 of 20 messages\) · last reply's prompt 2,411 of 8,192/);
+      const tokenShot = await shot("chat-token-line.png");
       // Reduced motion stops the petal layer; the artwork remains.
       const reduced = await window.webContents.executeJavaScript(`(async()=>{
         window.JunctionAppearance.apply(await window.junction.setAppearance({motion:'reduced'}));

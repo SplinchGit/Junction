@@ -165,3 +165,4 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 #view-tasks label.task-toggle{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:12px;width:auto}
 #view-tasks label.task-toggle input{width:auto;margin:0}
 #view-tasks .tasks-list-pane .foreman-area>p:empty{display:none}
+#view-chat header .chat-tokens{display:block;margin-top:3px;color:var(--muted);font-size:11.5px;font-weight:400;letter-spacing:normal;text-transform:none}
