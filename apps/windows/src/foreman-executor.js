@@ -69,7 +69,11 @@ class ForemanExecutor{
   if(await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sourceHash)throw new Error('Original project changed; rebase and re-verify before integration');
   if(!review.patch.trim())throw new Error('No changes to apply');
   const patch=path.join(this.directory,p.id,'reviewed.patch');fs.writeFileSync(patch,review.patch);
-  await this.git(p.repoPath,['apply','--check',patch]);await this.git(p.repoPath,['apply','--index',patch]);
+  const gitRoot=(await this.git(p.repoPath,['rev-parse','--show-toplevel'])).trim();
+  const prefix=path.relative(gitRoot,p.repoPath).replaceAll('\\','/');
+  if(!relative(prefix||'.'))throw new Error('Original project is outside its Git checkout');
+  const directoryArg=prefix? [`--directory=${prefix}`]:[];
+  await this.git(gitRoot,['apply','--check',...directoryArg,patch]);await this.git(gitRoot,['apply','--index',...directoryArg,patch]);
   // Leave the exact reviewed patch staged: owner retains control of the original branch commit.
   return {summary:'Reviewed changes applied and staged in the original checkout; inspect and commit when ready.'};
  }

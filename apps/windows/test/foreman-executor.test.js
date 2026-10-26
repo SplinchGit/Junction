@@ -56,3 +56,21 @@ test('a verified folder candidate is promoted with an external rollback backup',
  const promoted=await executor.promoteVerified(project,{worktree:workspace,headSha:execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8'}).trim()});
  assert.equal(fs.readFileSync(path.join(folder,'scene.txt'),'utf8'),'after\n');assert.equal(fs.readFileSync(path.join(promoted.backup,'scene.txt'),'utf8'),'before\n');assert.equal(fs.existsSync(path.join(folder,'.git')),false);
 });
+
+test('a reviewed candidate from a scoped folder is applied only by the owner action',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-reviewed-root-')),folder=path.join(root,'apps','windows'),state=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-reviewed-state-'));
+ t.after(()=>{fs.rmSync(root,{recursive:true,force:true});fs.rmSync(state,{recursive:true,force:true});});
+ fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(folder,'answer.js'),'before\n');
+ execFileSync('git',['init','-b','main'],{cwd:root});execFileSync('git',['add','--all'],{cwd:root});execFileSync('git',['-c','user.name=Test','-c','user.email=test@localhost','commit','-m','fixture'],{cwd:root});
+ const executor=new ForemanExecutor(state,{server:{stop:async()=>{}}}),inspected=await executor.inspect({repoPath:folder,verification:[{command:['node','--version'],cwd:'.'}]});
+ assert.equal(inspected.scopeKind,'folder');
+ const p={id:'p',repoPath:folder,...inspected};
+ p.worktree=await executor.prepare(p,{id:'t'},()=>{},new AbortController().signal);
+ fs.writeFileSync(path.join(p.worktree,'answer.js'),'after\n');execFileSync('git',['add','--all'],{cwd:p.worktree});execFileSync('git',['-c','user.name=Test','-c','user.email=test@localhost','commit','-m','verified'],{cwd:p.worktree});
+ p.verifiedSha=execFileSync('git',['rev-parse','HEAD'],{cwd:p.worktree,encoding:'utf8'}).trim();
+ const reviewed=await executor.review(p);p.reviewed={headSha:reviewed.headSha,diffHash:reviewed.diffHash,sourceHash:reviewed.sourceHash};
+ assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'before\n');
+ await executor.applyReviewed(p);
+ assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'after\n');
+ assert.match(execFileSync('git',['diff','--cached','--name-only'],{cwd:root,encoding:'utf8'}),/answer\.js/);
+});
