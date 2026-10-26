@@ -179,3 +179,18 @@ test('the same question asked again later is posted again; a retry of one questi
   const posts=f.localData.conversation(f.store.get(task.id).conversationId).messages.filter(m=>/could not choose/.test(m.content));
   assert.equal(posts.length,2);
 });
+
+test("a progress post never presents the owner's own message as Nethra's note",async t=>{
+  const f=fixture(t),settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
+  const {task}=await f.api.dispatch('nethra.create',{goal:'Self Improvement',continuous:true},'n1','desktop');
+  let claim=f.store.claim('a');f.store.update(task.id,{status:'WAITING_FOR_USER',summary:'Which file first?'},'nethra_input_required',claim.token);f.store.release(task.id,claim.token);
+  f.store.answer(task.id,"That's fine. Show token counts for chats.",f.store.get(task.id).revision,'ans-1');
+  assert.equal(f.store.get(task.id).summary,'','the answer is an owner input, not the summary');
+  claim=f.store.claim('a');
+  f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:9}}}]},'nethra_tool_result',claim.token);
+  f.store.release(task.id,claim.token);
+  // Older records may still hold the owner's words as the summary.
+  f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,summary:"That's fine. Show token counts for chats.",nextWakeAt:f.now()+20_000,wakeReason:{kind:'CONTINUE',detail:'Continuous work',at:f.now()+20_000}},'EXECUTED');
+  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),true);
+  assert.doesNotMatch(f.localData.conversation(f.store.get(task.id).conversationId).messages.at(-1).content,/My note/);
+});

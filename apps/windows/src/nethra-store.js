@@ -314,7 +314,7 @@ class NethraStore {
     const binding=canonical({kind:'answer',id,text,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
     const task=this.get(id);if(task.status!=='WAITING_FOR_USER')throw new Error('This objective is not waiting for input');if(task.revision!==revision)throw new Error('Nethra revision conflict');
     const lease=this.db.prepare('SELECT * FROM lease WHERE taskId=?').get(id);if(lease)throw new Error('Task is executing; wait for its checkpoint');
-    task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),requestId}].slice(-100);task.summary=text.trim();task.status='ACTIVE';task.nextWakeAt=null;
+    task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),requestId}].slice(-100);task.summary='';task.status='ACTIVE';task.nextWakeAt=null;
     const result=this.save(task,'OWNER_INPUT',{text:text.trim()});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}
   /**

@@ -85,8 +85,9 @@ function postProgress(task,store,localData,{settings=null,date=new Date(),liveTa
   if(view.counts.total)lines.push(`${view.counts.done} of ${view.counts.total} steps done.`);
   if(view.next)lines.push(`Next: ${view.next}.`);
   if(view.wake)lines.push(view.wake.kind==='CONTINUE'&&task.continuous?'Continuing now.':`Next run ${clock(view.wake.at)}: ${view.wake.reason}.`);
-  const note=String(task.summary||'').trim();
-  if(note&&note.length<=400)lines.push(`\nMy note: ${note}`);
+  // "My note" is Nethra's own words only; never echo the owner's message back as Nethra's.
+  const note=String(task.summary||'').trim(),ownerWords=new Set((task.ownerInputs||[]).map(item=>String(item.text||'').trim()));
+  if(note&&note.length<=400&&!ownerWords.has(note))lines.push(`\nMy note: ${note}`);
   lines.push('\nReply here to steer this task.');
   const messageId=`nethra-progress-${task.id}-${view.lastAccomplished.at}`.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,160);
   return localData.addMessageOnce(task.conversationId,messageId,'assistant',lines.join('\n'),'JUNCTION').created;
