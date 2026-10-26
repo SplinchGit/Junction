@@ -22,6 +22,21 @@ test('retrying an enqueue request does not duplicate the task',async()=>{
  const p=await f.create({name:'Queue',objective:'Queue',repoPath:'demo',tasks:[{title:'First',acceptance:'Pass'}]});
  const payload={id:p.id,revision:p.revision,title:'Second',acceptance:'Pass'};await api.dispatch('task.enqueue',payload,'same');await api.dispatch('task.enqueue',payload,'same');assert.equal(f.get(p.id).tasks.length,2);f.close();
 });
+test('API cannot enqueue unreviewed work into a Nethra draft',async()=>{
+ const f=new Foreman(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-nethra-queue-')),{executor:{inspect:async()=>({})}}),api=new ForemanApi(f);
+ const p=await f.create({name:'Nethra',objective:'Reviewed scope',repoPath:'demo',sourceObjectiveId:'task-1',codeReviewVerdict:'READY',tasks:[{title:'Reviewed',acceptance:'Specific checks pass and are reported to the owner'}]});
+ await assert.rejects(api.dispatch('task.enqueue',{id:p.id,revision:p.revision,title:'Unreviewed',acceptance:'Specific checks pass and are reported'}),/new Codex reviewed draft/i);
+ f.close();
+});
+test('Nethra draft detail includes the Codex review and verdict for owner inspection',async()=>{
+ const f=new Foreman(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-review-detail-')),{executor:{inspect:async()=>({})}}),api=new ForemanApi(f);
+ const review='VERDICT: READY\n'+'Specific review findings and tests. '.repeat(60);
+ const p=await f.create({name:'Nethra',objective:`Proposal. Codex review: ${review}`,repoPath:'demo',sourceObjectiveId:'task-1',codeReviewVerdict:'READY',tasks:[{title:'Reviewed',acceptance:'Specific checks pass and are reported to the owner'}]});
+ const detail=(await api.dispatch('project.get',{id:p.id})).project;
+ assert.equal(detail.codeReviewVerdict,'READY');
+ assert.match(detail.objective.trim(),/Specific review findings and tests\.$/);
+ f.close();
+});
 test('legacy coordinator does not resume capacity waits on application launch',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'legacy-foreman-'));fs.writeFileSync(path.join(dir,'plans.json'),JSON.stringify([{id:'plan',projects:[{id:'task',status:'waiting_for_capacity',resumeAt:0}]}]));
  let calls=0;const c=new AppServerDelegationCoordinator(dir,{appServer:{readRateLimits(){calls++;},stop(){}}});

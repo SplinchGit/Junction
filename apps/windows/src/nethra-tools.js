@@ -10,6 +10,7 @@ const {getClaudeStatus,sendClaudeConsult}=require('./claude-client');
 const {AdvisorLimits}=require('./advisor-limits');
 const {CONTEXT_TOKENS}=require('./model-context');
 const {METRICS,startExperiment,evaluateExperiment}=require('./nethra-experiments');
+const {reviewVerdict}=require('./nethra-code-work');
 
 const CATEGORIES = Object.freeze({READ_ONLY:'READ_ONLY',LOCAL_WRITE:'LOCAL_WRITE',EXTERNAL_WRITE:'EXTERNAL_WRITE',SENSITIVE:'SENSITIVE',DESTRUCTIVE:'DESTRUCTIVE'});
 const str = (maxLength=2000) => ({type:'string',minLength:1,maxLength});
@@ -165,9 +166,9 @@ class NethraTools {
     if(name==='propose_code_work'){
       if(!task.allowCodeWork||!this.proposeCodeWork)throw Error('Codex development work is not enabled for this objective');
       if(typeof args.acceptance!=='string'||args.acceptance.trim().length<30)throw Error('Provide measurable acceptance criteria before asking Codex to review a code proposal');
-      const question=`Review this exact Junction code proposal for scope, risks and testability. Do not implement. Task: ${args.task.slice(0,400)} Acceptance: ${args.acceptance.slice(0,400)}`;
+      const question=`Review this exact Junction code proposal for scope, risks, internal consistency and testability. Do not implement. Begin with exactly VERDICT: READY if the task and acceptance are coherent and testable, or VERDICT: REVISE if they are contradictory, unclear or unsafe. Explain concrete revisions when needed. Task: ${args.task.slice(0,400)} Acceptance: ${args.acceptance.slice(0,400)}`;
       const review=await this.execute('consult_codex',{question},task,{signal,token});
-      if(!review.advice?.trim())throw Error('Codex returned no review; the code draft was not created');
+      if(reviewVerdict(review.advice)!=='READY')throw Error(`Codex requested revision; the code draft was not created: ${String(review.advice||'No clear verdict').slice(0,800)}`);
       const work=await withSignal(this.proposeCodeWork({objective:task,description:args.task,acceptance:args.acceptance,review}),signal);
       return {workId:work.id,status:work.status,reviewedBy:review.model,note:'Codex reviewed this proposal. Draft saved in Work Activity. The owner must start implementation, then review and apply the exact verified patch.'};
     }

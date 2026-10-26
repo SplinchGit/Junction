@@ -48,13 +48,14 @@ class Foreman {
     const inspected=await this.executor.inspect(input);
     if(inspected.scopeFile)for(const task of tasks)if(!task.files.length)task.files=[inspected.scopeFile];
     if(this.closed)throw new Error('Junction is quitting');
-    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
+    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,codeReviewVerdict:input.sourceObjectiveId&&input.codeReviewVerdict==='READY'?'READY':null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
   }
   async submit(input) {
     if(this.closed)throw new Error('Junction is quitting');
     if(input.projectId){
       const p=this.get(input.projectId);const title=text(input.task,240,'task'),acceptance=text(input.acceptance||'Complete the owner request and pass the detected project checks',4000,'acceptance criteria');
+      if(p.sourceObjectiveId)throw new Error('Nethra code work needs a new Codex reviewed draft for a different task');
       if(p.tasks.length>=50)throw new Error('Work queue limit reached');
       const queued={id:crypto.randomUUID(),title,kind:'codex',acceptance,status:'QUEUED',attempts:[],files:[]};
       if(p.status==='DRAFT'&&p.tasks.every(task=>!task.attempts.length)){p.tasks=[queued];p.roadmap=[title];p.objective=input.objective||title;p.conversationId=input.conversationId||p.conversationId;}else{p.tasks.push(queued);p.roadmap.push(title);}p.nextAction='Execute the next owner-requested task';
@@ -75,6 +76,7 @@ class Foreman {
     if(!['start','resume','pause','stop'].includes(action))throw new Error('Invalid task control');
     if(action==='start'||action==='resume') {
       if(this.closed)throw new Error('Junction is quitting');
+        if(p.sourceObjectiveId&&p.codeReviewVerdict!=='READY')throw new Error('A Codex READY verdict for this exact Nethra proposal is required before implementation');
         if(p.sourceObjectiveId&&p.tasks.some(task=>!measurableAcceptance(task.acceptance)))throw new Error('Provide measurable acceptance criteria before starting Nethra code work');
       if(ACTIVE.has(p.status)||p.status==='COMPLETED'||this.jobs.has(id))throw new Error('Task is already active or finishing');
       if(action==='start'&&p.status!=='DRAFT')throw new Error('Use Resume for existing work');

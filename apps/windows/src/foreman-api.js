@@ -1,6 +1,6 @@
 "use strict";
 const crypto=require('node:crypto');
-function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,objective:p.objective.slice(0,1200),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
+function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,4000),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman){this.foreman=foreman;}
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){
@@ -24,6 +24,7 @@ class ForemanApi{
   if(type==='task.enqueue'){
    const binding=JSON.stringify([type,payload]);const prior=f.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);if(prior){if(prior.binding!==binding)throw new Error('Request ID reused');return {id:payload.id};}
    const p=f.get(payload.id);if(p.revision!==payload.revision)throw new Error('Stale task revision');if(f.enabled.has(p.id)||f.jobs.has(p.id)||f.operations.has(p.id))throw new Error('Pause before changing the queue; wait for review/apply to finish');
+   if(p.sourceObjectiveId)throw new Error('Nethra code work needs a new Codex reviewed draft for a different task');
    if(p.tasks.length>=50||typeof payload.title!=='string'||!payload.title.trim()||payload.title.length>240||typeof payload.acceptance!=='string'||!payload.acceptance.trim()||payload.acceptance.length>4000)throw new Error('Invalid task');
    p.tasks.push({id:crypto.randomUUID(),title:payload.title.trim(),acceptance:payload.acceptance.trim(),kind:payload.kind==='verify'?'verify':'codex',files:[],status:'QUEUED',attempts:[]});p.roadmap.push(payload.title);p.status='PAUSED';p.nextAction='Resume explicitly';f.save(p,'TASK_ADDED',payload.title,{id:requestId,binding});return {id:p.id,status:p.status,revision:p.revision};
   }

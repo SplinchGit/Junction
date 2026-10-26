@@ -24,7 +24,7 @@ test('a Nethra-originated verified candidate stays isolated until owner review a
  const promotions=[];
  const e={...executor,promoteVerified:async project=>{promotions.push(project.id);return {backup:'unexpected-original-checkout-write'};}};
  const f=new Foreman(dir,{executor:e});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
- const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',tasks:[{...input.tasks[0],acceptance:'Existing checks pass and changes remain isolated until owner review'}]});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',codeReviewVerdict:'READY',tasks:[{...input.tasks[0],acceptance:'Existing checks pass and changes remain isolated until owner review'}]});
  assert.equal(draft.status,'DRAFT');
  await f.control(draft.id,'start',draft.revision,'start-reviewed-proposal');await f.idle();
  const finished=f.get(draft.id);
@@ -39,9 +39,21 @@ test('a Nethra-originated verified candidate stays isolated until owner review a
 });
 test('a Nethra draft with a vague acceptance cannot be started',async t=>{
  const dir=fixture(),f=new Foreman(dir,{executor});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
- const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',tasks:[{title:'Refactor context',kind:'codex',acceptance:'Yes'}]});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',codeReviewVerdict:'READY',tasks:[{title:'Refactor context',kind:'codex',acceptance:'Yes'}]});
  await assert.rejects(f.control(draft.id,'start',draft.revision,'start-vague'),/measurable acceptance/i);
  assert.equal(f.get(draft.id).status,'DRAFT');
+});
+test('a Nethra draft without a ready Codex verdict cannot be started',async t=>{
+ const dir=fixture(),f=new Foreman(dir,{executor});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',tasks:[{...input.tasks[0],acceptance:'Existing checks pass and changes remain isolated until owner review'}]});
+ await assert.rejects(f.control(draft.id,'start',draft.revision,'start-unreviewed'),/Codex.*READY/i);
+ assert.equal(f.get(draft.id).status,'DRAFT');
+});
+test('adding work cannot replace a reviewed Nethra proposal',async t=>{
+ const dir=fixture(),f=new Foreman(dir,{executor});t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const draft=await f.create({...input,sourceObjectiveId:'nethra-task-1',codeReviewVerdict:'READY',tasks:[{...input.tasks[0],acceptance:'Existing checks pass and changes remain isolated until owner review'}]});
+ await assert.rejects(f.submit({projectId:draft.id,task:'Different work',acceptance:'Different tests pass with evidence'}),/new Codex reviewed draft/i);
+ assert.equal(f.get(draft.id).tasks.length,1);
 });
 test('pause during work fences late success; explicit resume required after reopen',async()=>{
  const dir=fixture();let finish;const f=new Foreman(dir,{executor:{...executor,run:()=>new Promise(r=>finish=r)}});const p=await f.create(input);
