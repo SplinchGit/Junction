@@ -119,6 +119,7 @@ import com.splinch.junction.assistant.tools.RiskTier
 import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
 import com.splinch.junction.data.preference.UserPrefsRepository
+import com.splinch.junction.feature.chat.ChatTokens
 import com.splinch.junction.feature.projects.NethraPanel
 import com.splinch.junction.feature.voice.ui.BluetoothThrower
 import com.splinch.junction.ui.component.JunctionTextField
@@ -406,6 +407,11 @@ fun ChatScreen(
                     )
                 }
             }
+        }
+
+        // How long this chat is getting, and how much of it Nethra on the PC reads.
+        ChatTokens.line(messages)?.let { line ->
+            Text(line, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 4.dp))
         }
 
         if (linkedTasks.isNotEmpty()) {
