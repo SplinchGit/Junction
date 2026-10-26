@@ -40,7 +40,7 @@ const { NethraScheduler } = require("./nethra-scheduler");
 const { NethraRunner } = require("./nethra-runner");
 const { createCodeWorkProposer } = require("./nethra-code-work");
 const { NethraApi } = require("./nethra-api");
-const { handleNethraChat } = require("./nethra-chat");
+const { handleNethraChat, correctTaskClaims } = require("./nethra-chat");
 const { configureStartup } = require("./nethra-startup");
 let foreman, foremanApi;
 let nethraStore, nethraScheduler, nethraApi, deviceCommands, hostInitialized=false;
@@ -259,7 +259,7 @@ async function createWindowImpl() {
   const advisorStatus = async () => { const describe = async (provider, status) => ({ ...status, limits: status.ready ? await advisorLimits.check(provider).catch(error => ({ error: String(error.message).slice(0, 200) })) : null }); const [codex, claude] = await Promise.all([getCodexStatus(), getClaudeStatus()]); return { reservePercent: advisorLimits.reservePercent(), codex: await describe('codex', codex), claude: await describe('claude', claude) }; };
   // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.
   const modelProfile = path.join(app.getPath('userData'), 'nethra', 'model-profile.json');
-  localAgent = new LocalAgentRuntime({ toolRegistry, retention: () => nethraStore.settings().idleRetention, profile: { load: () => JSON.parse(fs.readFileSync(modelProfile, 'utf8')), save: value => fs.writeFileSync(modelProfile, JSON.stringify(value)) } });
+  localAgent = new LocalAgentRuntime({ reviewReply: (content, request) => correctTaskClaims(content, taskForConversation(request.conversationId)), toolRegistry, retention: () => nethraStore.settings().idleRetention, profile: { load: () => JSON.parse(fs.readFileSync(modelProfile, 'utf8')), save: value => fs.writeFileSync(modelProfile, JSON.stringify(value)) } });
   localAgent.warmer.onChange(state => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('junction:model-state', state); });
   presence = new PresenceTracker({ lanClients: () => lanServer?.authenticatedClients?.() || 0, relayStatus: () => localBrainRelay ? { enabled: true, error: localBrainRelay.lastError || null } : null });
   appearanceStore = new AppearanceStore(path.join(app.getPath('userData'), 'appearance.json'));

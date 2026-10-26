@@ -35,6 +35,31 @@ function parseReference(message) {
   return { action: "reference", command, topic, direction };
 }
 
+// Short owner commands inside a task's own chat. Live, "We're gunna pass for now?" got "I'll pause
+// the objective" from the chat model while the task kept running. Applied only when the chat has a task.
+const NEGATED = /\b(?:don'?t|do not|never|no need to|not yet)\b/i;
+const BARE_PAUSE = /\b(?:pause(?: (?:it|this|that))?|hold off|put (?:it|this|that) on hold|(?:pass|stop|leave it|park it|call it)(?: (?:there|here))? for (?:now|today|tonight|a bit)|take a break)\b/i;
+const BARE_RESUME = /\b(?:resume|unpause|carry on|keep going|pick (?:it|this|that) back up)\b/i;
+function parseTaskChatControl(content) {
+  const message = String(content || "").trim();
+  // Questions about pausing are not commands; polite requests ("can you pause it?") still are.
+  if (!message || message.length > 120 || NEGATED.test(message) || /^(?:how|what|why|when|where|which|who|is|are|does|do|did|should|shall)\b/i.test(message)) return null;
+  if (BARE_PAUSE.test(message)) return { action: "reference", command: "pause", topic: "", direction: "", bare: true };
+  if (BARE_RESUME.test(message)) return { action: "reference", command: "continue", topic: "", direction: "", bare: true };
+  return null;
+}
+
+const PAUSE_CLAIM = /\b(?:I(?:'ll| will) (?:pause|hold|stop working on)|I(?:'ve| have) (?:paused|stopped)|(?:is|remains|stays) (?:now )?paused|paused (?:as |per |at )?your request)\b/i;
+const RESUME_CLAIM = /\b(?:I(?:'ll| will) (?:resume|restart|continue working on)|I(?:'ve| have) resumed)\b/i;
+/** A chat reply may not claim it changed the task; the task's real status is the authority. */
+function correctTaskClaims(content, task) {
+  if (!task || typeof content !== "string") return content;
+  const status = String(task.status).toLowerCase().replaceAll("_", " ");
+  if (PAUSE_CLAIM.test(content) && task.status !== "PAUSED") return `${content}\n\n(Correction from Junction: “${String(task.goal).slice(0, 80)}” is not paused; it is ${status}. Say “pause” here, or use Tasks, to pause it.)`;
+  if (RESUME_CLAIM.test(content) && task.status === "PAUSED") return `${content}\n\n(Correction from Junction: “${String(task.goal).slice(0, 80)}” is still paused. Say “resume” here to restart it.)`;
+  return content;
+}
+
 function parseNethraChat(content) {
   const message = String(content || "").trim();
   if (/^(?:what are you (?:currently )?working on|what (?:tasks|objectives) do you have scheduled|(?:show|list) my scheduled (?:tasks|objectives)|what are your (?:current |scheduled )?(?:tasks|objectives))[?!.]*$/i.test(message)) return { action: "list" };
@@ -108,7 +133,14 @@ async function handleReference({ api, instruction, conversationId, requestId, so
 }
 
 async function handleNethraChat({ api, content, conversationId = null, requestId = crypto.randomUUID(), source = "desktop" }) {
-  const instruction = parseNethraChat(content);
+  let instruction = parseNethraChat(content);
+  if (!instruction && conversationId) {
+    const bare = parseTaskChatControl(content);
+    if (bare) {
+      const { objectives } = await api.dispatch("nethra.list", {}, `${requestId}:linked`, source);
+      if (objectives.some(task => task.conversationId === conversationId && !FINISHED.has(task.status))) instruction = bare;
+    }
+  }
   if (!instruction) return null;
   if (instruction.action === "clarify") return instruction.text;
   if (instruction.action === "help") return "Nethra agent mode is available. Say ‘Nethra, research <topic>’ or ‘Start a Nethra goal: <objective>’ to create durable work. Say ‘Nethra status’ to see saved objectives, or ‘continue / pause / cancel / check that task now’ to steer the one in this chat. Use Tasks for plans, evidence and approvals.";
@@ -126,4 +158,4 @@ async function handleNethraChat({ api, content, conversationId = null, requestId
   return `Nethra objective ${task.id} is ${task.status}.`;
 }
 
-module.exports = { parseNethraChat, parseReference, resolveObjective, handleNethraChat };
+module.exports = { parseNethraChat, parseReference, parseTaskChatControl, correctTaskClaims, resolveObjective, handleNethraChat };

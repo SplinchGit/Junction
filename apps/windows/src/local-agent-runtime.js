@@ -153,8 +153,10 @@ function waitWithSignal(promise, signal) {
 }
 
 class LocalAgentRuntime {
-  constructor({ researchCoordinator, toolRegistry = null, createCodeDelegation = null, auditPath = "", fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", limits = {}, warmer = null, retention = undefined, freeMemory = undefined, profile = null, coordinator = inferenceCoordinator } = {}) {
+  constructor({ researchCoordinator, toolRegistry = null, createCodeDelegation = null, auditPath = "", fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", limits = {}, warmer = null, retention = undefined, freeMemory = undefined, profile = null, coordinator = inferenceCoordinator, reviewReply = null } = {}) {
     this.fetch = fetchImpl; this.ollamaUrl = ollamaUrl.replace(/\/$/, "");
+    // The host checks a finished reply against facts the model cannot change (e.g. a task's status).
+    this.reviewReply = reviewReply;
     this.coordinator = coordinator;
     this.warmer = warmer || new ModelWarmer({ fetchImpl, ollamaUrl: this.ollamaUrl, contextTokens: DEFAULT_CONTEXT_TOKENS, ...(retention ? { retention } : {}), ...(freeMemory ? { freeMemory } : {}), profile });
     this.preparedModel = null;
@@ -299,6 +301,11 @@ class LocalAgentRuntime {
    * private reasoning and visible output apart instead of one long "working" spinner.
    */
   async run(request) {
+    const result = await this.runUnreviewed(request);
+    if (!this.reviewReply || typeof result?.content !== "string") return result;
+    try { return { ...result, content: this.reviewReply(result.content, request) }; } catch { return result; }
+  }
+  async runUnreviewed(request) {
     if (!request.forceSearch && isSelfCapabilityQuestion(request.goal)) {
       request.signal?.throwIfAborted();
       return capabilityResult(this.tools.definitions({allowCodeDelegation:true}).map(tool => tool.function.name), request);
