@@ -1,12 +1,17 @@
 package com.splinch.junction.feature.projects
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.splinch.junction.data.sync.lan.DeviceCommandSync
 import com.splinch.junction.data.sync.lan.NethraClient
@@ -37,6 +42,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var watchCalendar by rememberSaveable { mutableStateOf(false) }
     var watchGmail by rememberSaveable { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val taskScroll = rememberScrollState()
     var objectives by remember { mutableStateOf<List<Map<*, *>>>(emptyList()) }
     var settings by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
     var hostStatus by remember { mutableStateOf<Map<*, *>>(emptyMap<String, Any?>()) }
@@ -58,6 +64,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
         }
     }
     LaunchedEffect(initialTaskId) { if (initialTaskId != null) selectedId = initialTaskId }
+    LaunchedEffect(selectedId) { taskScroll.scrollTo(0) }
     LaunchedEffect(Unit) {
         ObjectiveStatusMonitor.restore(context)
         objectives = ObjectiveStatusMonitor.objectives.value
@@ -115,11 +122,11 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { refreshFailed = true; connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "The paired Windows host is unavailable." }
             }
-            delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) 60_000L else 180_000L)
+            delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) { if (selectedId != null) 3_000L else 60_000L } else 180_000L)
         }
     }
 
-    OutlinedCard(modifier.fillMaxWidth()) {
+    OutlinedCard(modifier.fillMaxWidth().verticalScroll(taskScroll), shape = RoundedCornerShape(4.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Objectives", style = MaterialTheme.typography.titleLarge)
             Text("Active commitments and decisions from your paired PC.")
@@ -214,56 +221,51 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
             val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
             val ended = withStatus.filter { it.second.ended }.take(5)
-            if (open.isEmpty()) Text("Nethra has no open tasks. Ask her in chat to look after something.")
-            (open + ended).forEach { (objective, status) ->
-                OutlinedButton(enabled = !busy, onClick = {
-                    val id = objective["id"]?.toString() ?: return@OutlinedButton
-                    selectedId = id
-                    scope.launch {
-                        busy = true
-                        try {
-                            val result = client.request("nethra.openChat", mapOf("id" to id))
-                            val conversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
-                            val app = context.applicationContext as JunctionApplication
-                            if (app.container.database.chatDao().getSessionById(conversationId) == null) app.container.pairedConversationSyncManager.syncNow()
-                            check(app.container.database.chatDao().getSessionById(conversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
-                            refresh()
-                            onOpenChat(conversationId)
-                        } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
-                        finally { busy = false }
-                    }
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (selectedId == null) {
+                if (open.isEmpty()) Text("Nethra has no open tasks. Ask her in chat to look after something.")
+                (open + ended).forEach { (objective, status) ->
+                    val id = objective["id"]?.toString() ?: return@forEach
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                            .clickable(enabled = !busy) { selectedId = id }
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             StatusDot(status.light)
                             Spacer(Modifier.width(8.dp))
                             Text(status.label, style = MaterialTheme.typography.labelLarge)
                         }
-                        Text(objective["goal"]?.toString().orEmpty(), maxLines = 2)
-                        if (objective["mode"] == "ONGOING") Text("Ongoing monitoring", style = MaterialTheme.typography.labelSmall)
+                        Text(objective["goal"]?.toString().orEmpty(), style = MaterialTheme.typography.titleSmall, maxLines = 2)
+                        val tracking = objective["tracking"] as? Map<*, *>
+                        tracking?.get("doing")?.toString()?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2) }
                         ObjectiveStatus.stepLine(objective)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        objective["summary"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Nethra's note: $it", style = MaterialTheme.typography.bodySmall, maxLines = 3) }
+                        if (!status.ended) Text(if (objective["continuous"] == true) "Continuous passes on" else "Continuous passes off", style = MaterialTheme.typography.labelSmall)
                     }
                 }
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    if (!status.ended && objective["mode"] != "ONGOING") {
-                        androidx.compose.material3.Switch(
-                            checked = objective["continuous"] == true,
-                            enabled = !busy && connected,
-                            onCheckedChange = { on -> perform("nethra.configure", mapOf("id" to objective["id"], "revision" to objective["revision"], "continuous" to on)) }
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (objective["continuous"] == true) "Continuous" else "Continuous off", style = MaterialTheme.typography.labelMedium)
-                        Spacer(Modifier.weight(1f))
-                    }
-                    TextButton(onClick = { selectedId = objective["id"]?.toString() }) { Text("Manage") }
-                }
-            }
+            } else TextButton(onClick = { selectedId = null; detail = null }) { Text("← All tasks") }
             val task = detail?.get("task") as? Map<*, *>
+            if (selectedId != null && task == null) Text("Loading this task's work log…", style = MaterialTheme.typography.bodyMedium)
             if (task != null && task["id"]?.toString() == selectedId) {
                 HorizontalDivider()
                 Text(task["goal"]?.toString().orEmpty(), style = MaterialTheme.typography.titleMedium)
+                OutlinedButton(enabled = !busy && connected, onClick = {
+                    val id = task["id"]?.toString() ?: return@OutlinedButton
+                    scope.launch {
+                        busy = true
+                        try {
+                            val result = client.request("nethra.openChat", mapOf("id" to id))
+                            val taskConversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
+                            val app = context.applicationContext as JunctionApplication
+                            if (app.container.database.chatDao().getSessionById(taskConversationId) == null) app.container.pairedConversationSyncManager.syncNow()
+                            check(app.container.database.chatDao().getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
+                            onOpenChat(taskConversationId)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
+                        finally { busy = false }
+                    }
+                }) { Text("Open task chat") }
                 Text("${task["status"]} · ${wakeLabel(task["nextWakeAt"])}")
                 task["nextDirectionCheckAt"]?.let { Text("Direction review: ${dateLabel(it)}") }
                 task["lastExecutionAt"]?.let { Text("Last run: ${dateLabel(it)}") }
@@ -293,11 +295,12 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     }
                     OutlinedButton(enabled = !busy && connected, onClick = { confirm = "delete" }) { Text("Delete") }
                 }
-                if (!terminal && task["mode"] != "ONGOING") Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                if (!terminal) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     androidx.compose.material3.Switch(checked = task["continuous"] == true, enabled = !busy && connected, onCheckedChange = { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "continuous" to it)) })
                     Spacer(Modifier.width(8.dp))
-                    Text("Keep working continuously", style = MaterialTheme.typography.bodyMedium)
+                    Text("Continue useful steps in short passes", style = MaterialTheme.typography.bodyMedium)
                 }
+                if (!terminal && task["mode"] == "ONGOING") Text("After the plan is complete, monitoring follows its normal schedule.", style = MaterialTheme.typography.bodySmall)
                 if (editing && !terminal) {
                     OutlinedTextField(editGoal, { if (it.length <= 12_000) editGoal = it }, label = { Text("Goal") }, minLines = 2, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     OutlinedTextField(editCriteria, { if (it.length <= 4000) editCriteria = it }, label = { Text("What does done look like? (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
@@ -385,10 +388,10 @@ private fun TaskTracking(progress: Map<*, *>?, performance: Map<*, *>?, mode: St
     (progress["lastAccomplished"] as? Map<*, *>)?.let { Text("Last recorded (${dateLabel(it["at"])}): ${it["line"]}", style = MaterialTheme.typography.bodySmall) }
     (progress["wake"] as? Map<*, *>)?.let { Text("Wakes ${dateLabel(it["at"])}: ${it["reason"]}", style = MaterialTheme.typography.bodySmall) }
     maps(progress["outputs"]).takeIf { it.isNotEmpty() }?.let { outputs -> Text("Outputs: " + outputs.joinToString { it["path"].toString().substringAfterLast('\\').substringAfterLast('/') }, style = MaterialTheme.typography.bodySmall) }
-    Text("Activity from host records", style = MaterialTheme.typography.titleSmall)
+    Text("Work log · newest first", style = MaterialTheme.typography.titleSmall)
     val activity = maps(progress["activity"])
     if (activity.isEmpty()) Text("No recorded actions yet.", style = MaterialTheme.typography.bodySmall)
-    activity.take(6).forEach { item ->
+    activity.take(14).forEach { item ->
         val actor = item["actor"]?.toString() ?: "Junction"
         val model = item["model"]?.toString()?.takeIf { it.isNotBlank() }
         Text("• ${item["line"]} · ${dateLabel(item["at"])} · $actor${model?.let { " ($it)" } ?: ""}", style = MaterialTheme.typography.bodySmall)

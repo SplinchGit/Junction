@@ -163,6 +163,39 @@ test('assisted Codex activity carries the model recorded in its result',t=>{
   assert.equal(view.lastAccomplished.model,'gpt-5.6-luna');
 });
 
+test('a task journal shows public model updates, plan changes and tool starts during a pass',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Compare two ideas',continuous:true});
+  let calls=0;
+  const runtime={withInference:fn=>fn(),chat:async()=>{
+    calls++;
+    if(calls===1)return {message:{role:'assistant',content:'I will compare both ideas.',tool_calls:[{function:{name:'update_plan',arguments:{steps:['Read both ideas','Compare them'],completedSteps:[]}}}]}};
+    return toolCalls(['schedule_wake',{at:f.now()+3_600_000,reason:'Check after new evidence arrives'}]);
+  }};
+  await new NethraScheduler({store:f.store,now:f.now,execute:(item,options)=>new NethraRunner({store:f.store,runtime,now:f.now}).execute(item,options)}).tick();
+  const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
+  assert.ok(view.activity.some(item=>item.event==='MODEL_STEP'&&item.model==='qwen3:30b'));
+  assert.ok(view.activity.some(item=>item.event==='NETHRA_UPDATE'&&/compare both ideas/i.test(item.line)));
+  assert.ok(view.activity.some(item=>item.event==='nethra_plan_updated'&&/2 steps/i.test(item.line)));
+  assert.ok(view.activity.some(item=>item.event==='TOOL_STARTED'&&/schedul/i.test(item.line)));
+  assert.ok(view.activity.every(item=>Number.isSafeInteger(item.at)&&item.actor));
+});
+
+test('the current tool is visible while a task is running',t=>{
+  const f=fixture(t),task=f.store.create({goal:'Research the policy'}),claim=f.store.claim('owner');
+  f.store.recordActivity(task.id,'TOOL_STARTED',{tool:'web_search',model:'qwen3:30b'},claim.token);
+  const view=progressView(f.store.get(task.id),f.store,{now:f.now(),liveTaskId:task.id});
+  assert.match(view.doing,/search.*web/i);
+  f.store.release(task.id,claim.token);
+});
+
+test('a failed tool attempt is recorded in the work log',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Find a source'});let calls=0;
+  const runtime={withInference:fn=>fn(),chat:async()=>++calls===1?toolCalls(['unknown_tool',{}]):toolCalls(['schedule_wake',{at:f.now()+3_600_000,reason:'Try another source'}])};
+  await new NethraScheduler({store:f.store,now:f.now,execute:(item,options)=>new NethraRunner({store:f.store,runtime,now:f.now}).execute(item,options)}).tick();
+  const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
+  assert.ok(view.activity.some(item=>item.event==='TOOL_FAILED'&&item.kind==='error'&&/unknown tool/i.test(item.line)));
+});
+
 test('quiet hours cross midnight and defer outcome posts until they end, without duplicates',t=>{
   const settings={proactiveUpdates:'ALL',quietHours:{enabled:true,start:'22:00',end:'07:00'}};
   const at=(h,m=0)=>{const date=new Date(2026,9,24,h,m);return date;};

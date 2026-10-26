@@ -10,6 +10,7 @@ const IDEMPOTENT_READS=new Set(['list_directory','read_file','performance_report
 const MODEL='qwen3:30b';
 const MAX_ITERATIONS=12,MAX_TOOLS=10,MAX_MS=10*60_000;
 function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\S]*?(?:<\/think>|$)/gi,'').slice(0,max);}
+function publicFailure(value){const message=cleanText(value,160).replace(/[\r\n]/g,' ');return /(?:token|secret|password|authorization|credential|api[_-]?key)\s*[:=]/i.test(message)?'Check the local model or source connection.':message;}
 function bounded(value,max=4000){const text=JSON.stringify(value);return text.length<=max?text:JSON.stringify({truncated:true,data:text.slice(0,max-100)});}
 function evidenceFingerprint(evidence){return createHash('sha256').update(JSON.stringify([...new Set(evidence.map(item=>JSON.stringify(item)))].sort())).digest('hex');}
 // Fail closed for explicit unsupported work and claimed external outcomes. This
@@ -96,9 +97,10 @@ class NethraRunner {
       // Context is deliberately bounded; durable evidence and progress live in the store.
       const definitions=this.tools.definitions({child,task}),fit=fitContext(messages,definitions);
       if(fit.compacted)this.store.recordContextCompaction?.(task.id,fit);
-      const response=await this.runtime.withInference(yielded=>inference(()=>this.runtime.chat(MODEL,messages,definitions,yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:CONTEXT_TOKENS,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET})),combined,{priority:'background',preemptible:true});
+      const response=await this.runtime.withInference(yielded=>inference(()=>{this.store.recordActivity?.(task.id,'MODEL_STEP',{model:MODEL,scope:child?'child':'task'},token);return this.runtime.chat(MODEL,messages,definitions,yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:CONTEXT_TOKENS,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET});}),combined,{priority:'background',preemptible:true});
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
-      return {role:'assistant',content:cleanText(m.content,3000),...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
+      const content=cleanText(m.content,3000);if(content.trim())this.store.recordActivity?.(task.id,'NETHRA_UPDATE',{model:MODEL,text:content.trim().slice(0,300),scope:child?'child':'task'},token);
+      return {role:'assistant',content,...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
     };
     const toolMessage=(name,value)=>({role:'tool',tool_name:name,content:bounded(value)});
     const child=async objective=>{
@@ -164,11 +166,12 @@ class NethraRunner {
           check();budget.tools++;const {name,args}=nativeCall(call);let result;
           try{
             this.tools.validate(name,args);
+            this.store.recordActivity?.(task.id,'TOOL_STARTED',{tool:name,model:MODEL},token);
             if(name==='update_plan'){
               if(!args.steps.length||args.steps.some(step=>!step.trim())||new Set(args.steps).size!==args.steps.length)throw Error('Plan requires distinct nonempty steps');
               const completedSteps=args.completedSteps||state.completedSteps;
               if(completedSteps.some(step=>!args.steps.includes(step)))throw Error('Completed steps must appear in the saved plan');
-              await persist({plan:args.steps,completedSteps,pendingSteps:args.steps.filter(s=>!completedSteps.includes(s))});result={saved:true};
+              await persist({plan:args.steps,completedSteps,pendingSteps:args.steps.filter(s=>!completedSteps.includes(s))},'nethra_plan_updated');result={saved:true};
             }else if(name==='finish_objective'){
               if(!state.plan.length||!state.evidence.some(e=>e.result&&!e.result.error&&['web_search','read_file','write_draft','list_directory','calendar_event','gmail_message'].includes(e.tool)))throw Error('Completion requires a saved plan and actual tool evidence relevant to the objective and success criteria');
               if(state.pendingSteps.length)throw Error('Mark completed plan steps with update_plan before finishing');
@@ -194,6 +197,7 @@ class NethraRunner {
             combined.throwIfAborted();
             if(error instanceof ApprovalRequired){await persist({status:'WAITING_FOR_USER',summary:error.message},'nethra_approval_required');return state;}
             result={error:cleanText(error.message,400)};
+            this.store.recordActivity?.(task.id,'TOOL_FAILED',{tool:name,error:publicFailure(result.error),model:MODEL},token);
           }
           messages.push(toolMessage(name,result));
         }

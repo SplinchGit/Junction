@@ -518,7 +518,7 @@ private fun JunctionApp(
                     Text("Tasks", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp))
                     Text("Nethra works on these on your PC, even when this app is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
                     com.splinch.junction.feature.projects.NethraPanel(
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+                        modifier = Modifier.fillMaxSize().padding(12.dp),
                         conversationId = null,
                         onOpenChat = { id -> scope.launch { chatManager.switchToSession(id); selectedTab = JunctionTab.CHAT; selectedWorkspace = JunctionWorkspace.CHAT } }
                     )

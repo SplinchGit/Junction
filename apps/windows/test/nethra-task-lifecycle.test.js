@@ -38,6 +38,36 @@ test('switching continuous work on wakes a sleeping task; off keeps normal pacin
   assert.throws(()=>f.store.configure(task.id,{continuous:'yes'},on.revision,'cont-bad'),/continuous/);
 });
 
+test('continuous ongoing work takes another pass while plan steps remain, but monitoring waits',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Self Improvement',mode:'ONGOING',continuous:true});
+  const scheduler=new NethraScheduler({store:f.store,now:f.now,execute:async(_task,{checkpoint})=>{
+    checkpoint({plan:['Measure','Compare'],pendingSteps:['Compare'],evidence:[{tool:'performance_report',result:{sampleCount:3}}]});
+    return {status:'SLEEPING'};
+  }});
+  await scheduler.tick();
+  const next=f.store.get(task.id);
+  assert.equal(next.nextWakeAt,f.now()+CONTINUOUS_GAP_MS);
+  assert.equal(next.wakeReason.kind,'CONTINUE');
+  f.store.update(task.id,{pendingSteps:[],lastMilestoneAt:f.now(),nextWakeAt:f.now()+86_400_000,wakeReason:{kind:'MONITOR',detail:'Routine check',at:f.now()+86_400_000}},'MILESTONE_VERIFIED');
+  const monitoring=f.store.configure(task.id,{continuous:true},f.store.get(task.id).revision,'monitor-on');
+  assert.equal(monitoring.nextWakeAt,f.now()+86_400_000,'finished ongoing work keeps its monitor schedule');
+});
+
+test('continuous toggle saves during an active pass and changes sleeping ongoing pacing',t=>{
+  const f=fixture(t),task=f.store.create({goal:'Self Improvement',mode:'ONGOING',continuous:false});
+  const claim=f.store.claim('owner');
+  assert.equal(claim.task.id,task.id);
+  f.store.update(task.id,{pendingSteps:['Compare results']},'nethra_plan_updated',claim.token);
+  const active=f.store.configure(task.id,{continuous:true},task.revision,'active-on');
+  assert.equal(active.continuous,true);
+  f.store.release(task.id,claim.token);
+  f.store.update(task.id,{status:'SLEEPING',pendingSteps:['Compare results'],nextWakeAt:f.now()+86_400_000,wakeReason:{kind:'CONTINUE',detail:'Continue the plan',at:f.now()+86_400_000}},'SETUP');
+  const on=f.store.configure(task.id,{continuous:true},f.store.get(task.id).revision,'sleep-on');
+  assert.equal(on.nextWakeAt,f.now());
+  const off=f.store.configure(task.id,{continuous:false},on.revision,'sleep-off');
+  assert.equal(off.nextWakeAt,f.now()+f.store.settings().minWakeMs);
+});
+
 test('Codex development drafts require a Windows opt-in on the objective',async t=>{
   const f=fixture(t);
   await assert.rejects(f.api.dispatch('nethra.create',{goal:'Improve Junction',allowCodeWork:true},'code-phone','android'),/Windows/);

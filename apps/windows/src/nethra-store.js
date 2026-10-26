@@ -113,6 +113,8 @@ class NethraStore {
   }
   events(id,after=0) {return this.db.prepare('SELECT * FROM events WHERE taskId=? AND seq>? ORDER BY seq LIMIT 500').all(id,after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
   recentTaskEvents(id,limit=30) {this.get(id);if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new Error('Invalid task event limit');return this.db.prepare('SELECT * FROM events WHERE taskId=? ORDER BY seq DESC LIMIT ?').all(id,limit).map(r=>({...r,detail:JSON.parse(r.detail)}));}
+  /** Small public work-log entries; the lease fences stale runners without changing task revision. */
+  recordActivity(id,kind,detail,leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);if(!['MODEL_STEP','NETHRA_UPDATE','TOOL_STARTED','TOOL_FAILED'].includes(kind))throw new Error('Invalid task activity');const body=JSON.stringify(detail||{});if(Buffer.byteLength(body)>1000)throw new Error('Task activity is too large');this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(id,this.now(),kind,body);});}
   milestoneEvents(id,after=0) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE taskId=? AND kind=? AND seq>? ORDER BY seq').all(id,'MILESTONE_VERIFIED',after).map(r=>({...r,detail:JSON.parse(r.detail)}));}
   recentEvents(since=0,limit=40) {return this.db.prepare('SELECT seq,taskId,at,kind,detail FROM events WHERE at>=? ORDER BY seq DESC LIMIT ?').all(since,limit).map(row=>({seq:row.seq,taskId:row.taskId,at:row.at,kind:row.kind,detail:JSON.parse(row.detail)}));}
   attention(id) {return this.db.prepare('SELECT body,state FROM attention WHERE taskId=? ORDER BY dueAt DESC,id DESC LIMIT 500').all(id).reverse().map(row=>({...JSON.parse(row.body),state:row.state}));}
@@ -139,10 +141,15 @@ class NethraStore {
     if(patch.priority!==undefined&&(!Number.isSafeInteger(patch.priority)||patch.priority<1||patch.priority>5))throw new Error('Invalid objective priority');
     if(patch.checkIn!==undefined&&!CHECK_INS.has(patch.checkIn))throw new Error('Invalid check-in policy');
     if(patch.sources!==undefined&&!validSources(patch.sources))throw new Error('Invalid watched sources');
-    const task=this.get(id);if(task.revision!==revision)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
-    this.assertLease(id);Object.assign(task,patch);
+    const pacingOnly=Object.keys(patch).length===1&&Object.hasOwn(patch,'continuous');
+    const task=this.get(id);if(task.revision!==revision&&!pacingOnly)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
+    // The owner can change pacing while a model pass is active. The runner reads the
+    // saved preference at the end of the pass; other edits still require no lease.
+    if(!pacingOnly)this.assertLease(id);Object.assign(task,patch);
     // Switching continuous work on brings a sleeping objective back now.
-    if(patch.continuous===true&&task.status==='SLEEPING'&&task.mode!=='ONGOING'){task.nextWakeAt=this.now();task.wakeReason={kind:'OWNER',detail:'Continuous work switched on',at:this.now()};}if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}
+    if(patch.continuous===true&&task.status==='SLEEPING'&&(task.mode!=='ONGOING'||(task.pendingSteps||[]).length)){task.nextWakeAt=this.now();task.wakeReason={kind:'OWNER',detail:'Continuous work switched on',at:this.now()};}
+    if(patch.continuous===false&&task.status==='SLEEPING'&&(task.wakeReason?.kind==='CONTINUE'||task.wakeReason?.detail==='Continuous work switched on')&&task.nextWakeAt<this.now()+this.settings().minWakeMs){task.nextWakeAt=this.now()+this.settings().minWakeMs;task.wakeReason={kind:'CONTINUE',detail:'Continue at normal task pace',at:task.nextWakeAt};}
+    if(patch.checkIn!==undefined){task.nextDirectionCheckAt=checkInDelay(task.checkIn)?this.now()+checkInDelay(task.checkIn):null;task.lastDirectionAt=this.now();task.lastMilestoneCount=(task.completedSteps||[]).length;}
     if(task.status==='SLEEPING'&&task.mode==='ONGOING'&&task.lastMilestoneAt!=null&&(patch.autonomy!==undefined||patch.mode!==undefined)){
       task.nextWakeAt=monitorWakeAt(task,this.now());
       const attentionDue=this.pendingAttentionDue(id);if(Number.isSafeInteger(attentionDue))task.nextWakeAt=Math.min(task.nextWakeAt,attentionDue);

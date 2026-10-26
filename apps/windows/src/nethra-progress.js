@@ -61,6 +61,12 @@ function waitingFor(task,store,now=Date.now()){
 }
 
 function activityLine(event){
+  if(event.kind==='CLAIMED')return {kind:'running',line:'Started a work pass',actor:'Junction',model:null};
+  if(event.kind==='MODEL_STEP')return {kind:'running',line:event.detail?.scope==='child'?'Child researcher is working through the next action':'Thinking through the next action',actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
+  if(event.kind==='NETHRA_UPDATE')return {kind:'update',line:short(event.detail?.text,300),actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
+  if(event.kind==='TOOL_STARTED')return {kind:'running',line:toolStartedLine(event.detail?.tool),actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
+  if(event.kind==='TOOL_FAILED')return {kind:'error',line:`${short(event.detail?.tool,40).replaceAll('_',' ')} failed: ${short(event.detail?.error,160)}`,actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
+  if(event.kind==='nethra_plan_updated'){const total=event.detail?.plan?.length||0,left=event.detail?.pendingSteps?.length||0;return {kind:'verified',line:`Updated plan: ${total} steps, ${left} left`,actor:'Nethra',model:'qwen3:30b'};}
   if(event.kind==='nethra_tool_result'){
     const item=event.detail?.evidence?.at(-1);
     if(!item)return null;
@@ -77,7 +83,14 @@ function activityLine(event){
   if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action',actor:'Nethra',model:'qwen3:30b'};
   if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step',actor:'Nethra',model:'qwen3:30b'};
   if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='nethra_sleeping')return {kind:'waiting',line:'Scheduled a later check',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='nethra_budget_reached')return {kind:'waiting',line:'Saved this pass to continue later',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='EXECUTED')return {kind:'pass',line:'Finished this work pass',actor:'Junction',model:null};
   return null;
+}
+function toolStartedLine(tool){
+  const names={update_plan:'Updating the plan',schedule_wake:'Scheduling the next check',request_input:'Preparing a question for you',consult_codex:'Asking Codex for advice',consult_claude:'Asking Claude for advice',web_search:'Searching the web',read_file:'Reading a file',list_directory:'Listing a directory',performance_report:'Reading measured performance',host_diagnostics:'Checking the host'};
+  return names[tool]||`Running ${short(tool,40).replaceAll('_',' ')}`;
 }
 function recordedModel(result){
   const model=result?.model;
@@ -90,13 +103,14 @@ function progressView(task,store,{now=Date.now(),liveTaskId=null}={}){
   const evidence=(task.evidence||[]).slice(-6).map(item=>({tool:item.tool,line:evidenceLine(item),ok:!item.result?.error}));
   let last=null,activity=[];
   try{
-    const events=store.recentTaskEvents?.(task.id,40)||store.events(task.id,0).slice(-40).reverse();
-    activity=events.map(event=>{const detail=activityLine(event);return detail?{at:event.at,event:event.kind,...detail}:null;}).filter(Boolean).slice(0,8);
+    const events=store.recentTaskEvents?.(task.id,60)||store.events(task.id,0).slice(-60).reverse();
+    activity=events.map(event=>{const detail=activityLine(event);return detail?{at:event.at,event:event.kind,...detail}:null;}).filter(Boolean).slice(0,14);
     const accomplished=activity.find(item=>['verified','advice'].includes(item.kind));
     if(accomplished)last={at:accomplished.at,line:accomplished.line,event:accomplished.event,actor:accomplished.actor,model:accomplished.model};
   }catch{}
   const live=liveTaskId===task.id;
-  const doing=live?`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`:FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';
+  const liveAction=live&&['MODEL_STEP','TOOL_STARTED','CLAIMED'].includes(activity[0]?.event)?activity[0].line:null;
+  const doing=live?(liveAction||`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`):FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';
   const next=FINISHED.has(task.status)?null:task.pendingSteps?.[0]?short(task.pendingSteps[0],200):task.status==='SLEEPING'&&task.mode==='ONGOING'?'Check watched sources and report verified changes':(task.plan||[]).length?null:'Make a plan';
   return {
     doing,next,lastAccomplished:last,

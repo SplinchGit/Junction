@@ -203,7 +203,7 @@ fun ChatScreen(
     if (objectivesOpen) {
         ModalBottomSheet(onDismissRequest = { objectivesOpen = false; objectiveFocusId = null }) {
             NethraPanel(
-                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
                 initialGoal = objectiveDraft,
                 initialTaskId = objectiveFocusId,
                 conversationId = currentSessionId,
