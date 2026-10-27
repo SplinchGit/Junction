@@ -46,6 +46,31 @@ test('objective quotas bound storage and active scheduler work while preserving 
   assert.throws(()=>store.create({goal:'Third'}),/storage limit/i);
 });
 test('reopening preserves checkpoints and event order',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'Inspect sources'});s.update(a.id,{plan:['inspect'],evidence:['found source']});s.close();const r=f.open();assert.deepEqual(r.get(a.id).evidence,['found source']);assert.deepEqual(r.events(a.id).map(e=>e.kind),['CREATED','UPDATED']);});
+test('reopening preserves the exact pending review as task working context',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Improve prompt context'});
+  const checkpoint={activeHypothesis:'Trim prompt assembly',lastReview:{verdict:'REVISE',feedback:'Measure serialization separately; keep prompt bytes identical.',proposal:'Trim prompt assembly',acceptance:'Pass the prompt parity tests',reviewedBy:'Codex'}};
+  s.update(task.id,{contextCheckpoint:checkpoint});s.close();
+  assert.deepEqual(f.open().get(task.id).contextCheckpoint,checkpoint);
+});
+test('an owner redirect clears a review tied to the superseded proposal',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Improve prompt context'});
+  const reviewed=s.update(task.id,{contextCheckpoint:{lastReview:{verdict:'REVISE',proposal:'Old optimisation',feedback:'Needs a baseline'}}});
+  const redirected=s.redirect(task.id,'Focus on task reliability instead',reviewed.revision,'redirect-context');
+  assert.deepEqual(redirected.contextCheckpoint,{});
+});
+test('editing objective success criteria clears an obsolete working review',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Improve prompt context'});
+  const reviewed=s.update(task.id,{contextCheckpoint:{lastReview:{verdict:'REVISE',proposal:'Old optimisation',feedback:'Needs a baseline'}}});
+  const edited=s.edit(task.id,{successCriteria:'Improve task reliability'},reviewed.revision,'edit-context');
+  assert.deepEqual(edited.contextCheckpoint,{});
+});
+test('measured prompt size is journaled without prompt text',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Inspect context'});
+  s.recordContextMeasurement(task.id,{estimatedTokens:900,actualTokens:812,budget:6400});
+  const event=f.open().events(task.id).at(-1);
+  assert.equal(event.kind,'CONTEXT_MEASURED');
+  assert.deepEqual(event.detail,{estimatedTokens:900,actualTokens:812,budget:6400});
+});
 test('database lease excludes another process and fences expired workers',t=>{const f=fixture(t),s=f.open(),r=f.open(),a=s.create({goal:'One'});s.create({goal:'Two'});const c=s.claim('a',100);assert.equal(r.claim('b',100),null);f.advance(101);assert.equal(r.recoverExpired(),1);const next=r.claim('b',100);assert.ok(next);assert.throws(()=>s.update(c.task.id,{summary:'stale'},'UPDATED',c.token),/lease/i);assert.equal(s.renew(a.id,c.token,100),false);});
 test('control requests are idempotent and revisions reject stale clients',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'One'});const p=s.control(a.id,'pause',a.revision,'request-1');assert.equal(p.status,'PAUSED');assert.deepEqual(s.control(a.id,'pause',a.revision,'request-1'),p);assert.throws(()=>s.control(a.id,'resume',a.revision,'request-2'),/revision/i);assert.throws(()=>s.control(a.id,'cancel',p.revision,'request-1'),/request/i);});
 test('resume cannot bypass a rejected approval or an unanswered owner question',t=>{

@@ -5,6 +5,7 @@ const {monitorWakeAt,wakeReason}=require('./nethra-scheduler');
 const {CONTEXT_TOKENS,fitContext}=require('./model-context');
 const {evidenceLine}=require('./nethra-progress');
 const {objectiveBrief}=require('./nethra-brief');
+const {checkpointAfterTool,seedForWake}=require('./nethra-checkpoint');
 // Re-running these with identical arguments in one wake returns the same data; say so instead.
 const IDEMPOTENT_READS=new Set(['list_directory','read_file','performance_report','host_diagnostics','web_search','calendar_event','gmail_message','phone_result']);
 const MODEL='qwen3:30b';
@@ -87,7 +88,7 @@ class NethraRunner {
   }
   async _execute(task,{signal,token,checkpoint,inference}){
     const timeout=AbortSignal.timeout(MAX_MS);const combined=signal?AbortSignal.any([signal,timeout]):timeout;
-    let state={status:'ACTIVE',plan:task.plan||[],summary:task.summary||'',evidence:task.evidence||[],completedSteps:task.completedSteps||[],pendingSteps:task.pendingSteps||[],nextWakeAt:null};
+    let state={status:'ACTIVE',plan:task.plan||[],summary:task.summary||'',evidence:task.evidence||[],contextCheckpoint:task.contextCheckpoint||{},completedSteps:task.completedSteps||[],pendingSteps:task.pendingSteps||[],nextWakeAt:null};
     const persist=async(patch,event='nethra_checkpoint')=>{
       state={...state,...patch};const saved=checkpoint?await checkpoint(patch,event):await this.store.update(task.id,patch,event,token);
       if(saved===null||saved===false)throw Error('Objective lease was lost');
@@ -95,14 +96,20 @@ class NethraRunner {
     };
     const budget={iterations:0,tools:0,children:0,childIterations:0};const childRunId=token||randomUUID();
     const check=()=>{combined.throwIfAborted();this.store.assertLease?.(task.id,token);if(budget.tools>=MAX_TOOLS)throw Error('Nethra execution budget exhausted');};
+    let seed=null;
     const chat=async(messages,child=false)=>{
       check();if(budget.iterations>=MAX_ITERATIONS)throw Error('Nethra iteration budget exhausted');budget.iterations++;if(child)budget.childIterations++;
       // Context is deliberately bounded; durable evidence and progress live in the store.
+      if(!child&&seed){
+        seed.workingCheckpoint=state.contextCheckpoint;
+        try{messages[1].content=seedForWake(seed);}catch(error){throw new ContextOverflowError(error.message);}
+      }
       const definitions=this.tools.definitions({child,task}),fit=fitContext(messages,definitions);
-      if(fit.compacted)this.store.recordContextCompaction?.(task.id,fit);
+      if(fit.compacted||fit.removedExchanges)this.store.recordContextCompaction?.(task.id,fit);
       if(!fit.fits)throw new ContextOverflowError(`Nethra's protected prompt needs about ${fit.estimatedTokens} tokens, above its ${fit.budget}-token input budget. The host must reduce this task's context before it can continue.`);
       const response=await this.runtime.withInference(yielded=>inference(()=>{this.store.recordActivity?.(task.id,'MODEL_STEP',{model:MODEL,scope:child?'child':'task'},token);return this.runtime.chat(MODEL,messages,definitions,yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:CONTEXT_TOKENS,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET});}),combined,{priority:'background',preemptible:true});
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
+      if(Number.isSafeInteger(response.prompt_eval_count)&&response.prompt_eval_count>=0)this.store.recordContextMeasurement?.(task.id,{estimatedTokens:fit.estimatedTokens,actualTokens:response.prompt_eval_count,budget:fit.budget});
       const content=cleanText(m.content,3000);if(content.trim())this.store.recordActivity?.(task.id,'NETHRA_UPDATE',{model:MODEL,text:content.trim().slice(0,300),scope:child?'child':'task'},token);
       return {role:'assistant',content,...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
     };
@@ -153,12 +160,12 @@ class NethraRunner {
       // action was one item in the evidence list. State it first: bounded() truncates from the end.
       const brief=await objectiveBrief({task,tools:this.tools}).catch(()=>({}));
       const approvedBriefing=approvedNow.length?{approvedActionsCompletedThisWake:approvedNow,approvedActionsNote:'The owner approved these exact actions and Junction has already completed them; the file hashes are in this list. Do not request approval for them again. Mark the related plan steps completed with update_plan, check the success criteria against this evidence, and call finish_objective if they are met.'}:{};
-      const seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,actionsSoFar:state.evidence.slice(-12).map(evidenceLine),...(brief.hostFacts?{hostFacts:brief.hostFacts}:{}),readRoots:task.readRoots||[],workspace:task.workspace,allowCodeWork:task.allowCodeWork===true,codeWorkNote:task.allowCodeWork?'You may propose scoped Junction code work. Codex reviews the exact proposal first. If propose_code_work returns REVISE, use its full review to revise the proposal; no draft exists. A READY draft still needs the owner to start implementation, then review and apply the exact verified patch. Continue read-only work while waiting.':'Code work has not been enabled for this objective.',openExperiments:(this.store.experiments?.(task.id)||[]).filter(item=>item.status!=='CONCLUDED').slice(0,3).map(item=>({id:item.id,metric:item.metric,status:item.status,hypothesis:String(item.hypothesis||'').slice(0,160),changeAt:item.changeAt||null})),autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,ownerInputs:(task.ownerInputs||[]).slice(-6).map(item=>({...item,text:String(item.text??'').slice(0,500)})),...((task.ownerInputs||[]).some(item=>item.kind==='note')?{ownerInputsNote:'Inputs with kind note are messages the owner wrote in this objective\'s chat since it started; take the latest into account.'}:{}),...(task.continuous?{workMode:'Continuous: keep working through the plan in steps; do not schedule a distant wake while useful steps remain.'}:{}),...(task.redirectedAt&&(task.ownerInputs||[]).at(-1)?.kind==='redirect'&&!state.pendingSteps.length?{ownerRedirect:{text:task.ownerInputs.at(-1).text,at:new Date(task.redirectedAt).toISOString(),note:'The owner changed direction. Keep verified evidence, then save a revised plan with update_plan before acting. Approvals for the old plan were superseded.'}}:{}),now:new Date(this.now()).toISOString(),nowMs:this.now()};
+      seed={...approvedBriefing,objective:task.objective||task.goal||task.title,successCriteria:task.successCriteria,workingCheckpoint:state.contextCheckpoint,actionsSoFar:state.evidence.slice(-12).map(evidenceLine),...(brief.hostFacts?{hostFacts:brief.hostFacts}:{}),readRoots:task.readRoots||[],workspace:task.workspace,allowCodeWork:task.allowCodeWork===true,codeWorkNote:task.allowCodeWork?'You may propose scoped Junction code work. Codex reviews the exact proposal first. If propose_code_work returns REVISE, use its full review to revise the proposal; no draft exists. A READY draft still needs the owner to start implementation, then review and apply the exact verified patch. Continue read-only work while waiting.':'Code work has not been enabled for this objective.',openExperiments:(this.store.experiments?.(task.id)||[]).filter(item=>item.status!=='CONCLUDED').slice(0,3).map(item=>({id:item.id,metric:item.metric,status:item.status,hypothesis:String(item.hypothesis||'').slice(0,160),changeAt:item.changeAt||null})),autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',attention:this.store.attention?.(task.id).filter(item=>item.state==='CLAIMED').slice(-5).map(({kind,source,evidenceRef,dueAt})=>({kind,source,evidenceRef,dueAt}))||[],plan:state.plan,completedSteps:state.completedSteps,ownerInputs:(task.ownerInputs||[]).slice(-6).map(item=>({...item,text:String(item.text??'').slice(0,500)})),...((task.ownerInputs||[]).some(item=>item.kind==='note')?{ownerInputsNote:'Inputs with kind note are messages the owner wrote in this objective\'s chat since it started; take the latest into account.'}:{}),...(task.continuous?{workMode:'Continuous: keep working through the plan in steps; do not schedule a distant wake while useful steps remain.'}:{}),...(task.redirectedAt&&(task.ownerInputs||[]).at(-1)?.kind==='redirect'&&!state.pendingSteps.length?{ownerRedirect:{text:task.ownerInputs.at(-1).text,at:new Date(task.redirectedAt).toISOString(),note:'The owner changed direction. Keep verified evidence, then save a revised plan with update_plan before acting. Approvals for the old plan were superseded.'}}:{}),now:new Date(this.now()).toISOString(),nowMs:this.now()};
       // Orientation, then raw evidence, go last: bounded() truncates from the end, which must never drop owner notes or the time.
       if(brief.recentCommits)seed.recentCommits=brief.recentCommits;
       if(brief.repositoryGuide)seed.repositoryGuide=brief.repositoryGuide;
       seed.evidence=state.evidence.slice(-3).map(item=>({tool:item.tool,result:JSON.parse(bounded(item.result??null,600))}));
-      let messages=[{role:'system',content:system},{role:'user',content:bounded(seed,9000)}],proseOnlyTurns=0;const calledThisWake=new Map();
+      let messages=[{role:'system',content:system},{role:'user',content:''}],proseOnlyTurns=0;const calledThisWake=new Map();
       for(;budget.iterations<MAX_ITERATIONS;){
         check();const message=await chat(messages);messages.push(message);
         if(!message.tool_calls?.length){
@@ -200,7 +207,7 @@ class NethraRunner {
               if(IDEMPOTENT_READS.has(name)&&calledThisWake.has(callKey)){messages.push(toolMessage(name,{repeated:true,note:`You already called ${name} with these arguments earlier in this wake (call ${calledThisWake.get(callKey)}); nothing has changed. Choose a different next step: update_plan, read a different file, consult an advisor, propose_code_work, start or evaluate an experiment, or schedule_wake.`}));continue;}
               calledThisWake.set(callKey,budget.tools);
               result=name==='delegate_task'?await child(args.task):await this.tools.execute(name,args,{...task,evidence:state.evidence},{signal:combined,token});
-              await persist({evidence:[...state.evidence,{tool:name,result:JSON.parse(bounded(result))}].slice(-30)},'nethra_tool_result');
+              await persist({evidence:[...state.evidence,{tool:name,result:JSON.parse(bounded(result))}].slice(-30),contextCheckpoint:checkpointAfterTool(state.contextCheckpoint,{name,args,result,at:this.now()})},'nethra_tool_result');
             }
           }catch(error){
             combined.throwIfAborted();

@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {objectiveBrief,repositoryGuide}=require('../src/nethra-brief');
 const {NethraRunner}=require('../src/nethra-runner');
+const {checkpointAfterTool,seedForWake}=require('../src/nethra-checkpoint');
 
 function repo(t){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-brief-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -43,4 +44,48 @@ test('the seed carries the brief and bounds owner notes, keeping the newest',asy
   assert.ok(seed.repositoryGuide);
   assert.equal(seed.ownerInputs.length,6);assert.match(seed.ownerInputs.at(-1).text,/^note 8/);assert.ok(seed.ownerInputs[0].text.length<=500);
   const keys=Object.keys(seed);assert.ok(keys.indexOf('ownerInputs')<keys.indexOf('repositoryGuide'),'notes come before orientation');assert.equal(keys.at(-1),'evidence');
+});
+
+test('a rejected proposal remains in the working checkpoint on the next wake',async()=>{
+  const task={id:'review-replay',goal:'Improve prompt context',allowCodeWork:true,readRoots:[],workspace:'C:\\work',plan:['Review one change'],completedSteps:[],pendingSteps:['Review one change'],evidence:[],ownerInputs:[]};
+  const store={get:()=>task,update:(_id,patch)=>Object.assign(task,patch),approvals:()=>[],actions:()=>[]};
+  const review='VERDICT: REVISE\nMeasure serialization separately. Preserve exact prompt bytes and tool order.';
+  let calls=0;
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[{function:calls++===0?{name:'propose_code_work',arguments:{task:'Trim prompt assembly',acceptance:'Measure serialization separately and preserve prompt bytes'}}:{name:'schedule_wake',arguments:{at:Date.now()+3_600_000,reason:'Gather timing data'}}}]}})};
+  const runner=new NethraRunner({store,runtime});
+  runner.tools.execute=async()=>({status:'REVISE',draftCreated:false,reviewedBy:'Codex',review});
+  await runner.execute(task);
+  assert.equal(task.contextCheckpoint.lastReview.verdict,'REVISE');
+  assert.equal(task.contextCheckpoint.lastReview.feedback,review);
+  let nextSeed;
+  const nextRuntime={withInference:fn=>fn(),chat:async(_model,messages)=>{nextSeed=JSON.parse(messages[1].content);return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'schedule_wake',arguments:{at:Date.now()+3_600_000,reason:'Continue later'}}}]}};}};
+  await new NethraRunner({store,runtime:nextRuntime}).execute(task);
+  assert.equal(nextSeed.workingCheckpoint.lastReview.feedback,review);
+  assert.equal(nextSeed.workingCheckpoint.lastReview.proposal,'Trim prompt assembly');
+});
+
+test('a task records Ollama prompt tokens beside its preflight estimate',async()=>{
+  const task={id:'measured-context',goal:'Inspect context',plan:[],evidence:[],ownerInputs:[],readRoots:[],workspace:'C:\\work'};
+  const measured=[];
+  const store={get:()=>task,update:(_id,patch)=>Object.assign(task,patch),approvals:()=>[],actions:()=>[],recordContextMeasurement:(_id,entry)=>measured.push(entry)};
+  const runtime={withInference:fn=>fn(),chat:async()=>({prompt_eval_count:812,message:{role:'assistant',content:'',tool_calls:[{function:{name:'schedule_wake',arguments:{at:Date.now()+3_600_000,reason:'later'}}}]}})};
+  await new NethraRunner({store,runtime}).execute(task);
+  assert.equal(measured.length,1);
+  assert.equal(measured[0].actualTokens,812);
+  assert.ok(measured[0].estimatedTokens<=measured[0].budget);
+});
+
+test('seed shedding keeps JSON structure, latest owner direction and reviewer objections',()=>{
+  const seed={objective:'Self Improvement',workingCheckpoint:{lastReview:{verdict:'REVISE',feedback:'Need a controlled baseline.'}},ownerInputs:Array.from({length:12},(_,i)=>({kind:'note',text:`direction ${i}: `+'x'.repeat(450)})),recentCommits:Array.from({length:12},(_,i)=>`commit ${i} `+'c'.repeat(130)),repositoryGuide:'g'.repeat(2200),actionsSoFar:Array.from({length:12},()=> 'action '+'a'.repeat(140)),evidence:[{tool:'read_file',result:{content:'e'.repeat(900)}}]};
+  const result=JSON.parse(seedForWake(seed,2500));
+  assert.equal(result.objective,'Self Improvement');
+  assert.equal(result.workingCheckpoint.lastReview.feedback,'Need a controlled baseline.');
+  assert.match(result.ownerInputs.at(-1).text,/direction 11/);
+  assert.ok(JSON.stringify(result).length<=2500);
+  assert.deepEqual(JSON.parse(seedForWake({objective:'Ordinary work',workingCheckpoint:{}},2500)),{objective:'Ordinary work',workingCheckpoint:{}});
+});
+test('a saved code draft is recorded as awaiting owner action, never as applied code',()=>{
+  const next=checkpointAfterTool({}, {name:'propose_code_work',args:{task:'Fix context',acceptance:'All context tests pass'},result:{status:'DRAFT',workId:'draft-1',reviewedBy:'Codex'},at:100});
+  assert.deepEqual(next.codeWorkDraft,{workId:'draft-1',status:'DRAFT',at:100,codeChanged:false});
+  assert.equal(next.lastReview,undefined);
 });
