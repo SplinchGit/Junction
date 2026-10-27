@@ -78,7 +78,11 @@ function activityLine(event){
   if(event.kind==='EXPERIMENT_CONCLUDED'&&event.detail?.result)return {kind:'verified',line:verdictLine(event.detail.result),actor:'Junction',model:null};
   if(event.kind==='EXPERIMENT_INVALIDATED')return {kind:'error',line:`Experiment withdrawn as invalid: ${short(event.detail?.reason,160)}`,actor:'Junction',model:null};
   if(event.kind==='EXPERIMENT_ABANDONED')return {kind:'verified',line:`Abandoned unused experiment baseline: ${short(event.detail?.reason,160)}`,actor:'Junction',model:null};
-  if(event.kind==='CONTEXT_COMPACTED')return {kind:'waiting',line:`Compacted ${event.detail?.compacted??'some'} older tool result${event.detail?.compacted===1?'':'s'} to fit the context window`,actor:'Junction',model:null};
+  if(event.kind==='CONTEXT_COMPACTED'){
+    const results=event.detail?.compacted||0,exchanges=event.detail?.removedExchanges||0;
+    const parts=[];if(results)parts.push(`${results} older tool result${results===1?'':'s'}`);if(exchanges)parts.push(`${exchanges} older exchange${exchanges===1?'':'s'}`);
+    return {kind:'waiting',line:`Compacted ${parts.join(' and ')||'older context'} to fit the context window`,actor:'Junction',model:null};
+  }
   if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit',actor:'Junction',model:null};
   if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`,actor:'Nethra',model:'qwen3:30b'};
   if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence',actor:'Nethra',model:'qwen3:30b'};

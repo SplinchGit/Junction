@@ -4,6 +4,7 @@ const assert=require('node:assert/strict');
 const {CONTEXT_TOKENS,fitContext,COMPACTED}=require('../src/model-context');
 const {buildWorldInferencePayload}=require('../src/world-bridge');
 const {NethraRunner}=require('../src/nethra-runner');
+const {progressView}=require('../src/nethra-progress');
 
 test('every 30B caller asks for the same context, so the resident model is never reloaded',()=>{
   assert.equal(CONTEXT_TOKENS,8192);
@@ -51,4 +52,9 @@ test('an oversized protected prompt blocks the wake before any model request',as
   assert.equal(modelCalls,0);
   assert.equal(outcome.status,'BLOCKED');
   assert.match(outcome.summary,/context|prompt/i);
+});
+test('task activity describes removed exchanges rather than reporting zero compaction',()=>{
+  const task={id:'visible-compaction',status:'SLEEPING',plan:[],completedSteps:[],pendingSteps:[],evidence:[]};
+  const store={recentTaskEvents:()=>[{at:100,kind:'CONTEXT_COMPACTED',detail:{compacted:0,removedExchanges:2,estimatedTokens:5800,budget:6400}}]};
+  assert.match(progressView(task,store).activity[0].line,/2 older exchanges/);
 });
