@@ -17,12 +17,23 @@ const estimateTokens=value=>Math.ceil(JSON.stringify(value).length/CHARS_PER_TOK
  */
 function fitContext(messages,tools,{contextTokens=CONTEXT_TOKENS,reserveTokens=1536+256}={}){
   const budget=contextTokens-reserveTokens,fixed=estimateTokens(tools||[]);
-  let compacted=0;
+  let compacted=0,removedExchanges=0;
   for(let i=2;i<messages.length-1&&fixed+estimateTokens(messages)>budget;i++){
     if(messages[i].role!=='tool'||messages[i].content===COMPACTED)continue;
     messages[i]={...messages[i],content:COMPACTED};compacted++;
   }
-  return {compacted,estimatedTokens:fixed+estimateTokens(messages),budget,fits:fixed+estimateTokens(messages)<=budget};
+  // Once raw results are gone, old assistant calls and their tool replies can still
+  // fill the window. Remove complete exchanges so no orphaned tool reply remains.
+  while(fixed+estimateTokens(messages)>budget&&messages.length>4){
+    let end=3;
+    if(messages[2].role==='assistant'&&messages[2].tool_calls?.length){
+      while(end<messages.length&&messages[end].role==='tool')end++;
+    }else if(messages[2].role==='assistant'&&messages[3]?.role==='user')end=4;
+    if(messages.length-end<2)break; // Keep the latest exchange as well as system and seed.
+    messages.splice(2,end-2);removedExchanges++;
+  }
+  const estimatedTokens=fixed+estimateTokens(messages);
+  return {compacted,removedExchanges,estimatedTokens,budget,fits:estimatedTokens<=budget};
 }
 
 module.exports={CONTEXT_TOKENS,fitContext,estimateTokens,COMPACTED};

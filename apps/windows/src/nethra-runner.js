@@ -11,6 +11,7 @@ const MODEL='qwen3:30b';
 // Longer useful plans may need several distinct reads and tool turns in one pass; the
 // wall-clock deadline still yields with a durable checkpoint if the model is slow.
 const MAX_ITERATIONS=24,MAX_TOOLS=20,MAX_MS=10*60_000;
+class ContextOverflowError extends Error{}
 function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\S]*?(?:<\/think>|$)/gi,'').slice(0,max);}
 function publicFailure(value){const message=cleanText(value,160).replace(/[\r\n]/g,' ');return /(?:token|secret|password|authorization|credential|api[_-]?key)\s*[:=]/i.test(message)?'Check the local model or source connection.':message;}
 function bounded(value,max=4000){const text=JSON.stringify(value);return text.length<=max?text:JSON.stringify({truncated:true,data:text.slice(0,max-100)});}
@@ -99,6 +100,7 @@ class NethraRunner {
       // Context is deliberately bounded; durable evidence and progress live in the store.
       const definitions=this.tools.definitions({child,task}),fit=fitContext(messages,definitions);
       if(fit.compacted)this.store.recordContextCompaction?.(task.id,fit);
+      if(!fit.fits)throw new ContextOverflowError(`Nethra's protected prompt needs about ${fit.estimatedTokens} tokens, above its ${fit.budget}-token input budget. The host must reduce this task's context before it can continue.`);
       const response=await this.runtime.withInference(yielded=>inference(()=>{this.store.recordActivity?.(task.id,'MODEL_STEP',{model:MODEL,scope:child?'child':'task'},token);return this.runtime.chat(MODEL,messages,definitions,yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:CONTEXT_TOKENS,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET});}),combined,{priority:'background',preemptible:true});
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
       const content=cleanText(m.content,3000);if(content.trim())this.store.recordActivity?.(task.id,'NETHRA_UPDATE',{model:MODEL,text:content.trim().slice(0,300),scope:child?'child':'task'},token);
@@ -211,6 +213,7 @@ class NethraRunner {
       }
       return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000,wakeReason:wakeReason('CONTINUE','Continue after the per-wake work budget; progress was saved',this.now()+60_000)},'nethra_budget_reached');
     }catch(error){
+      if(error instanceof ContextOverflowError)return await persist({status:'BLOCKED',summary:error.message,nextWakeAt:null},'nethra_context_blocked');
       if(/Nethra (?:execution|iteration) budget exhausted/.test(error.message))return await persist({status:'SLEEPING',summary:'Execution budget reached; progress saved for the next run.',nextWakeAt:this.now()+60_000,wakeReason:wakeReason('CONTINUE','Continue after the per-wake work budget; progress was saved',this.now()+60_000)},'nethra_budget_reached');
       throw error;
     }
