@@ -30,6 +30,25 @@ test('runner uses native messages, explicit completion and never persists thinki
   assert.equal(result.status,'COMPLETED');assert.equal(result.summary,'Report ready');assert.equal(seen[1].at(-1).role,'tool');
   assert.equal(JSON.stringify(f.task).includes('private reasoning'),false);
 });
+test('a requested local file read cannot be replaced by a directory listing and a copied success criterion',async t=>{
+  const f=fixture(t);
+  f.task.objective='Read the approved facts file at facts.txt, then create report.md with its witness';
+  f.task.successCriteria='report.md contains amber junction 47';
+  fs.writeFileSync(path.join(f.root,'facts.txt'),'Acceptance witness: amber junction 47');
+  const steps=['Read facts file','Write report'];let call=0;
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',content:'',tool_calls:++call===1?[
+    {function:{name:'list_directory',arguments:{path:f.root}}},
+    {function:{name:'write_draft',arguments:{path:'report.md',content:'amber junction 47'}}},
+    {function:{name:'update_plan',arguments:{steps,completedSteps:steps}}}
+  ]:call===2?[
+    {function:{name:'finish_objective',arguments:{summary:'The report contains amber junction 47'}}}
+  ]:[
+    {function:{name:'request_input',arguments:{question:'I still need to read the approved facts file.'}}}
+  ]}})};
+  const result=await new NethraRunner({store:f.store,runtime}).execute(f.task);
+  assert.equal(result.status,'WAITING_FOR_USER');
+  assert.equal(result.evidence.some(item=>item.tool==='read_file'),false);
+});
 test('one work pass can perform more than ten distinct steps before yielding',async t=>{
   const f=fixture(t);for(let i=0;i<11;i++)fs.writeFileSync(path.join(f.root,`source-${i}.txt`),`Report evidence ${i}`);
   let calls=0;const wakeAt=Date.now()+600_000;

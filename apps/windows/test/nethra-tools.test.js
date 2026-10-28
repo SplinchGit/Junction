@@ -2,6 +2,20 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {NethraTools}=require('../src/nethra-tools');
+
+test('relative reads resolve in approved roots and reject ambiguous names',async t=>{
+  const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-read-roots-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const workspace=path.join(root,'workspace'),readRoot=path.join(root,'reference');
+  fs.mkdirSync(workspace);fs.mkdirSync(readRoot);
+  fs.writeFileSync(path.join(readRoot,'facts.txt'),'approved reference');
+  const tools=new NethraTools({store:{get:()=>({status:'ACTIVE'})}});
+  const task={id:'read-roots',workspace,readRoots:[readRoot]};
+  assert.match((await tools.execute('read_file',{path:'facts.txt'},task)).content,/approved reference/);
+  fs.writeFileSync(path.join(workspace,'facts.txt'),'workspace copy');
+  await assert.rejects(tools.execute('read_file',{path:'facts.txt'},task),/ambiguous/i);
+});
 test('watched Google evidence must be fresh and authorized before it can prove progress',async()=>{
   let reads=0;const state={status:'STALE',lastSyncAt:100};
   const calendar={status:()=>state,event:()=>{reads++;return {summary:'University coursework deadline'};}};

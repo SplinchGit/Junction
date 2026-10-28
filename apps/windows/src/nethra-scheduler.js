@@ -33,6 +33,7 @@ function safeFailure(error) {
 function isRoutineMonitor(task,now,sourceStatus,hasReasoningAttention){
   return task.mode==='ONGOING'&&task.lastMilestoneAt!=null&&(task.sources||[]).length>0
     &&!(task.pendingSteps||[]).length&&Boolean(sourceStatus)&&!hasReasoningAttention
+    &&task.wakeReason?.kind!=='OWNER'
     &&!(Number.isSafeInteger(task.nextDirectionCheckAt)&&task.nextDirectionCheckAt<=now);
 }
 // Continuous objectives start their next step this soon after a productive cycle. The owner's

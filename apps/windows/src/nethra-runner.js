@@ -17,6 +17,7 @@ function cleanText(value,max=4000){return String(value||'').replace(/<think>[\s\
 function publicFailure(value){const message=cleanText(value,160).replace(/[\r\n]/g,' ');return /(?:token|secret|password|authorization|credential|api[_-]?key)\s*[:=]/i.test(message)?'Check the local model or source connection.':message;}
 function bounded(value,max=4000){const text=JSON.stringify(value);return text.length<=max?text:JSON.stringify({truncated:true,data:text.slice(0,max-100)});}
 function evidenceFingerprint(evidence){return createHash('sha256').update(JSON.stringify([...new Set(evidence.map(item=>JSON.stringify(item)))].sort())).digest('hex');}
+function ownerInputKey(inputs){return JSON.stringify((inputs||[]).at(-1)||null);}
 // Fail closed for explicit unsupported work and claimed external outcomes. This
 // is a capability check, not a general semantic verifier of model prose.
 function unsupportedOutcome(text){return /(?:^|[.!?;]\s*)(?:please\s+)?(?:send|publish|deploy|purchase|transfer|upload)\b|\b(?:email|e-mail|message|mail)\b[^.!?]{0,80}\b(?:sent|delivered)\b|\b(?:sent|delivered)\b[^.!?]{0,80}\b(?:email|e-mail|message|mail)\b/i.test(text);}
@@ -38,6 +39,9 @@ function completionError(task,state,summary,store){
   const requirements=[task.goal||task.objective||'',task.successCriteria||''].join('. ');
   if(unsupportedOutcome(requirements)||unsupportedOutcome(summary))return 'The requested external or destructive action is unavailable; owner review is required.';
   const evidence=state.evidence.filter(e=>e.result&&!e.result.error);
+  if(/\b(?:read|inspect)\b[^.!?]{0,160}\b(?:file|document)\b/i.test(requirements)
+    &&!evidence.some(e=>e.tool==='read_file'&&typeof e.result.content==='string'))
+    return 'This objective requires a recorded read_file result from the requested local source before completion.';
   const draftRequired=/\b(?:write|create|save|replace|update|draft)\b[^.!?]{0,80}\b(?:draft|report|file|document)\b|\bdraft\b/i.test(requirements+' '+summary);
   if(draftRequired){
     const verified=evidence.some(e=>{
@@ -68,6 +72,7 @@ function systemPrompt(tools){
     tools.has('consult_codex')||tools.has('consult_claude')?'consult_codex and consult_claude reach separate signed-in advisors for read-only advice, limited by the owner\'s live plan usage. They cannot edit code or prove a benchmark; verify their suggestions yourself. If one is resting, use the other, or schedule_wake for its reset time; propose_code_work does not need either to be available.':'',
     tools.has('experiment')?'Existing experiment IDs are in your seed and available from experiment list. Evaluate one before starting another; abandon an unused baseline with a reason if its change was deferred. A code change counts only when you cite its Work Activity draft (workId) or a commit sha that changed apps/windows/src; never claim a code change that was not made, and never ask the owner to restart for one. Do not ask the owner for an experiment ID already in host records. Only an evaluated verdict can prove a speedup.':'',
     tools.has('phone_check')?'Use phone_check only for read-only checks of the paired phone; its result arrives later as device attention, which you read with phone_result.':'',
+    tools.has('reply_to_owner')?'If the latest owner input in this task chat asks a question, use reply_to_owner for a concise truthful answer from current evidence; continue the objective separately. This reply is sent only to the linked owner chat and is not approval or completion.':'',
     tools.has('calendar_event')||tools.has('gmail_message')?'Calendar attention names an event you may read with calendar_event; gmail attention names a new inbox message whose headers (never body) you may read with gmail_message. You cannot send mail. Never claim to have checked mail or calendar without such evidence.':'',
     'If claimed attention includes DIRECTION_REVIEW, ask one concise actionable direction question with request_input after reviewing verified progress; this is not permission for external action. Child delegation is sequential, depth one, at most two tasks. File reads use approved roots; drafts stay in the objective workspace.'
   ].filter(Boolean).join(' ');
@@ -77,7 +82,7 @@ const OBJECTIVE_THINKING_BUDGET=1100;
 class NethraRunner {
   constructor({store,runtime,researchCoordinator,deviceCommands=null,calendar=null,gmail=null,proposeCodeWork=null,performanceReport=null,localData=null,workStatus=null,advisorLimits=null,now=()=>Date.now()}={}){
     if(!store||!runtime)throw Error('Nethra requires a store and local runtime');
-    Object.assign(this,{store,runtime,now});this.tools=new NethraTools({store,researchCoordinator,deviceCommands,calendar,gmail,proposeCodeWork,performanceReport,localData,workStatus,advisorLimits});
+    Object.assign(this,{store,runtime,now,localData});this.tools=new NethraTools({store,researchCoordinator,deviceCommands,calendar,gmail,proposeCodeWork,performanceReport,localData,workStatus,advisorLimits});
   }
   async execute(task,{signal,token,checkpoint,inference=callback=>callback()}={}){
     if(typeof this.runtime.withInference!=='function')throw Error('Shared inference lock is required');
@@ -96,11 +101,16 @@ class NethraRunner {
     };
     const budget={iterations:0,tools:0,children:0,childIterations:0};const childRunId=token||randomUUID();
     const check=()=>{combined.throwIfAborted();this.store.assertLease?.(task.id,token);if(budget.tools>=MAX_TOOLS)throw Error('Nethra execution budget exhausted');};
-    let seed=null;
+    let seed=null,lastModelOwnerInputKey=null;
     const chat=async(messages,child=false)=>{
       check();if(budget.iterations>=MAX_ITERATIONS)throw Error('Nethra iteration budget exhausted');budget.iterations++;if(child)budget.childIterations++;
       // Context is deliberately bounded; durable evidence and progress live in the store.
+      let inputKey=null;
       if(!child&&seed){
+        const ownerInputs=this.store.get(task.id).ownerInputs||[];
+        inputKey=ownerInputKey(ownerInputs);
+        seed.ownerInputs=ownerInputs.slice(-6).map(item=>({...item,text:String(item.text??'').slice(0,500)}));
+        if(ownerInputs.some(item=>item.kind==='note'))seed.ownerInputsNote='Inputs with kind note are messages the owner wrote in this objective\'s chat since it started; take the latest into account.';
         seed.workingCheckpoint=state.contextCheckpoint;
         try{messages[1].content=seedForWake(seed);}catch(error){throw new ContextOverflowError(error.message);}
       }
@@ -110,6 +120,8 @@ class NethraRunner {
       const response=await this.runtime.withInference(yielded=>inference(()=>{this.store.recordActivity?.(task.id,'MODEL_STEP',{model:MODEL,scope:child?'child':'task'},token);return this.runtime.chat(MODEL,messages,definitions,yielded?AbortSignal.any([combined,yielded]):combined,null,null,{thinking:true,num_ctx:CONTEXT_TOKENS,num_predict:1536,onThinking:()=>{},thinkingBudget:OBJECTIVE_THINKING_BUDGET});}),combined,{priority:'background',preemptible:true});
       combined.throwIfAborted();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
       if(Number.isSafeInteger(response.prompt_eval_count)&&response.prompt_eval_count>=0)this.store.recordContextMeasurement?.(task.id,{estimatedTokens:fit.estimatedTokens,actualTokens:response.prompt_eval_count,budget:fit.budget});
+      if(!child&&inputKey!==ownerInputKey(this.store.get(task.id).ownerInputs))return {stale:true};
+      if(!child)lastModelOwnerInputKey=inputKey;
       const content=cleanText(m.content,3000);if(content.trim())this.store.recordActivity?.(task.id,'NETHRA_UPDATE',{model:MODEL,text:content.trim().slice(0,300),scope:child?'child':'task'},token);
       return {role:'assistant',content,...(m.tool_calls?.length?{tool_calls:m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};})}:{})};
     };
@@ -167,7 +179,7 @@ class NethraRunner {
       seed.evidence=state.evidence.slice(-3).map(item=>({tool:item.tool,result:JSON.parse(bounded(item.result??null,600))}));
       let messages=[{role:'system',content:system},{role:'user',content:''}],proseOnlyTurns=0;const calledThisWake=new Map();
       for(;budget.iterations<MAX_ITERATIONS;){
-        check();const message=await chat(messages);messages.push(message);
+        check();const message=await chat(messages);if(message.stale)continue;messages.push(message);
         if(!message.tool_calls?.length){
           if(++proseOnlyTurns>=2)return await persist({status:'WAITING_FOR_USER',summary:'I could not choose a permitted next action. Please give me a more specific next step or an approved source.',nextWakeAt:null},'nethra_direction_required');
           messages.push({role:'user',content:'Continue using native tools. Prose alone does not complete the objective. Explicitly finish, schedule a wake, or request input.'});continue;
@@ -175,6 +187,10 @@ class NethraRunner {
         proseOnlyTurns=0;
         for(const call of message.tool_calls){
           check();budget.tools++;const {name,args}=nativeCall(call);let result;
+          if(lastModelOwnerInputKey!==ownerInputKey(this.store.get(task.id).ownerInputs)){
+            messages.push(toolMessage(name,{stale:true,note:'The owner sent a new task-chat message before this call ran. Re-read the latest owner input and choose the next step again.'}));
+            continue;
+          }
           try{
             this.tools.validate(name,args);
             this.store.recordActivity?.(task.id,'TOOL_STARTED',{tool:name,model:MODEL},token);
@@ -202,6 +218,13 @@ class NethraRunner {
                 messages.push(toolMessage(name,result));continue;
               }
               await persist({status:'WAITING_FOR_USER',summary:cleanText(args.question,1000)},'nethra_input_required');return state;
+            }else if(name==='reply_to_owner'){
+              const latest=(this.store.get(task.id).ownerInputs||[]).at(-1);
+              if(!latest?.requestId||!task.conversationId||!this.localData?.conversation(task.conversationId))throw Error('No linked owner message is available for a reply');
+              const messageId=`nethra-reply-${createHash('sha256').update(`${task.id}:${latest.requestId}`).digest('hex').slice(0,32)}`;
+              const posted=this.localData.addMessageOnce(task.conversationId,messageId,'assistant',cleanText(args.message,1200),'JUNCTION');
+              result={posted:posted.created,messageId,conversationId:task.conversationId};
+              await persist({evidence:[...state.evidence,{tool:name,result}].slice(-30)},'nethra_owner_reply');
             }else{
               const callKey=`${name}:${JSON.stringify(args)}`;
               if(IDEMPOTENT_READS.has(name)&&calledThisWake.has(callKey)){messages.push(toolMessage(name,{repeated:true,note:`You already called ${name} with these arguments earlier in this wake (call ${calledThisWake.get(callKey)}); nothing has changed. Choose a different next step: update_plan, read a different file, consult an advisor, propose_code_work, start or evaluate an experiment, or schedule_wake.`}));continue;}

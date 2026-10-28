@@ -352,6 +352,33 @@ class NethraStore {
     task.unchangedWakes=0;
     return this.save(task,'OWNER_NOTE',{text:text.trim().slice(0,500)});
   });}
+  /** One idempotent owner turn in a task's linked chat, regardless of entry transport. */
+  chatTurn(id,text,requestId) {return this.transaction(()=>{
+    if(typeof text!=='string'||!text.trim()||text.length>4000)throw new Error('Invalid task chat message');
+    if(typeof requestId!=='string'||!requestId||requestId.length>160)throw new Error('A bounded request ID is required');
+    const clean=text.trim(),binding=canonical({kind:'chatTurn',id,text:clean});
+    const old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
+    if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return JSON.parse(old.body);}
+    const task=this.get(id);
+    if(TERMINAL.has(task.status))throw new Error('Task is already finished');
+    const pendingApproval=task.status==='WAITING_FOR_USER'&&this.approvals(id).some(item=>item.status==='PENDING');
+    const answered=task.status==='WAITING_FOR_USER'&&!pendingApproval;
+    if(answered){
+      if(this.db.prepare('SELECT 1 FROM lease WHERE taskId=?').get(id))throw new Error('Task is executing; wait for its checkpoint');
+      task.ownerInputs=[...(task.ownerInputs||[]),{text:clean,at:this.now(),requestId,kind:'answer'}].slice(-100);
+      task.summary='';task.status='ACTIVE';task.nextWakeAt=null;
+    }else{
+      task.ownerInputs=[...(task.ownerInputs||[]),{text:clean,at:this.now(),requestId,kind:'note'}].slice(-100);
+      if(task.status==='SLEEPING'){
+        task.nextWakeAt=Math.min(task.nextWakeAt??Infinity,this.now()+15_000);
+        task.wakeReason={kind:'OWNER',detail:'You added a note in the task chat',at:task.nextWakeAt};
+      }
+    }
+    task.unchangedWakes=0;
+    const result={task:this.save(task,answered?'OWNER_INPUT':'OWNER_NOTE',{text:clean.slice(0,500)}),kind:answered?'answer':'note',pendingApproval};
+    this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));
+    return result;
+  });}
   /**
    * Deletes an objective and its journal, approvals, attention, receipts and workspace drafts.
    * A running step is fenced first. The linked chat is kept as an ordinary conversation.

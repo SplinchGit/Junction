@@ -40,7 +40,8 @@ const { NethraScheduler } = require("./nethra-scheduler");
 const { NethraRunner } = require("./nethra-runner");
 const { createCodeWorkProposer } = require("./nethra-code-work");
 const { NethraApi } = require("./nethra-api");
-const { handleNethraChat, correctTaskClaims } = require("./nethra-chat");
+const { correctTaskClaims } = require("./nethra-chat");
+const { handleOwnerWorkInstruction: routeOwnerWorkInstruction } = require("./owner-work-instruction");
 const { configureStartup } = require("./nethra-startup");
 let foreman, foremanApi;
 let nethraStore, nethraScheduler, nethraApi, deviceCommands, hostInitialized=false;
@@ -96,21 +97,8 @@ function taskForConversation(conversationId){
   return nethraStore.list().find(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status))||null;
 }
 async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop'){
-  const nethraReply=await handleNethraChat({api:nethraApi,content,conversationId,requestId,source});
-  if(nethraReply)return nethraReply;
-  // In a task's chat, the owner is talking to that task: an answer it was waiting for
-  // resumes it; anything else becomes a note it reads on its next step, and chat replies too.
-  const task=taskForConversation(conversationId);
-  if(task){
-    const text=String(content).trim().slice(0,4000);
-    const approvals=nethraStore.approvals(task.id).some(item=>item.status==='PENDING');
-    if(task.status==='WAITING_FOR_USER'&&!approvals){
-      try{nethraStore.answer(task.id,text,task.revision,String(requestId||crypto.randomUUID()));return `Thanks. I've added that to "${String(task.goal).slice(0,100)}" and I'm continuing with it now.`;}
-      catch(error){recordStartupIssue('task chat answer',error);}
-    }else{try{nethraStore.note(task.id,text);}catch(error){recordStartupIssue('task chat note',error);}}
-  }
-  const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content,conversationId,requestId});
-  return result?.response||null;
+  return routeOwnerWorkInstruction({content,conversationId,requestId,source,api:nethraApi,store:nethraStore,
+    ownerWork:request=>executeOwnerWork({foreman,roots:[app.getPath('documents')],content:request.content,conversationId:request.conversationId,requestId:request.requestId})});
 }
 function hydrateFirebaseEnvironment() {
   if (process.env.JUNCTION_FIREBASE_API_KEY && process.env.JUNCTION_FIREBASE_PROJECT_ID) return;
