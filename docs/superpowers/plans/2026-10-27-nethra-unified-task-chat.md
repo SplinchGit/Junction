@@ -58,7 +58,7 @@
 - [x] Write the failing completion test, require recorded `read_file` evidence for explicit local file-read objectives, and pass the focused test.
 - [x] Rerun the real-model disposable objective and confirm source read, report write, completed plan, and `COMPLETED` status. The acceptance run completed in 149 seconds with `read_file`, `write_draft`, and a verified witness.
 - [x] Run a real interactive chat smoke and check the separate casual-chat path still works. The `qwen3:30b` post-2023 Python scenario passed with one web search and a valid citation.
-- [ ] Compare the packaged host's agent modules with source before claiming the installed application contains the change.
+- [x] Compare the packaged host's seven agent modules with source before claiming the installed application contains the change. The `nethra-unified-20261028` package hashes match; the Desktop shortcut and enabled scheduled host point to it, and the running `Junction.exe` processes use that path.
 
 The live run also found that a relative `read_file` path found by `list_directory` did not resolve in a separate approved read root. A failing regression test now covers approved-root resolution and ambiguity; the full 339-test Windows suite passes after the fix.
 
