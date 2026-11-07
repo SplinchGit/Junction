@@ -8,10 +8,13 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
-    fun `local model picker offers only the retained PC model`() {
+    fun `local model picker offers both installed PC models`() {
         val local = ModelCatalog.providerById("local")!!
         assertEquals("qwen3:30b", local.defaultModelId)
-        assertEquals(listOf("qwen3:30b"), local.models.map { it.id })
+        val nextModel = "junction-qwen3-next:80b-q3km"
+        assertEquals(listOf("qwen3:30b", nextModel), local.models.map { it.id })
+        assertEquals(nextModel, ModelCatalog.normalizeModelId("local", nextModel))
+        assertEquals(nextModel, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M"))
         assertNull(ModelCatalog.modelById("local", "lfm2.5:2.6b"))
         assertEquals("qwen3:30b", ModelCatalog.normalizeModelId("local", "qwen3:14b"))
     }

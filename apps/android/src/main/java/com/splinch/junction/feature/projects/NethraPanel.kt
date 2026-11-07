@@ -40,6 +40,8 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var goal by rememberSaveable { mutableStateOf("") }
     var criteria by rememberSaveable { mutableStateOf("") }
     var persistent by rememberSaveable { mutableStateOf(true) }
+    var taskModel by rememberSaveable { mutableStateOf("qwen3:30b") }
+    val taskModels = listOf("qwen3:30b" to "Qwen3 30B · faster", "junction-qwen3-next:80b-q3km" to "Qwen3-Next 80B · deeper, slower")
     var mode by rememberSaveable { mutableStateOf("FINITE") }
     var autonomy by rememberSaveable { mutableStateOf("BALANCED") }
     var priority by rememberSaveable { mutableIntStateOf(3) }
@@ -240,6 +242,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 Checkbox(checked = persistent, onCheckedChange = { persistent = it }, enabled = !busy)
                 Text("Keep this objective active between runs", Modifier.padding(top = 12.dp))
             }
+            PolicyChoice("Task model", taskModel, taskModels, !busy) { taskModel = it }
             PolicyChoice("Objective type", mode, listOf("FINITE" to "Finish when achieved", "ONGOING" to "Keep monitoring after each result"), !busy) { mode = it }
             PolicyChoice("Autonomy", autonomy, listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy) { autonomy = it }
             PolicyChoice("Priority", priority.toString(), (1..5).map { it.toString() to "$it · ${if (it == 1) "Highest" else if (it == 5) "Lowest" else "Priority"}" }, !busy) { priority = it.toInt() }
@@ -254,7 +257,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             }
             Text("Your PC must be awake and online to run work. Nethra asks for approval before actions that need your permission.")
             Button(enabled = !busy && goal.isNotBlank(), onClick = {
-                perform("nethra.create", buildMap { put("goal", goal.trim()); conversationId?.let { put("conversationId", it) }; put("persistent", persistent); put("continuous", continuousNew); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
+                perform("nethra.create", buildMap { put("goal", goal.trim()); conversationId?.let { put("conversationId", it) }; put("persistent", persistent); put("continuous", continuousNew); put("model", taskModel); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
             }
             // Open work first (running, then in progress), then the five most recently ended.
@@ -331,6 +334,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 val id = task["id"].toString()
                 val revision = (task["revision"] as? Number)?.toLong() ?: -1L
                 val terminal = task["status"] in setOf("COMPLETED", "CANCELLED", "FAILED")
+                PolicyChoice("Task model", task["model"]?.toString() ?: "qwen3:30b", taskModels, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "model" to it)) }
                 PolicyChoice("Objective type", task["mode"]?.toString() ?: "FINITE", listOf("FINITE" to "Finish when achieved", "ONGOING" to "Keep monitoring after each result"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "mode" to it)) }
                 PolicyChoice("Autonomy", task["autonomy"]?.toString() ?: "BALANCED", listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "autonomy" to it)) }
                 PolicyChoice("Priority", task["priority"]?.toString() ?: "3", (1..5).map { it.toString() to "$it · Priority" }, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "priority" to it.toInt())) }
