@@ -65,6 +65,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var error by remember { mutableStateOf("") }
     var answer by rememberSaveable(selectedId) { mutableStateOf("") }
     var showHistory by rememberSaveable { mutableStateOf(true) }
+    var showAllEnded by rememberSaveable { mutableStateOf(false) }
     var showCreate by rememberSaveable { mutableStateOf(!initialGoal.isNullOrBlank()) }
     var showHostDetails by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(initialGoal) {
@@ -260,10 +261,11 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 perform("nethra.create", buildMap { put("goal", goal.trim()); conversationId?.let { put("conversationId", it) }; put("persistent", persistent); put("continuous", continuousNew); put("model", taskModel); put("mode", mode); put("autonomy", autonomy); put("priority", priority); put("checkIn", checkIn); listOfNotNull("calendar".takeIf { watchCalendar }, "gmail".takeIf { watchGmail }).takeIf { it.isNotEmpty() }?.let { put("sources", it) }; if (criteria.isNotBlank()) put("successCriteria", criteria.trim()) })
             }) { Text(if (busy) "Contacting PC…" else "Create objective") }
             }
-            // Open work first (running, then in progress), then the five most recently ended.
+            // Open work first, then recent history. Older tasks stay reachable for manual deletion.
             val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
             val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
-            val ended = withStatus.filter { it.second.ended }.take(5)
+            val allEnded = withStatus.filter { it.second.ended }
+            val ended = if (showAllEnded) allEnded else allEnded.take(5)
             if (quickDeleteId != null) {
                 AlertDialog(
                     onDismissRequest = { quickDeleteId = null },
@@ -307,6 +309,9 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                             IconButton(enabled = !busy && connected, onClick = { quickDeleteId = id }) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete task", modifier = Modifier.size(20.dp)) }
                         }
                     }
+                }
+                if (allEnded.size > 5) TextButton(onClick = { showAllEnded = !showAllEnded }) {
+                    Text(if (showAllEnded) "Show fewer previous tasks" else "Show all ${allEnded.size} previous tasks")
                 }
             } else TextButton(onClick = { selectedId = null; detail = null }) { Text("← All tasks") }
             val task = detail?.get("task") as? Map<*, *>
