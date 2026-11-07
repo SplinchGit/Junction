@@ -3,6 +3,8 @@ package com.splinch.junction.data.sync.lan
 import android.content.Context
 import android.os.SystemClock
 import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
+import com.splinch.junction.data.preference.UserPrefsRepository
+import com.splinch.junction.assistant.provider.ModelCatalog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -10,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 /**
  * Asks the paired PC to load its model before the owner's message arrives: on app open,
@@ -23,18 +26,25 @@ object PcModelWarmup {
     val state: StateFlow<String?> = _state.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var lastRequestAt = Long.MIN_VALUE / 2
+    @Volatile private var lastRequestModel: String? = null
     private const val MIN_INTERVAL_MS = 20_000L
 
     fun request(context: Context, reason: String) {
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastRequestAt < MIN_INTERVAL_MS) return
-        lastRequestAt = now
         val app = context.applicationContext
         scope.launch {
             val paired = runCatching { LanIdentityStore(app).loadPairing() != null || LocalBrainPairingStore.load(app) != null }.getOrDefault(false)
             if (!paired) return@launch
+            val config = UserPrefsRepository(app).providerConfigFlow.first()
+            if (config.providerId != "local") return@launch
+            val selectedModel = ModelCatalog.normalizeModelId("local", config.modelId)
+            val now = SystemClock.elapsedRealtime()
+            synchronized(this@PcModelWarmup) {
+                if (selectedModel == lastRequestModel && now - lastRequestAt < MIN_INTERVAL_MS) return@launch
+                lastRequestModel = selectedModel
+                lastRequestAt = now
+            }
             val client = NethraClient(app)
-            val result = runCatching { client.request("nethra.warm", mapOf("reason" to reason)) }
+            val result = runCatching { client.request("nethra.warm", mapOf("reason" to reason, "model" to selectedModel)) }
                 // An older PC host does not know nethra.warm; its status check also warms.
                 .recoverCatching { error -> if (error.message?.contains("Unsupported Nethra operation") == true) client.request("nethra.status") else throw error }
                 .getOrNull()

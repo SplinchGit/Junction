@@ -201,7 +201,7 @@ fun ChatScreen(
         if (objectivesRequest > 0) objectivesOpen = true
     }
     // Opening, switching or starting a chat asks the paired PC to load its model now.
-    LaunchedEffect(currentSessionId, providerConfig.providerId) {
+    LaunchedEffect(currentSessionId, providerConfig.providerId, providerConfig.modelId) {
         if (providerConfig.providerId == "local") com.splinch.junction.data.sync.lan.PcModelWarmup.request(context, "chat_open")
     }
     LaunchedEffect(callStatus.state) {
