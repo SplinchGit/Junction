@@ -1,6 +1,6 @@
 'use strict';
 const {createHash}=require('node:crypto');
-const {inQuietHours,waitingFor,progressView}=require('./nethra-progress');
+const {inQuietHours,waitingFor}=require('./nethra-progress');
 
 const REPORTABLE=new Set(['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED']);
 
@@ -64,33 +64,10 @@ function postOutcome(task,store,localData,{settings=null,date=new Date()}={}){
 }
 
 /**
- * After a productive cycle on a finite objective, tells its chat what was actually done
- * (host-recorded) and what comes next. One message per recorded accomplishment; nothing is
- * posted for cycles without progress, so a quiet objective stays quiet.
+ * Individual model/tool steps belong in the Tasks work log, never in chat.
+ * Keep this entry point for existing callers; milestones, important outcomes
+ * and owner requests are still delivered by postMilestones/postOutcome.
  */
-function postProgress(task,store,localData,{settings=null,date=new Date(),liveTaskId=null}={}){
-  // Ongoing monitors report verified milestones only; an ongoing task that is actively working
-  // (continuous) reports its steps like any other, or the owner hears nothing at all.
-  if((task.mode==='ONGOING'&&!task.continuous)||!task.conversationId||!localData.conversation(task.conversationId))return false;
-  if(!['SLEEPING','ACTIVE','PLANNING'].includes(task.status)||task.lastCycleProgressed!==true)return false;
-  const policy=deliveryPolicy(settings,date);
-  if(settings&&(policy.quiet||!policy.milestones))return false;
-  const view=progressView(task,store,{liveTaskId});
-  if(!view.lastAccomplished)return false;
-  const clock=at=>new Date(at).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
-  const lines=[`Progress on "${String(task.goal||'').slice(0,120)}": ${view.lastAccomplished.line}.`];
-  const passStart=view.activity.findIndex(item=>item.event==='CLAIMED');
-  const actions=(passStart<0?view.activity:view.activity.slice(0,passStart)).filter(item=>['verified','advice','error'].includes(item.kind)).slice(0,4).reverse();
-  if(actions.length)lines.push('Recorded actions:',...actions.map(item=>`• ${item.line} — ${item.actor}`));
-  if(view.counts.total)lines.push(`${view.counts.done} of ${view.counts.total} steps done.`);
-  if(view.next)lines.push(`Next: ${view.next}.`);
-  if(view.wake)lines.push(view.wake.kind==='CONTINUE'&&task.continuous?'Continuing now.':`Next run ${clock(view.wake.at)}: ${view.wake.reason}.`);
-  // "My note" is Nethra's own words only; never echo the owner's message back as Nethra's.
-  const note=String(task.summary||'').trim(),ownerWords=new Set((task.ownerInputs||[]).map(item=>String(item.text||'').trim()));
-  if(note&&note.length<=400&&!ownerWords.has(note))lines.push(`\nMy note: ${note}`);
-  lines.push('\nReply here to steer this task.');
-  const messageId=`nethra-progress-${task.id}-${view.lastAccomplished.at}`.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,160);
-  return localData.addMessageOnce(task.conversationId,messageId,'assistant',lines.join('\n'),'JUNCTION').created;
-}
+function postProgress(){return false;}
 
 module.exports={postMilestones,postOutcome,postProgress,deliveryPolicy,outcomeText};
