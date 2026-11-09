@@ -20,17 +20,23 @@ fun AppearanceSettings(prefs: UserPrefsRepository) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Appearance", style = MaterialTheme.typography.titleMedium)
         SettingChoice("Mode", value.mode, listOf("system" to "System", "light" to "Light", "dark" to "Dark")) { save(value.copy(mode = it)) }
-        SettingChoice("Palette", value.palette, listOf("junction" to "Junction", "sakura" to "Sakura", "moss" to "Moss")) { save(value.copy(palette = it)) }
-        SettingChoice("Artwork", value.artwork, listOf("none" to "None", "sakura-mountain" to "Sakura Mountain")) { save(value.copy(artwork = it)) }
+        SettingChoice("Palette", value.palette, listOf(
+            "junction" to "Junction", "sakura" to "Sakura", "moss" to "Moss",
+            "lavender" to "Lavender", "peach" to "Peach", "mint" to "Mint", "sky" to "Sky", "butter" to "Buttercream"
+        )) { save(value.copy(palette = it)) }
+        SettingChoice("Wallpaper", value.artwork, listOf(
+            "none" to "None", "sakura-mountain" to "Sakura Mountain",
+            "sakura-waterfall" to "Moonlit Falls", "sakura-airport" to "Sakura Airport", "sakura-city" to "Violet City"
+        )) { save(value.copy(artwork = it)) }
         if (value.artwork != "none") {
             Text("Background intensity: ${value.backgroundIntensity}%")
             Slider(value = value.backgroundIntensity.toFloat(), onValueChange = { save(value.copy(backgroundIntensity = it.toInt())) }, valueRange = 0f..100f)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Falling petals", modifier = Modifier.weight(1f))
+                Text("Scene animation", modifier = Modifier.weight(1f))
                 Switch(checked = value.petals, onCheckedChange = { save(value.copy(petals = it)) })
             }
             if (value.petals) {
-                Text("Petal intensity: ${value.petalIntensity}%")
+                Text("Animation intensity: ${value.petalIntensity}%")
                 Slider(value = value.petalIntensity.toFloat(), onValueChange = { save(value.copy(petalIntensity = it.toInt())) }, valueRange = 0f..100f)
             }
         }

@@ -7,6 +7,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import com.splinch.junction.data.preference.AppearancePrefs
 
 private val LightColors = lightColorScheme(
@@ -61,11 +62,87 @@ private val MossLight = lightColorScheme(
     background = Color(0xFFF7FBF5), surface = Color(0xFFF7FBF5)
 )
 
+private data class PastelTokens(
+    val accent: Long, val onAccent: Long, val container: Long, val onContainer: Long,
+    val surface: Long, val onSurface: Long, val variant: Long, val onVariant: Long
+)
+
+private data class PastelPalette(val light: PastelTokens, val dark: PastelTokens)
+
+// The same accents, containers and page colours are used by the Windows palettes.
+private val Pastels = mapOf(
+    "lavender" to PastelPalette(
+        light = PastelTokens(0xFF685182, 0xFFFFFFFF, 0xFFEBDDF7, 0xFF281738,
+            0xFFFCF8FF, 0xFF211B28, 0xFFE9E0F0, 0xFF514858),
+        dark = PastelTokens(0xFFD9C8F2, 0xFF30233D, 0xFF3D304D, 0xFFF0E5FF,
+            0xFF14111A, 0xFFEEE8F1, 0xFF302837, 0xFFD0C4D8)
+    ),
+    "peach" to PastelPalette(
+        light = PastelTokens(0xFF8C5745, 0xFFFFFFFF, 0xFFFFDBCB, 0xFF35170D,
+            0xFFFFF8F5, 0xFF2B1D17, 0xFFF2E0D8, 0xFF5D4940),
+        dark = PastelTokens(0xFFF2C5B2, 0xFF442A20, 0xFF51382F, 0xFFFFE0D2,
+            0xFF1B1311, 0xFFF3E7E1, 0xFF382B26, 0xFFDAC5BA)
+    ),
+    "mint" to PastelPalette(
+        light = PastelTokens(0xFF406958, 0xFFFFFFFF, 0xFFD2EDDF, 0xFF102D21,
+            0xFFF5FCF7, 0xFF18251E, 0xFFDFEBE3, 0xFF43564A),
+        dark = PastelTokens(0xFFB7DECB, 0xFF17382A, 0xFF2B4439, 0xFFD2F0E1,
+            0xFF101814, 0xFFE3EEE7, 0xFF26372D, 0xFFBFD2C5)
+    ),
+    "sky" to PastelPalette(
+        light = PastelTokens(0xFF4B667D, 0xFFFFFFFF, 0xFFD8EAF9, 0xFF172D40,
+            0xFFF6FAFF, 0xFF1C242C, 0xFFE1E9F2, 0xFF475461),
+        dark = PastelTokens(0xFFBDD9EF, 0xFF203647, 0xFF304354, 0xFFD9EDFF,
+            0xFF11161C, 0xFFE5EDF5, 0xFF29343F, 0xFFC2D0DF)
+    ),
+    "butter" to PastelPalette(
+        light = PastelTokens(0xFF756536, 0xFFFFFFFF, 0xFFF2E5B7, 0xFF2C2408,
+            0xFFFFFBEF, 0xFF282313, 0xFFEEE7D1, 0xFF59513B),
+        dark = PastelTokens(0xFFE6D6A3, 0xFF3C3218, 0xFF49412B, 0xFFF7E9BA,
+            0xFF18160F, 0xFFF0EBD9, 0xFF363124, 0xFFD1C8AD)
+    )
+)
+
+private fun pastelColorScheme(tokens: PastelTokens, dark: Boolean): ColorScheme {
+    val accent = Color(tokens.accent)
+    val onAccent = Color(tokens.onAccent)
+    val container = Color(tokens.container)
+    val onContainer = Color(tokens.onContainer)
+    val surface = Color(tokens.surface)
+    val onSurface = Color(tokens.onSurface)
+    val variant = Color(tokens.variant)
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = accent, onPrimary = onAccent,
+        primaryContainer = container, onPrimaryContainer = onContainer,
+        secondary = accent, onSecondary = onAccent,
+        secondaryContainer = container, onSecondaryContainer = onContainer,
+        tertiary = accent, onTertiary = onAccent,
+        tertiaryContainer = container, onTertiaryContainer = onContainer,
+        background = surface, onBackground = onSurface,
+        surface = surface, onSurface = onSurface,
+        surfaceVariant = variant, onSurfaceVariant = Color(tokens.onVariant),
+        surfaceTint = accent,
+        surfaceDim = if (dark) surface else lerp(surface, variant, 0.75f),
+        surfaceBright = if (dark) lerp(surface, variant, 0.85f) else surface,
+        surfaceContainerLowest = surface,
+        surfaceContainerLow = lerp(surface, variant, 0.25f),
+        surfaceContainer = lerp(surface, variant, 0.45f),
+        surfaceContainerHigh = lerp(surface, variant, 0.65f),
+        surfaceContainerHighest = variant,
+        outline = lerp(Color(tokens.onVariant), variant, 0.30f),
+        outlineVariant = lerp(Color(tokens.onVariant), variant, 0.70f)
+    )
+}
+
 /** Picks the colour scheme for a palette and resolved light/dark mode. */
-fun junctionColorScheme(palette: String, dark: Boolean): ColorScheme = when (palette) {
-    "sakura" -> if (dark) SakuraDark else SakuraLight
-    "moss" -> if (dark) MossDark else MossLight
-    else -> if (dark) DarkColors else LightColors
+fun junctionColorScheme(palette: String, dark: Boolean): ColorScheme {
+    Pastels[palette]?.let { return pastelColorScheme(if (dark) it.dark else it.light, dark) }
+    return when (palette) {
+        "sakura" -> if (dark) SakuraDark else SakuraLight
+        "moss" -> if (dark) MossDark else MossLight
+        else -> if (dark) DarkColors else LightColors
+    }
 }
 
 /** Resolves the owner's mode against the system setting. */

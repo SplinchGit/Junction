@@ -23,15 +23,22 @@ data class AppearancePrefs(
         motion = motion.takeIf { it in MOTION } ?: "system"
     )
 
-    /** Petals run only with artwork, when enabled, and when motion is allowed right now. */
-    fun petalsAllowed(systemReducedMotion: Boolean, powerSave: Boolean): Boolean =
-        artwork != "none" && petals && petalIntensity > 0 && !powerSave &&
+    /** Legacy fields now control the whole scene; explicit Full still overrides system reduction. */
+    fun sceneAnimationAllowed(
+        systemReducedMotion: Boolean, powerSave: Boolean,
+        resumed: Boolean = true, windowFocused: Boolean = true
+    ): Boolean =
+        artwork in ARTWORK && artwork != "none" && petals && petalIntensity > 0 &&
+            !powerSave && resumed && windowFocused &&
             (motion == "full" || (motion == "system" && !systemReducedMotion))
+
+    fun petalsAllowed(systemReducedMotion: Boolean, powerSave: Boolean): Boolean =
+        sceneAnimationAllowed(systemReducedMotion, powerSave)
 
     companion object {
         val MODES = listOf("system", "light", "dark")
-        val PALETTES = listOf("junction", "sakura", "moss")
-        val ARTWORK = listOf("none", "sakura-mountain")
+        val PALETTES = listOf("junction", "sakura", "moss", "lavender", "peach", "mint", "sky", "butter")
+        val ARTWORK = listOf("none", "sakura-mountain", "sakura-waterfall", "sakura-airport", "sakura-city")
         val MOTION = listOf("system", "reduced", "full")
     }
 }
