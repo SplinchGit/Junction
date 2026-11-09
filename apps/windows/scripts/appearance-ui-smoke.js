@@ -81,7 +81,7 @@ app.on("browser-window-created", (_event, window) => {
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);
       const drawer = await shot("appearance-task-tracking.png");
       const taskChat = await window.webContents.executeJavaScript(`(async()=>{
-        document.querySelector('.task-card .task-title').click();
+        document.querySelector('.task-card .task-chat-button').click();
         for(let i=0;i<100&&!document.querySelector('.task-chat-activity');i++)await new Promise(r=>setTimeout(r,30));
         return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),emptyHome:!!document.querySelector('#messages .chat-home'),actions:document.querySelector('.task-chat-activity')?.textContent||'',controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
       })()`);
