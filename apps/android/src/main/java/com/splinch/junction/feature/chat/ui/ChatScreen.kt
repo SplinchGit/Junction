@@ -6,6 +6,7 @@ import com.splinch.junction.feature.voice.realtime.*
 import com.splinch.junction.feature.voice.service.*
 
 import android.Manifest
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -95,11 +96,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
@@ -120,6 +124,7 @@ import com.splinch.junction.data.secret.KeyStorage
 import com.splinch.junction.data.preference.ProviderConfig
 import com.splinch.junction.data.preference.UserPrefsRepository
 import com.splinch.junction.feature.chat.ChatTokens
+import com.splinch.junction.feature.chat.TaskActionLog
 import com.splinch.junction.feature.projects.NethraPanel
 import com.splinch.junction.feature.voice.ui.BluetoothThrower
 import com.splinch.junction.ui.component.JunctionTextField
@@ -1127,6 +1132,12 @@ private fun MessageBubble(message: ChatMessage, verbose: Boolean = true, taskLay
         Sender.SYSTEM -> MaterialTheme.colorScheme.surfaceVariant
     }
     var thinkingExpanded by remember(message.id) { mutableStateOf(false) }
+    val taskLog = remember(message.sender, message.content) {
+        if (message.sender == Sender.ASSISTANT) TaskActionLog.parse(message.content) else null
+    }
+    var taskActionsExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1167,8 +1178,33 @@ private fun MessageBubble(message: ChatMessage, verbose: Boolean = true, taskLay
                 // Long-press selection exposes Android's standard Copy action
                 // for both owner and Junction messages without adding noisy
                 // per-bubble controls.
-                SelectionContainer {
-                    Text(text = remember(message.content) { citationText(message.content) }, style = MaterialTheme.typography.bodyMedium)
+                if (taskLog == null) {
+                    MessageText(message.content)
+                } else {
+                    MessageText(taskLog.before.trimEnd())
+                    TextButton(
+                        onClick = { taskActionsExpanded = !taskActionsExpanded },
+                        contentPadding = PaddingValues(0.dp),
+                        modifier = Modifier.semantics {
+                            stateDescription = if (taskActionsExpanded) "Expanded" else "Collapsed"
+                        }
+                    ) {
+                        Text("${if (taskActionsExpanded) "Hide" else "Show"} recorded actions (${taskLog.count})")
+                    }
+                    if (taskActionsExpanded) MessageText(taskLog.actions.trimEnd())
+                    if (taskLog.after.isNotBlank()) MessageText(taskLog.after)
+                    // Selection omits collapsed text; this action always copies
+                    // the full, unchanged message, including its action history.
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Task update", message.content)))
+                            }
+                        },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("Copy message")
+                    }
                 }
             }
             if (message.sender == Sender.ASSISTANT &&
@@ -1211,5 +1247,12 @@ private fun MessageBubble(message: ChatMessage, verbose: Boolean = true, taskLay
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MessageText(content: String) {
+    SelectionContainer {
+        Text(text = remember(content) { citationText(content) }, style = MaterialTheme.typography.bodyMedium)
     }
 }
