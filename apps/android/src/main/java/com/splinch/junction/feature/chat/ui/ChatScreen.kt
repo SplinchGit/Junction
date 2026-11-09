@@ -172,27 +172,12 @@ fun ChatScreen(
     val taskList by ObjectiveStatusMonitor.objectives.collectAsState()
     val currentSessionId by chatManager.sessionId.collectAsState()
     val linkedTasks = ObjectiveStatus.forConversation(taskList, currentSessionId)
-    val linkedTaskId = linkedTasks.firstOrNull()?.get("id")?.toString()
-    var taskActions by remember(linkedTaskId) { mutableStateOf<List<Map<*, *>>>(emptyList()) }
     val taskHostConnected by ObjectiveStatusMonitor.connected.collectAsState()
     var objectiveFocusId by remember { mutableStateOf<String?>(null) }
     var objectiveDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingImagePath by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    LaunchedEffect(linkedTaskId) {
-        if (linkedTaskId == null) return@LaunchedEffect
-        val taskClient = NethraClient(context)
-        while (true) {
-            try {
-                val result = taskClient.request("nethra.get", mapOf("id" to linkedTaskId))
-                val progress = result["progress"] as? Map<*, *>
-                taskActions = (progress?.get("activity") as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { /* Keep the last recorded actions while the PC is offline. */ }
-            delay(5_000)
-        }
-    }
     val prefs = remember(context) { UserPrefsRepository(context) }
     val verbose by prefs.chatVerboseFlow.collectAsState(initial = true)
     val appearance by prefs.appearanceFlow.collectAsState(initial = com.splinch.junction.data.preference.AppearancePrefs())
@@ -438,7 +423,15 @@ fun ChatScreen(
         // which left a permanent zero-height row on the end -- so the scroll
         // target was that empty row rather than the last real message, and
         // every index calculation below was quietly off by one.
-        val itemCount = messages.size + if (streaming != null) 1 else 0
+        // Legacy automatic per-cycle reports remain stored, but do not clutter the chat canvas.
+        val visibleMessages = remember(messages) {
+            messages.filterNot { message ->
+                message.sender == Sender.ASSISTANT &&
+                    message.content.startsWith("Progress on \"") &&
+                    message.content.contains("Reply here to steer this task.")
+            }
+        }
+        val itemCount = visibleMessages.size + if (streaming != null) 1 else 0
         val lastIndex = (itemCount - 1).coerceAtLeast(0)
 
         // Only auto-follow new content if the user was already at (or very near)
@@ -494,20 +487,8 @@ fun ChatScreen(
                     .padding(top = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(messages, key = { it.id }) { message ->
+                items(visibleMessages, key = { it.id }) { message ->
                     MessageBubble(message, verbose, taskLayout = linkedTasks.isNotEmpty())
-                }
-                if (linkedTaskId != null && taskActions.isNotEmpty()) {
-                    item(key = "task-actions-$linkedTaskId") {
-                        OutlinedCard(shape = RoundedCornerShape(4.dp), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Recorded task actions", style = MaterialTheme.typography.titleSmall)
-                                taskActions.take(10).forEach { action ->
-                                    Text("${action["line"] ?: "Action recorded"} · ${action["actor"] ?: "Junction"}", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        }
-                    }
                 }
                 streaming?.let { active ->
                     item(key = active.itemId) {
