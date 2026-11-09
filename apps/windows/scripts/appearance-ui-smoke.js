@@ -82,10 +82,10 @@ app.on("browser-window-created", (_event, window) => {
       const drawer = await shot("appearance-task-tracking.png");
       const taskChat = await window.webContents.executeJavaScript(`(async()=>{
         document.querySelector('.task-card .task-chat-button').click();
-        for(let i=0;i<100&&!document.querySelector('.task-chat-activity');i++)await new Promise(r=>setTimeout(r,30));
-        return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),emptyHome:!!document.querySelector('#messages .chat-home'),actions:document.querySelector('.task-chat-activity')?.textContent||'',controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
+        for(let i=0;i<100&&!document.getElementById('view-chat').classList.contains('active');i++)await new Promise(r=>setTimeout(r,30));
+        return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),emptyHome:!!document.querySelector('#messages .chat-home'),hasStepFeed:!!document.querySelector('.task-chat-activity'),controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
       })()`);
-      assert.equal(taskChat.visible,true);assert.equal(taskChat.boxed,true);assert.equal(taskChat.emptyHome,false);assert.match(taskChat.actions,/Searched the web/);assert.deepEqual(taskChat.controls,['Pause','Edit','Delete']);
+      assert.equal(taskChat.visible,true);assert.equal(taskChat.boxed,true);assert.equal(taskChat.emptyHome,false);assert.equal(taskChat.hasStepFeed,false,'step-by-step actions stay in Tasks');assert.deepEqual(taskChat.controls,['Pause','Edit','Delete']);
       const taskChatShot = await shot("appearance-task-chat.png");
       const settings = await window.webContents.executeJavaScript(`(async()=>{document.getElementById('objective-status').click();showView('settings');await new Promise(r=>setTimeout(r,200));return {appearance:!!document.getElementById('appearance-settings'),readiness:document.querySelector('.settings').textContent.includes('Keep loaded after last use'),advisors:document.querySelector('.settings').textContent.includes('Self-improvement advisors')&&document.querySelector('.settings').textContent.includes('Keep for my own use')};})()`);
       assert.deepEqual(settings, { appearance: true, readiness: true, advisors: true });
