@@ -137,31 +137,32 @@ test('an owner note in the task chat joins its inputs and wakes it soon',t=>{
   assert.equal(noted.wakeReason.kind,'OWNER');
 });
 
-test('a productive cycle posts what was actually done to the task chat, once',async t=>{
+test('productive task cycles stay visible in Tasks without flooding chat',async t=>{
   const f=fixture(t);const {task}=await f.api.dispatch('nethra.create',{goal:'Research standing desks',continuous:true},'p1','desktop');
   const claim=f.store.claim('a');
-  f.store.update(task.id,{plan:['Search reviews','Compare prices'],completedSteps:['Search reviews'],pendingSteps:['Compare prices'],evidence:[{tool:'web_search',result:{evidence:{query:'standing desk reviews',sources:[{title:'Wirecutter'}]}}}]},'nethra_tool_result',claim.token);
+  f.store.update(task.id,{plan:['Search reviews','Compare prices'],completedSteps:['Search reviews'],pendingSteps:['Compare prices'],evidence:[{tool:'web_search',result:{evidence:{query:'standing desk reviews'}}}]},'nethra_tool_result',claim.token);
   f.store.release(task.id,claim.token);
-  f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,nextWakeAt:f.now()+20_000,wakeReason:{kind:'CONTINUE',detail:'Continuous work',at:f.now()+20_000},summary:'Two strong options so far.'},'EXECUTED');
+  f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,nextWakeAt:f.now()+20_000,wakeReason:{kind:'CONTINUE',detail:'Continuous work',at:f.now()+20_000}},'EXECUTED');
   const settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
-  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),true);
-  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'idempotent');
-  const message=f.localData.conversation(task.conversationId).messages.at(-1).content;
-  assert.match(message,/Searched the web for “standing desk reviews”/);assert.match(message,/1 of 2 steps done/);assert.match(message,/Next: Compare prices/);assert.match(message,/Continuing now/);assert.match(message,/My note: Two strong options/);
-  assert.match(message,/Recorded actions:/);assert.match(message,/• Searched the web for “standing desk reviews”/);
-  f.store.update(task.id,{lastCycleProgressed:false},'EXECUTED');
-  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'no progress, no post');
+  const before=f.localData.conversation(task.conversationId).messages.length;
+  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false);
+  assert.equal(f.localData.conversation(task.conversationId).messages.length,before);
+  const details=await f.api.dispatch('nethra.get',{id:task.id},'get-progress','desktop');
+  assert.equal(details.progress.counts.done,1);
+  assert.equal(details.progress.next,'Compare prices');
+  assert.ok(details.progress.activity.length,'the complete activity remains in Tasks');
 });
 
-test('an ongoing task that works continuously posts its steps; a plain ongoing monitor does not',async t=>{
+test('continuous ongoing tasks also keep their per-pass steps out of chat',async t=>{
   const f=fixture(t),settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
-  for(const [continuous,expected] of [[true,true],[false,false]]){
+  for(const continuous of [true,false]){
     const {task}=await f.api.dispatch('nethra.create',{goal:`Self Improvement ${continuous}`,mode:'ONGOING',continuous},`ongoing-${continuous}`,'desktop');
     const claim=f.store.claim('a');
     f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:35}}}]},'nethra_tool_result',claim.token);
     f.store.release(task.id,claim.token);
-    f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,nextWakeAt:f.now()+60_000,wakeReason:{kind:'SCHEDULED',detail:'Wait for Codex availability',at:f.now()+60_000}},'EXECUTED');
-    assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),expected,`continuous=${continuous}`);
+    f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,nextWakeAt:f.now()+60_000},'EXECUTED');
+    assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false);
+    assert.equal(f.localData.conversation(task.conversationId).messages.length,0);
   }
 });
 
