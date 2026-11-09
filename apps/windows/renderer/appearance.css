@@ -166,3 +166,11 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 #view-tasks label.task-toggle input{width:auto;margin:0}
 #view-tasks .tasks-list-pane .foreman-area>p:empty{display:none}
 #view-chat header .chat-tokens{display:block;margin-top:3px;color:var(--muted);font-size:11.5px;font-weight:400;letter-spacing:normal;text-transform:none}
+
+/* Tasks: find the right objective first; inspect technical detail only on demand. */
+.task-list-filters{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.task-list-filters input,.task-list-filters select{min-width:0;min-height:36px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font:inherit;font-size:12px}
+.task-list-filters select{width:145px}
+.task-activity>summary,.task-performance>summary,.task-experiments>summary{cursor:pointer;font-size:13px;font-weight:600;line-height:1.4}
+.task-activity[open]>summary,.task-performance[open]>summary,.task-experiments[open]>summary{margin-bottom:10px}
+@media(max-width:800px){#view-tasks .tasks-page{grid-template-columns:minmax(0,1fr);gap:12px}#view-tasks .tasks-list-pane{overflow:visible}#view-tasks .task-detail-pane{overflow:visible}.task-list-filters{grid-template-columns:minmax(0,1fr) auto}}
