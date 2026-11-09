@@ -64,7 +64,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var lastSyncedAt by remember { mutableStateOf<Long?>(null) }
     var error by remember { mutableStateOf("") }
     var answer by rememberSaveable(selectedId) { mutableStateOf("") }
-    var showHistory by rememberSaveable { mutableStateOf(true) }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
     var showAllEnded by rememberSaveable { mutableStateOf(false) }
     var showCreate by rememberSaveable { mutableStateOf(!initialGoal.isNullOrBlank()) }
     var showHostDetails by rememberSaveable { mutableStateOf(false) }
@@ -120,6 +120,10 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     goal = ""; criteria = ""
                 }
                 if (type == "nethra.answer") answer = ""
+                if (type == "nethra.delete" && selectedId == payload["id"]?.toString()) {
+                    selectedId = null
+                    detail = null
+                }
                 error = ""
                 refresh()
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -355,7 +359,11 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         IconButton(enabled = !busy, onClick = { quickEditId = null; editing = !editing }) { Icon(Icons.Default.Edit, contentDescription = "Edit task", modifier = Modifier.size(20.dp)) }
                         if (status == "SLEEPING") TextButton(enabled = !busy && connected, onClick = { perform("nethra.control", mapOf("id" to id, "action" to "wake", "revision" to revision)) }) { Text("Check now") }
                     }
-                    IconButton(enabled = !busy && connected, onClick = { confirm = "delete" }) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete task", modifier = Modifier.size(20.dp)) }
+                    TextButton(enabled = !busy && connected, onClick = { confirm = "delete" }) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete")
+                    }
                     if (!terminal) TextButton(enabled = !busy && connected, onClick = { confirm = "stop" }) { Text("Stop task") }
                 }
                 if (!terminal) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
