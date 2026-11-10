@@ -46,7 +46,10 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
             ) {
                 error(PC_OFFLINE_ERROR_MESSAGE)
             }
-            val messages = JSONArray().also { output -> context.takeLast(MAX_CONTEXT_BLOCKS).forEach { block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(MAX_BLOCK_CHARS)) }) } }
+            // The host reads the owner's goal from the last user block, so only history is cut short.
+            val blocks = context.takeLast(MAX_CONTEXT_BLOCKS)
+            val ownerIndex = blocks.indexOfLast { it.role == "user" }
+            val messages = JSONArray().also { output -> blocks.forEachIndexed { index, block -> output.put(JSONObject().apply { put("role", block.role); put("content", block.content.take(if (index == ownerIndex) MAX_OWNER_CHARS else MAX_BLOCK_CHARS)) }) } }
             val plain = JSONObject().apply {
                 put("model", workhorseModel)
                 put("messages", messages)
@@ -156,6 +159,7 @@ class JunctionPcProvider(override val workhorseModel: String = "qwen3:30b") : Ll
         const val SOURCE = "junction_local_llm_v2"
         const val MAX_CONTEXT_BLOCKS = 8
         const val MAX_BLOCK_CHARS = 2_000
+        const val MAX_OWNER_CHARS = 10_000
         const val AGENT_REQUEST_TIMEOUT_MS = 480_000L
         // The desktop renews presence every minute to stay within the relay's
         // write budget. Allow a missed renewal and network handover, but do not

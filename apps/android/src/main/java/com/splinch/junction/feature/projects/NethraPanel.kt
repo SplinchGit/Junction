@@ -238,7 +238,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             if (showCreate) {
             HorizontalDivider()
             OutlinedTextField(goal, { if (it.length <= 12_000) goal = it }, label = { Text("What should Nethra achieve?") }, minLines = 2, modifier = Modifier.fillMaxWidth(), enabled = !busy)
-            OutlinedTextField(criteria, { if (it.length <= 4000) criteria = it }, label = { Text("Success criteria (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
+            OutlinedTextField(criteria, { if (it.length <= 10_000) criteria = it }, label = { Text("Success criteria (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
             Row {
                 Checkbox(checked = continuousNew, onCheckedChange = { continuousNew = it }, enabled = !busy)
                 Text("Keep working continuously until done", Modifier.padding(top = 12.dp))
@@ -374,7 +374,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 if (!terminal && task["mode"] == "ONGOING") Text("After the plan is complete, monitoring follows its normal schedule.", style = MaterialTheme.typography.bodySmall)
                 if (editing && !terminal) {
                     OutlinedTextField(editGoal, { if (it.length <= 12_000) editGoal = it }, label = { Text("Goal") }, minLines = 2, modifier = Modifier.fillMaxWidth(), enabled = !busy)
-                    OutlinedTextField(editCriteria, { if (it.length <= 4000) editCriteria = it }, label = { Text("What does done look like? (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
+                    OutlinedTextField(editCriteria, { if (it.length <= 10_000) editCriteria = it }, label = { Text("What does done look like? (optional)") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     Text("Completed steps and evidence are kept; Nethra re-plans from the new wording.", style = MaterialTheme.typography.bodySmall)
                     Button(enabled = !busy && connected && editGoal.isNotBlank(), onClick = { editing = false; quickEditId = null; perform("nethra.edit", mapOf("id" to id, "revision" to revision, "goal" to editGoal.trim(), "successCriteria" to editCriteria.trim())) }) { Text("Save changes") }
                 }
@@ -407,7 +407,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     }
                 }
                 if (task["status"] == "WAITING_FOR_USER" && approvals.none { it["status"] == "PENDING" }) {
-                    OutlinedTextField(answer, { if (it.length <= 4000) answer = it }, label = { Text("Your answer") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
+                    OutlinedTextField(answer, { if (it.length <= 10_000) answer = it }, label = { Text("Your answer") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                     Button(enabled = !busy && answer.isNotBlank() && connected, onClick = { perform("nethra.answer", mapOf("id" to id, "answer" to answer.trim(), "revision" to revision)) }) { Text("Send answer") }
                 }
                 TextButton(onClick = { showHistory = !showHistory }) { Text(if (showHistory) "Hide history" else "Show history") }
