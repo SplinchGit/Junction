@@ -49,7 +49,7 @@ class NethraApi {
       // live/step/progress let clients show where Nethra is without fetching each objective.
       const liveId=s.liveTaskId?.()??null,stepOf=t=>String((t.pendingSteps||[])[0]||'').slice(0,200)||null;
       const brief=t=>{try{const p=progressView(t,s,{liveTaskId:liveId});return {doing:p.doing,next:p.next,wake:p.wake,waitingFor:{kind:p.waitingFor.kind,detail:String(p.waitingFor.detail||'').slice(0,240)},lastAccomplished:p.lastAccomplished};}catch{return null;}};
-      const objectives=all.slice(offset,offset+100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',model:t.model||'qwen3:30b',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null,continuous:t.continuous===true,allowCodeWork:t.allowCodeWork===true,usage:(()=>{try{const u=s.usage(t.id);return {todayMs:u.taskMs};}catch{return null;}})()}));
+      const objectives=all.slice(offset,offset+100).map(t=>({tracking:brief(t),live:t.id===liveId,step:stepOf(t),progress:{done:(t.completedSteps||[]).length,total:(t.completedSteps||[]).length+(t.pendingSteps||[]).length},id:t.id,parentId:t.parentId||null,conversationId:t.conversationId||null,goal:String(t.goal||'').slice(0,500),status:t.status,mode:t.mode||'FINITE',model:t.model||'qwen3:30b',revision:t.revision,nextWakeAt:t.nextWakeAt,lastExecutionAt:t.lastExecutionAt,summary:String(t.summary||'').slice(0,500),persistent:t.persistent,autonomy:t.autonomy||'BALANCED',priority:t.priority||3,checkIn:t.checkIn||'WEEKLY',sources:t.sources||[],nextDirectionCheckAt:t.nextDirectionCheckAt||null,continuous:t.continuous===true,allowCodeWork:t.allowCodeWork===true,usage:(()=>{try{const u=s.usage(t.id);return {todayMs:u.taskMs};}catch{return null;}})()}));
       const result={objectives,nextOffset:offset+objectives.length<all.length?offset+objectives.length:null,settings:{...s.settings(),thinking:true}};
       for(let length=250;Buffer.byteLength(JSON.stringify(result))>50000&&length>=80;length=Math.floor(length/2)-1){
         for(const task of objectives){task.goal=task.goal.slice(0,length);task.summary=task.summary.slice(0,length);if(task.tracking&&length<120)task.tracking={doing:task.tracking.doing,wake:task.tracking.wake,waitingFor:{kind:task.tracking.waitingFor.kind}};}
@@ -84,7 +84,13 @@ class NethraApi {
       const experiments=(s.experiments?.(task.id)||[]).slice(0,5).map(({baseline,...item})=>({...item,baseline:{count:baseline.count,median:baseline.median}}));
       const contract=this.describeTask?this.describeTask(task):taskContract(task);
       const children=(s.recentChildren?.(task.id,8)||[]).map(childSummary);
-      const agents=(s.recentAgents?.(task.id)||[]).map(agent=>({id:agent.id,goal:String(agent.goal).slice(0,160),status:agent.status,revision:agent.revision}));
+      const liveId=s.liveTaskId?.()??null;
+      const agents=(s.recentAgents?.(task.id)||[]).map(agent=>{
+        const tracking=progressView(agent,s,{liveTaskId:liveId});
+        return {id:agent.id,goal:String(agent.goal).slice(0,160),status:agent.status,revision:agent.revision,
+          live:agent.id===liveId,continuous:agent.continuous===true,mode:agent.mode,nextWakeAt:agent.nextWakeAt,
+          tracking:{doing:tracking.doing,waitingFor:{kind:tracking.waitingFor.kind},wake:tracking.wake}};
+      });
       if(source==='desktop'){
         const projectDocuments=task.projectId?this.listProjectDocuments(task.projectId):[];
         return {task,approvals,events,attention:s.attention(task.id),progress,performance,experiments,contract,children,agents,projects:this.listProjects().map(({id,name})=>({id,name})),projectDocuments,approvedDocumentStatus:projectDocumentStatus(task,projectDocuments)};

@@ -8,7 +8,7 @@
  const pageHeader=el('header');const pageTitle=el('div');pageTitle.append(Object.assign(el('small','NETHRA · ON YOUR PC'),{}),el('h1','Tasks'));pageHeader.append(pageTitle,Object.assign(el('mark','Keeps working when this window is closed'),{}));
  const layout=el('div');layout.className='tasks-page';const detailPane=el('div');detailPane.className='task-detail-pane';detailPane.setAttribute('aria-live','polite');
  section.classList.add('tasks-list-pane');queueMicrotask(()=>{area.append(reunion);notice.classList.add('task-line');area.append(notice);});section.inert=false;section.removeAttribute('aria-hidden');layout.append(section,detailPane);page.append(pageHeader,layout);document.querySelector('main').append(page);
- const notice=el('p','One local agent on your Windows PC. Enabled objectives continue while the desktop window is closed.');area.append(notice);
+ const notice=el('p','Tasks and agent assignments run on your Windows PC. The local scheduler runs one assignment at a time.');area.append(notice);
  const reunion=el('details');reunion.append(el('summary','Since you were away'));const reunionBody=el('div','Checking saved activity…');reunion.append(reunionBody);area.append(reunion);
  const error=el('p');error.role='status';area.append(error);
  const form=el('form');form.className='panel';const goal=el('textarea');goal.placeholder='Give Nethra a goal and describe what success looks like';goal.setAttribute('aria-label','Objective');goal.rows=3;goal.required=true;goal.maxLength=10000;
@@ -113,7 +113,7 @@
      if(row===endedRows[0]&&taskFilter.value==='all')list.append(el('h3','Finished tasks'));
      const card=el('article');card.className='task-card';card.dataset.objectiveId=row.id;card.dataset.state=stateOf(row);
      const head=el('div');head.className='task-head';
-     const chip=el('span',stateLabel(row));chip.className='task-chip';
+     const chip=el('span',row.parentId?`Agent · ${stateLabel(row)}`:stateLabel(row));chip.className='task-chip';
      const title=button(row.goal,()=>{selectedId=row.id;});title.className='task-index-row task-title';title.title='View task details';
      const inspect=el('button','Chat');inspect.type='button';inspect.className='task-link task-chat-button';inspect.title='Open task chat';inspect.onclick=()=>perform(()=>openTaskChat(row));
      head.append(chip,title,inspect);card.append(head);
@@ -144,18 +144,22 @@
      }
      const diagnostics=el('details');diagnostics.dataset.section='diagnostics';diagnostics.open=keepExpanded(row.id,'diagnostics');diagnostics.append(el('summary','Diagnostics'));
      if(!task.parentId){
-       const delegation=el('details');delegation.append(el('summary','Task agents'),el('p','Agents run as separate tasks. Pause or stop them from their task details.'));
+       const delegation=el('section');
+       delegation.append(el('h3','Task agents'));
+       if(!agents.length)delegation.append(el('p','No agents assigned to this task.'));
        for(const agent of agents){
-         const entry=el('div');entry.append(el('p',`${agent.goal} · ${agent.status.toLowerCase()}`));
+         const entry=el('div');entry.append(el('p',`${agent.goal} · ${stateLabel(agent)}`));
+         if(agent.live&&agent.tracking?.doing)entry.append(el('p',agent.tracking.doing));
+         if(agent.status==='SLEEPING'&&agent.nextWakeAt)entry.append(el('p',`Next wake: ${time(agent.nextWakeAt)}`));
          const inspect=el('button','View agent task');inspect.type='button';inspect.onclick=()=>{selectedId=agent.id;refresh();};
          entry.append(inspect);delegation.append(entry);
        }
        const assignment=el('textarea');assignment.setAttribute('aria-label','Agent assignment');assignment.placeholder='What should this agent accomplish?';assignment.maxLength=2000;
-       delegation.append(assignment,button('Launch task agent',async()=>{
+       const launch=el('details');launch.className='task-agent-assignment';launch.append(el('summary','Assign an agent'),assignment,button('Launch task agent',async()=>{
          const {task:agent}=await api('nethra.agent.create',{id:task.id,goal:assignment.value.trim()});
          selectedId=agent.id;
        }));
-       detailCard.append(delegation);
+       delegation.append(launch);detailCard.append(delegation);
      }
      if(children.length){
        const agents=el('section');agents.append(el('h3','Research helpers'));
@@ -286,5 +290,5 @@
  document.querySelectorAll('.nav[data-view]:not([data-view="tasks"])').forEach(button=>button.addEventListener('click',()=>section.classList.remove('open')));
  api('nethra.status',{warm:false}).then(s=>{showSettings(s.settings);modelStatus.textContent=`${s.model} · Windows host · ${s.capabilities.thinking?'native thinking supported':'thinking support unavailable'} · one inference at a time${s.modelState?` · ${s.modelState.state}`:''}`;showCalendar(s.sources.calendar);showGmail(s.sources.gmail);}).catch(e=>{modelStatus.textContent=e.message;});
  api('nethra.reunion',{since:Date.now()-86400000}).then(result=>{reunionBody.replaceChildren(el('p',`${result.objectives.length} saved objective(s) · ${result.pendingApprovals} approval(s) waiting`));for(const event of result.events.slice(0,8))reunionBody.append(el('p',`${time(event.at)} · ${event.kind} · ${event.taskId.slice(0,8)}`));}).catch(e=>{reunionBody.textContent=e.message;});
- setInterval(()=>{if(section.classList.contains('open')&&!document.querySelector('#view-tasks textarea:focus,#view-tasks input:focus,#view-tasks select:focus,.task-editor:not([hidden])'))refresh();else if(document.getElementById('view-chat').classList.contains('active'))refreshBadge();},5000);refreshBadge();
+ setInterval(()=>{if(page.classList.contains('active')&&!page.querySelector('textarea:focus,input:focus,select:focus,.task-editor:not([hidden]),.task-agent-assignment[open]'))refresh();else if(document.getElementById('view-chat').classList.contains('active'))refreshBadge();},5000);refreshBadge();
 })();

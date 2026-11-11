@@ -124,9 +124,15 @@ test('disabling full task agents fences active work and keeps the parent availab
   const {task:agent}=await api.dispatch('nethra.agent.create',request,'launch','android');
   const claim=store.claim('test');
   assert.equal(claim.task.id,agent.id);
+  const detail=await api.dispatch('nethra.get',{id:parent.id},'live-agent-detail','android');
+  assert.equal(detail.agents[0].live,true);
+  assert.equal(detail.agents[0].continuous,true);
+  const list=await api.dispatch('nethra.list',{},'live-agent-list','android');
+  assert.equal(list.objectives.find(task=>task.id===agent.id).parentId,parent.id);
   await api.dispatch('nethra.settings',{taskAgentsEnabled:false},'disable','android');
   const paused=store.get(agent.id);
   assert.equal(paused.status,'PAUSED');
+  assert.equal((await api.dispatch('nethra.get',{id:parent.id},'paused-agent-detail','android')).agents[0].live,false);
   assert.equal(store.renew(agent.id,claim.token),false);
   assert.throws(()=>store.update(agent.id,{status:'COMPLETED'},'EXECUTED',claim.token),/lease/i);
   assert.equal(store.get(parent.id).status,'CREATED');

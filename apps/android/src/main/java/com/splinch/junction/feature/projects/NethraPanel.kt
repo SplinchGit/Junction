@@ -213,7 +213,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { refreshFailed = true; connected = false; ObjectiveStatusMonitor.disconnected(); error = failure.message ?: "The paired Windows host is unavailable."; detailLoading = false; if (selectedId != null && detail == null) detailError = error }
             }
-            delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) { if (selectedId != null) 3_000L else 60_000L } else 180_000L)
+            delay(if (!refreshFailed && NethraClient.lastTransport == NethraClient.Transport.LAN) { if (selectedId != null || objectives.any { it["parentId"] != null && !ObjectiveStatus.of(it).ended }) 3_000L else 60_000L } else 180_000L)
         }
     }
 
@@ -229,7 +229,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 onDelete = { quickDeleteId = selectedId })
         }
         Column(Modifier.weight(1f, fill = false).verticalScroll(taskScroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            val withStatus = objectives.map { it to ObjectiveStatus.of(it) }
+            val withStatus = objectives.map { it to ObjectiveStatus.of(if (connected) it else it.filterKeys { key -> key != "live" }) }
             val open = withStatus.filterNot { it.second.ended }.sortedBy { it.second.light.ordinal }
             val allEnded = withStatus.filter { it.second.ended }
             val ended = if (showAllEnded) allEnded else allEnded.take(5)
@@ -367,7 +367,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             StatusDot(status.light)
                             Spacer(Modifier.width(8.dp))
-                            Text(status.label, style = MaterialTheme.typography.labelLarge)
+                            Text(if (objective["parentId"] != null) "Agent · ${status.label}" else status.label, style = MaterialTheme.typography.labelLarge)
                         }
                         Text(objective["goal"]?.toString().orEmpty(), style = MaterialTheme.typography.titleSmall, maxLines = 2)
                         val tracking = objective["tracking"] as? Map<*, *>
@@ -447,13 +447,19 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 if (task["parentId"] == null) {
                     var showAgents by rememberSaveable(id) { mutableStateOf(false) }
                     var agentAssignment by rememberSaveable(id) { mutableStateOf("") }
-                    TextButton(onClick = { showAgents = !showAgents }) { Text(if (showAgents) "Hide task agents" else "Task agents") }
+                    val agents = maps(detail?.get("agents"))
+                    Text("Task agents", style = MaterialTheme.typography.titleMedium)
+                    if (detail != null && agents.isEmpty()) Text("No agents assigned to this task.")
+                    agents.forEach { agent ->
+                        val agentStatus = ObjectiveStatus.of(if (connected) agent else agent.filterKeys { it != "live" })
+                        Text("${agent["goal"]} · ${agentStatus.label}")
+                        if (agent["status"] == "SLEEPING" && agent["nextWakeAt"] is Number) Text(wakeLabel(agent["nextWakeAt"]))
+                        if (connected && agent["live"] == true) (agent["tracking"] as? Map<*, *>)?.get("doing")?.toString()?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        TextButton(onClick = { selectedId = agent["id"]?.toString() }) { Text("View agent task") }
+                    }
+                    TextButton(onClick = { showAgents = !showAgents }) { Text(if (showAgents) "Hide assignment form" else "Assign an agent") }
                     if (showAgents) {
                         Text("Full agents run as separate tasks with their own permissions.")
-                        maps(detail?.get("agents")).forEach { agent ->
-                            Text("${agent["goal"]} · ${agent["status"]}")
-                            TextButton(onClick = { selectedId = agent["id"]?.toString() }) { Text("View agent task") }
-                        }
                         OutlinedTextField(agentAssignment, { if (it.length <= 2000) agentAssignment = it }, label = { Text("Agent assignment") }, modifier = Modifier.fillMaxWidth())
                         Button(enabled = connected && !busy && settings["taskAgentsEnabled"] != false && detail?.containsKey("agents") == true && agentAssignment.isNotBlank(), onClick = {
                             perform("nethra.agent.create", mapOf("id" to id, "goal" to agentAssignment.trim()))
