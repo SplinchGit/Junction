@@ -1,21 +1,59 @@
 "use strict";
 const crypto=require('node:crypto');
+const {projectContext}=require('./foreman');
+function documentFields(payload,allowed){if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Invalid document fields');}
 function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
- constructor(foreman){this.foreman=foreman;}
+ constructor(foreman,{conversationExists=()=>false,pickProjectDocument=null}={}){
+  this.foreman=foreman;this.conversationExists=conversationExists;this.pickProjectDocument=pickProjectDocument;this.imports=new Map();
+ }
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){
   const f=this.foreman;if(!f)throw new Error('Project runtime is unavailable');
   if(type==='project.list')return {projects:f.list().map(p=>({id:p.id,name:p.name,status:p.status,revision:p.revision,objective:p.objective.slice(0,500),nextAction:p.nextAction}))};
   if(type==='project.get'){
-   const p=summary(f.get(payload.id));const events=f.events(p.id,Number.isSafeInteger(payload.after)?payload.after:0).map(e=>({...e,detail:e.detail.slice(0,500)}));
+   const saved=f.get(payload.id),p=summary(saved);const events=f.events(p.id,Number.isSafeInteger(payload.after)?payload.after:0).map(e=>({...e,detail:e.detail.slice(0,500)}));
    // LAN frames stay bounded; detailed execution evidence remains in durable storage.
    p.tasks=p.tasks.slice(-20);for(const t of p.tasks)if(t.lastAttempt)t.lastAttempt.tests=t.lastAttempt.tests?.slice(-3);
    for(const t of p.tasks)if(t.lastAttempt){t.lastAttempt.error=t.lastAttempt.error?.slice(-500);t.lastAttempt.summary=t.lastAttempt.summary?.slice(-500);for(const test of t.lastAttempt.tests||[])test.output=test.output?.slice(-500);}
    const result={project:p,events};while(Buffer.byteLength(JSON.stringify(result))>55000&&events.length)events.pop();
    if(Buffer.byteLength(JSON.stringify(result))>55000)throw new Error('Project detail exceeds transport limit; inspect on Windows');
+   if(source==='desktop')p.context={...projectContext(saved),primaryConversationId:saved.conversationId||null};
    return result;
   }
   if(f.closed)throw new Error('Junction is quitting');
+  if(['project.documents','project.document.get','project.document.import','project.document.remove'].includes(type)){
+   if(source!=='desktop')throw new Error('Manage project documents on Windows');
+   if(type==='project.documents'){
+    documentFields(payload,['id','query']);return {documents:f.listDocuments(payload.id,payload.query)};
+   }
+   if(type==='project.document.get'){
+    documentFields(payload,['id','documentId','revision']);return {document:f.getDocument(payload.id,payload.documentId,payload.revision)};
+   }
+   if(type==='project.document.remove'){
+    documentFields(payload,['id','documentId','revision','confirm']);
+    if(payload.confirm!==true)throw new Error('Confirm document removal');
+    f.removeDocument(payload.id,payload.documentId,payload.revision,requestId);return {removed:true};
+   }
+   documentFields(payload,['id']);
+   const id=payload.id;
+   const saved=f.documentImportReceipt(id,requestId);
+   if(saved)return {document:saved};
+   const pending=this.imports.get(requestId);
+   if(pending){if(pending.id!==id)throw new Error('Request ID reused');return pending.result;}
+   f.get(id);
+   if(!this.pickProjectDocument)throw new Error('Project document picker is unavailable');
+   const result=(async()=>{
+    const selected=await this.pickProjectDocument();
+    return selected?{document:await f.importDocument(id,requestId,selected)}:{cancelled:true};
+   })();
+   this.imports.set(requestId,{id,result});
+   try{return await result;}finally{this.imports.delete(requestId);}
+  }
+  if(type==='project.context'){
+   if(source!=='desktop')throw new Error('Edit project context on Windows');
+   const p=f.updateContext(payload,requestId,this.conversationExists);
+   return {project:{...summary(p),context:{...projectContext(p),primaryConversationId:p.conversationId||null}}};
+  }
   if(type==='project.register') {if(source!=='desktop')throw new Error('Register project paths on Windows');return {project:summary(await f.create(payload))};}
   if(type==='task.control'){
    if(Object.keys(payload).some(k=>!['id','action','revision'].includes(k)))throw new Error('Invalid control fields');

@@ -3,7 +3,7 @@
 const dailyLimits=settings=>({taskMs:settings.objectiveDailyBudgetMs??Infinity,globalMs:settings.globalDailyBudgetMs??Infinity});
 const {randomUUID,createHash}=require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=600000, LEASE_MS=660000;
+const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=20*60_000, LEASE_MS=MAX_RUNTIME+60_000;
 function clampWake(at,now=Date.now(),min=MIN_WAKE,max=MAX_WAKE) {return Math.min(now+max,Math.max(now+min,Number.isFinite(at)?at:now+min));}
 const MONITOR_INTERVAL_MS=Object.freeze({QUIET:7*86_400_000,BALANCED:86_400_000,ACTIVE:6*3_600_000});
 function monitorWakeAt(task,now=Date.now()) {return now+(MONITOR_INTERVAL_MS[task.autonomy]||MONITOR_INTERVAL_MS.BALANCED);}
@@ -18,7 +18,7 @@ function inputFingerprint(task,store){
   let approvals=[],attention=[];
   try{approvals=store.approvals(task.id).map(item=>[item.id,item.status]);}catch{}
   try{attention=store.attention(task.id).filter(item=>item.state==='CLAIMED').map(item=>item.id);}catch{}
-  return createHash('sha256').update(JSON.stringify([task.goal,task.successCriteria,task.plan||[],task.completedSteps||[],task.pendingSteps||[],(task.evidence||[]).map(item=>JSON.stringify(item)),(task.ownerInputs||[]).length,approvals,attention])).digest('hex');
+  return createHash('sha256').update(JSON.stringify([task.model||'qwen3:30b',task.goal,task.successCriteria,task.plan||[],task.completedSteps||[],task.pendingSteps||[],(task.evidence||[]).map(item=>JSON.stringify(item)),(task.ownerInputs||[]).length,approvals,attention])).digest('hex');
 }
 function safeFailure(error) {
   const message=String(error?.message||error||'Execution failed');
@@ -44,13 +44,19 @@ const PREWARM_LEAD_MS=120_000;
 
 /** Polling checks durable due dates; inference runs only after a successful claim. */
 class NethraScheduler {
-  constructor({store,execute,now=Date.now,pollMs=1000,owner=randomUUID(),onSettled=null,sourceStatus=null,warmBefore=null,maxRuntimeMs=MAX_RUNTIME}) {this.maxRuntimeMs=maxRuntimeMs;this.store=store;this.execute=execute;this.onSettled=onSettled;this.sourceStatus=sourceStatus;this.warmBefore=warmBefore;this.warmedFor=null;this.now=now;this.pollMs=Math.max(10,pollMs);this.owner=owner;this.attention=new NethraAttention(store,{now});this.lastAttentionSweep=0;this.running=null;this.controller=null;this.stopping=false;}
+  constructor({store,execute,now=Date.now,pollMs=1000,owner=randomUUID(),onSettled=null,sourceStatus=null,warmBefore=null,reconcileWork=null,maxRuntimeMs=MAX_RUNTIME}) {this.maxRuntimeMs=maxRuntimeMs;this.store=store;this.execute=execute;this.onSettled=onSettled;this.sourceStatus=sourceStatus;this.warmBefore=warmBefore;this.reconcileWork=reconcileWork;this.warmedFor=null;this.now=now;this.pollMs=Math.max(10,pollMs);this.owner=owner;this.attention=new NethraAttention(store,{now});this.lastAttentionSweep=0;this.running=null;this.controller=null;this.runningTaskId=null;this.stopping=false;}
   start() {if(this.timer)return;this.stopping=false;const poll=()=>this.tick().catch(error=>{this.lastError=error;});this.timer=setInterval(poll,this.pollMs);this.timer.unref?.();poll();}
   tick() {if(this.stopping)return Promise.resolve();if(this.running)return this.running;this.running=this.run().finally(()=>{this.running=null;});return this.running;}
   async run() {
-    if(this.now()-this.lastAttentionSweep>=15_000){this.lastAttentionSweep=this.now();try{this.attention.reconcileCheckIns();this.attention.reconcileInitiative();if(this.attention.errors.length)this.lastError=new Error(`Attention sweep failed for ${this.attention.errors.length} objective(s): ${this.attention.errors[0].message}`);}catch(error){this.lastError=error;}this.prepareUpcoming();}
+    if(this.now()-this.lastAttentionSweep>=15_000){
+      this.lastAttentionSweep=this.now();
+      this.store.retryDeletionCleanup?.();
+      try{await this.reconcileWork?.();}catch(error){this.lastError=error;}
+      try{this.attention.reconcileCheckIns();this.attention.reconcileDependencies();this.attention.reconcileInitiative();if(this.attention.errors.length)this.lastError=new Error(`Attention sweep failed for ${this.attention.errors.length} objective(s): ${this.attention.errors[0].message}`);}catch(error){this.lastError=error;}
+      this.prepareUpcoming();
+    }
     const claim=this.store.claim(this.owner,LEASE_MS);if(!claim)return;
-    const {task,token}=claim,controller=new AbortController();this.controller=controller;
+    const {task,token}=claim,controller=new AbortController();this.controller=controller;this.runningTaskId=task.id;
     // Source adapters have already compared stable revisions. A routine checkpoint with
     // no changed evidence needs bookkeeping, not a fresh 30B inference.
     if(isRoutineMonitor(task,this.now(),this.sourceStatus,this.store.hasClaimedReasoningAttention(task.id,token))){
@@ -59,7 +65,7 @@ class NethraScheduler {
       const summary=unavailable.length?`Waiting for fresh source access: ${unavailable.map(item=>`${item.source} ${item.status.toLowerCase()}`).join(', ')}. No new check was confirmed.`:task.summary;
       const wakeAt=monitorWakeAt(task,this.now());
       try{this.store.update(task.id,{status:'SLEEPING',summary,nextWakeAt:wakeAt,wakeReason:wakeReason('MONITOR',unavailable.length?'Routine check; a watched source was unavailable, so nothing was checked':`Routine ${MONITOR_LABEL[task.autonomy]||'daily'} monitoring check; a source change wakes it sooner`,wakeAt)},unavailable.length?'MONITOR_SOURCE_UNAVAILABLE':'MONITOR_IDLE',token);}
-      finally{this.store.release(task.id,token);this.controller=null;}
+      finally{this.store.release(task.id,token);this.controller=null;this.runningTaskId=null;}
       return;
     }
     const started=this.now(),settings=this.store.settings();
@@ -69,7 +75,7 @@ class NethraScheduler {
       try{
         if(unchanged>=3)this.store.update(task.id,{status:'WAITING_FOR_USER',summary:'Nothing has changed since my last attempts and I have no useful next action. What should I try next?',nextWakeAt:null,unchangedWakes:unchanged,wakeReason:null},'NO_NEW_EVIDENCE_STOPPED',token);
         else{const wakeAt=clampWake(this.now()+settings.minWakeMs*2**unchanged,this.now(),settings.minWakeMs,settings.maxWakeMs);this.store.update(task.id,{status:'SLEEPING',nextWakeAt:wakeAt,unchangedWakes:unchanged,wakeReason:wakeReason('BACKOFF','No new evidence since the last attempt; inference skipped',wakeAt)},'NO_NEW_EVIDENCE',token);}
-      }finally{this.store.release(task.id,token);this.controller=null;}
+      }finally{this.store.release(task.id,token);this.controller=null;this.runningTaskId=null;}
       if(unchanged>=3&&this.onSettled){try{await this.onSettled(this.store.get(task.id));}catch(error){this.lastError=error;}}
       return;
     }
@@ -91,9 +97,13 @@ class NethraScheduler {
       const result=await Promise.race([Promise.resolve().then(()=>this.execute(task,{signal:controller.signal,token,checkpoint,inference})),aborted]);
       if(controller.signal.aborted)return;
       completedCycle=true;
+      if(this.store.deletion?.(task.id))return;
       const live=this.store.get(task.id);
       if(['PAUSED','CANCELLED','COMPLETED','FAILED','WAITING_FOR_USER','BLOCKED'].includes(live.status))return;
       const patch={...(result||{})};
+      // Owner answers live in the store. A worker's returned snapshot must not
+      // overwrite a newer answer received during its final inference call.
+      delete patch.questions;
       if(!patch.status)patch.status='SLEEPING';
       if(['ACTIVE','PLANNING','CREATED'].includes(patch.status))patch.status='SLEEPING';
       if(!task.persistent&&patch.status==='SLEEPING')patch.status='PAUSED';
@@ -127,6 +137,7 @@ class NethraScheduler {
       if(Number.isSafeInteger(attentionDue)&&clampWake(attentionDue,this.now(),settings.minWakeMs,settings.maxWakeMs)<patch.nextWakeAt){patch.nextWakeAt=clampWake(attentionDue,this.now(),settings.minWakeMs,settings.maxWakeMs);patch.wakeReason=wakeReason('ATTENTION','A watched source or objective event arrived during the last run',patch.nextWakeAt);}
       this.store.update(task.id,patch,'EXECUTED',token);
     } catch(error) {
+      if(this.store.deletion?.(task.id))return;
       const live=this.store.get(task.id);
       if(['PAUSED','CANCELLED','COMPLETED','FAILED','WAITING_FOR_USER','BLOCKED'].includes(live.status))return;
       try {
@@ -148,10 +159,10 @@ class NethraScheduler {
     } finally {
       clearInterval(heartbeat);clearTimeout(deadline);removeAbort();
       try{this.store.endInference(task.id,token);}catch(error){if(!/lease/i.test(error.message))this.lastError=error;}
-      this.store.release(task.id,token,completedCycle);this.controller=null;
+      this.store.release(task.id,token,completedCycle);this.controller=null;this.runningTaskId=null;
       // Outcomes the owner should hear about go back to the conversation that started the work.
       // Every settled cycle is offered to the report hook; it decides what the chat should hear.
-      if(this.onSettled){try{const settled=this.store.get(task.id);await this.onSettled(settled);}catch(error){if(!/Unknown Nethra task/.test(error.message))this.lastError=error;}}
+      if(this.onSettled){try{const settled=this.store.get(task.id);await this.onSettled(settled);}catch(error){if(error.code!=='NETHRA_TASK_DELETED'&&!/Unknown Nethra task/.test(error.message))this.lastError=error;}}
     }
   }
   /**
@@ -172,6 +183,7 @@ class NethraScheduler {
       Promise.resolve(this.warmBefore(next)).catch(()=>{});
     }catch(error){this.lastError=error;}
   }
+  abortTask(id) {if(this.runningTaskId!==id||!this.controller)return false;this.controller.abort(Object.assign(new Error('Task deleted'),{code:'NETHRA_TASK_DELETED'}));return true;}
   async stop() {this.stopping=true;clearInterval(this.timer);this.timer=null;this.controller?.abort(new Error('Scheduler stopped'));await this.running;}
 }
-module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS,dailyLimits};
+module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS,dailyLimits,MAX_RUNTIME};

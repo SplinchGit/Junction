@@ -21,7 +21,7 @@ test('prewarm loads a cold model once with long residency and is throttled',asyn
   const {agent,requests}=runtime(false);
   assert.equal(await agent.prewarm(),true);
   const load=requests.find(r=>r.url.endsWith('/api/generate'));
-  assert.deepEqual(load.body,{model:'qwen3:30b',keep_alive:'2h',options:{num_ctx:8192}});
+  assert.deepEqual(load.body,{model:'qwen3:30b',keep_alive:'2h',options:{num_ctx:16384}});
   assert.equal(await agent.prewarm(),false);
   assert.equal(requests.filter(r=>r.url.endsWith('/api/generate')).length,1);
 });

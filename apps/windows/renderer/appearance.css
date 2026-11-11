@@ -20,28 +20,60 @@
   :root[data-palette="moss"] .message.user .bubble{background:#eef4ee;border-color:#cbdccc;color:#1f2b23}
 }
 
+/* Soft accents use a matching foreground; inputs and chat bubbles stay opaque. */
+:root[data-palette="lavender"]{--md-primary:#d9c8f2;--md-on-primary:#30233d;--md-primary-container:#3d304d;--md-on-primary-container:#f0e5ff;--md-secondary:#cfc0dc;--md-secondary-container:#493b53;--scene-bg:#14111a;--md-on-surface:#eee8f1;--md-surface-container:#302837;--md-on-surface-variant:#d0c4d8;--scene-input:#201a27;--scene-user:#2b2236;--scene-line:#4c4356}
+:root[data-palette="peach"]{--md-primary:#f2c5b2;--md-on-primary:#442a20;--md-primary-container:#51382f;--md-on-primary-container:#ffe0d2;--md-secondary:#e7c0b3;--md-secondary-container:#51413a;--scene-bg:#1b1311;--md-on-surface:#f3e7e1;--md-surface-container:#382b26;--md-on-surface-variant:#dac5ba;--scene-input:#291e19;--scene-user:#392720;--scene-line:#5a463b}
+:root[data-palette="mint"]{--md-primary:#b7decb;--md-on-primary:#17382a;--md-primary-container:#2b4439;--md-on-primary-container:#d2f0e1;--md-secondary:#bdd0c3;--md-secondary-container:#3a4b40;--scene-bg:#101814;--md-on-surface:#e3eee7;--md-surface-container:#26372d;--md-on-surface-variant:#bfd2c5;--scene-input:#1a261f;--scene-user:#22362b;--scene-line:#40564a}
+:root[data-palette="sky"]{--md-primary:#bdd9ef;--md-on-primary:#203647;--md-primary-container:#304354;--md-on-primary-container:#d9edff;--md-secondary:#c2cddb;--md-secondary-container:#3d4654;--scene-bg:#11161c;--md-on-surface:#e5edf5;--md-surface-container:#29343f;--md-on-surface-variant:#c2d0df;--scene-input:#1c252f;--scene-user:#253443;--scene-line:#435364}
+:root[data-palette="butter"]{--md-primary:#e6d6a3;--md-on-primary:#3c3218;--md-primary-container:#49412b;--md-on-primary-container:#f7e9ba;--md-secondary:#d6ccad;--md-secondary-container:#494534;--scene-bg:#18160f;--md-on-surface:#f0ebd9;--md-surface-container:#363124;--md-on-surface-variant:#d1c8ad;--scene-input:#262217;--scene-user:#35301f;--scene-line:#55503b}
+@media(prefers-color-scheme:light){
+  :root[data-palette="lavender"]{--md-primary:#685182;--md-on-primary:#fff;--md-primary-container:#ebddf7;--md-on-primary-container:#281738;--md-secondary:#705b7e;--md-secondary-container:#ecdef4;--scene-bg:#fcf8ff;--md-on-surface:#211b28;--md-surface-container:#e9e0f0;--md-on-surface-variant:#514858;--scene-input:#fffbff;--scene-user:#f1e8fa;--scene-line:#d3c7de}
+  :root[data-palette="peach"]{--md-primary:#8c5745;--md-on-primary:#fff;--md-primary-container:#ffdbcb;--md-on-primary-container:#35170d;--md-secondary:#815d50;--md-secondary-container:#f8dfd3;--scene-bg:#fff8f5;--md-on-surface:#2b1d17;--md-surface-container:#f2e0d8;--md-on-surface-variant:#5d4940;--scene-input:#fffbf9;--scene-user:#fce8df;--scene-line:#e0c8bc}
+  :root[data-palette="mint"]{--md-primary:#406958;--md-on-primary:#fff;--md-primary-container:#d2eddf;--md-on-primary-container:#102d21;--md-secondary:#526c5d;--md-secondary-container:#d7eadd;--scene-bg:#f5fcf7;--md-on-surface:#18251e;--md-surface-container:#dfebe3;--md-on-surface-variant:#43564a;--scene-input:#fbfffc;--scene-user:#e1f2e8;--scene-line:#bfd4c5}
+  :root[data-palette="sky"]{--md-primary:#4b667d;--md-on-primary:#fff;--md-primary-container:#d8eaf9;--md-on-primary-container:#172d40;--md-secondary:#5a697d;--md-secondary-container:#dce6f4;--scene-bg:#f6faff;--md-on-surface:#1c242c;--md-surface-container:#e1e9f2;--md-on-surface-variant:#475461;--scene-input:#fbfdff;--scene-user:#e6f0fa;--scene-line:#c4d2df}
+  :root[data-palette="butter"]{--md-primary:#756536;--md-on-primary:#fff;--md-primary-container:#f2e5b7;--md-on-primary-container:#2c2408;--md-secondary:#6d654b;--md-secondary-container:#eee6cc;--scene-bg:#fffbef;--md-on-surface:#282313;--md-surface-container:#eee7d1;--md-on-surface-variant:#59513b;--scene-input:#fffdf6;--scene-user:#f5edcf;--scene-line:#d8ceb0}
+}
+:root[data-pastel="true"]{--panel:var(--md-surface-container);--md-surface:var(--scene-bg);--md-surface-container-low:var(--scene-input);--line:var(--scene-line);--md-outline:var(--scene-line);--muted:var(--md-on-surface-variant);--blue:var(--md-primary);--brand-blue:var(--md-primary);--brand-violet:var(--md-secondary);--accent-soft:var(--md-primary-container);color:var(--md-on-surface);background:var(--scene-bg)}
+:root[data-pastel="true"] main{background:var(--scene-bg);color:var(--md-on-surface)}
+:root[data-pastel="true"] .shell>aside,:root[data-pastel="true"] .threads{background:var(--scene-input);border-color:var(--line)}
+:root[data-pastel="true"] :is(.brand strong,.view h1,.view h2,.panel h2,.settings h2,.message .bubble){color:var(--md-on-surface)}
+:root[data-pastel="true"] .primary{background:var(--md-primary);color:var(--md-on-primary)}
+:root[data-pastel="true"] :is(.secondary,.suggestions button){background:var(--scene-input);color:var(--md-on-surface);border:1px solid var(--line)}
+:root[data-pastel="true"] :is(.thread,.nav,.message .role,.message .provenance){color:var(--muted)}
+:root[data-pastel="true"] :is(.thread.active,.thread:hover,.filter-chip.active,.compose .research-toggle.active,.compose .chat-options[open]>summary){background:var(--md-primary-container);color:var(--md-on-primary-container)}
+:root[data-pastel="true"] :is(.message .bubble a,.generation-status){color:var(--md-primary)}
+:root[data-pastel="true"] .message.user .bubble{background:var(--scene-user);border-color:var(--line);color:var(--md-on-surface)}
+:root[data-pastel="true"] :is(input:not([type="checkbox"]):not([type="range"]),select,textarea){background:var(--scene-input);color:var(--md-on-surface);border-color:var(--line)}
+:root[data-pastel="true"] select option{background:var(--scene-input);color:var(--md-on-surface)}
+:root[data-pastel="true"] .compose .composer-row{background:var(--scene-input);border-color:var(--line)}
+:root[data-pastel="true"] .compose textarea{background:transparent;color:var(--md-on-surface)}
+:root[data-pastel="true"] :is(input,textarea)::placeholder{color:var(--muted)}
+
 /* ── Artwork layer ─────────────────────────────────────────────── */
 main{isolation:isolate}
 #ambient{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;opacity:0;transition:opacity .6s ease}
-:root[data-artwork="sakura-mountain"] #ambient{opacity:1}
-#ambient .art{position:absolute;top:0;right:0;height:100%;aspect-ratio:941/1672;max-width:62%;background:url("assets/sakura-mountain.webp") right bottom/cover no-repeat;
+:root[data-artwork]:not([data-artwork="none"]) #ambient{opacity:1}
+#ambient .scene-frame{position:absolute;bottom:0;right:0;height:100%;aspect-ratio:941/1672;max-width:62%;overflow:hidden;
   /* Fade the scene into the page so it frames the edge and never sits under message text. */
-  -webkit-mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%);mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%);
-  opacity:calc(var(--art-intensity,.55) * .9);filter:saturate(.85)}
-#ambient .wash{position:absolute;inset:0;background:radial-gradient(ellipse at 85% 100%,rgba(196,120,146,.10),transparent 55%)}
+  -webkit-mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%);mask-image:linear-gradient(to left,#000 0%,#000 38%,transparent 100%)}
+#ambient .art{position:absolute;inset:0;background-position:right bottom;background-size:cover;background-repeat:no-repeat;opacity:calc(var(--art-intensity,.55) * .9);filter:saturate(.85)}
+#ambient .wash{position:absolute;inset:0;background:radial-gradient(ellipse at 85% 100%,rgba(196,120,146,.10),transparent 55%);opacity:var(--art-intensity,.55)}
 #ambient canvas{position:absolute;inset:0;width:100%;height:100%}
-@media(prefers-color-scheme:light){#ambient .art{opacity:calc(var(--art-intensity,.55) * .45);filter:saturate(.7) brightness(1.35)}}
+#ambient .scene-effects{opacity:calc(var(--art-intensity,.55) * .9)}
+@media(prefers-color-scheme:light){#ambient .art{opacity:calc(var(--art-intensity,.55) * .45);filter:saturate(.7) brightness(1.35)}#ambient .scene-effects{opacity:calc(var(--art-intensity,.55) * .45)}}
+:root[data-motion="reduced"] #ambient{transition:none}
 main>.view,main>#toast,main>#error{position:relative;z-index:1}
 /* Keep reading surfaces solid enough over the scene. */
-:root[data-artwork="sakura-mountain"] .view.active{background:transparent}
-:root[data-artwork="sakura-mountain"] #view-chat .conversation{background:linear-gradient(to right,rgba(9,11,16,.82),rgba(9,11,16,.55) 70%,rgba(9,11,16,.25))}
-:root[data-artwork="sakura-mountain"] .threads{background:rgba(12,15,21,.92)}
-:root[data-artwork="sakura-mountain"] .compose .composer-row{background:rgba(18,23,32,.94)}
+:root[data-artwork]:not([data-artwork="none"]) .view.active{background:transparent}
+:root[data-artwork]:not([data-artwork="none"]) #view-chat .conversation{background:linear-gradient(to right,rgba(9,11,16,.82),rgba(9,11,16,.55) 70%,rgba(9,11,16,.25))}
+:root[data-artwork]:not([data-artwork="none"]) .threads{background:var(--scene-input,rgba(12,15,21,.92))}
+:root[data-artwork]:not([data-artwork="none"]) .compose .composer-row{background:var(--scene-input,rgba(18,23,32,.94))}
 @media(prefers-color-scheme:light){
-  :root[data-artwork="sakura-mountain"] #view-chat .conversation{background:linear-gradient(to right,rgba(249,249,255,.9),rgba(249,249,255,.7) 70%,rgba(249,249,255,.35))}
-  :root[data-artwork="sakura-mountain"] .threads{background:rgba(242,242,250,.95)}
-  :root[data-artwork="sakura-mountain"] .compose .composer-row{background:rgba(255,255,255,.95)}
+  :root[data-artwork]:not([data-artwork="none"]) #view-chat .conversation{background:linear-gradient(to right,rgba(249,249,255,.9),rgba(249,249,255,.7) 70%,rgba(249,249,255,.35))}
+  :root[data-artwork]:not([data-artwork="none"]) .threads{background:var(--scene-input,rgba(242,242,250,.95))}
+  :root[data-artwork]:not([data-artwork="none"]) .compose .composer-row{background:var(--scene-input,rgba(255,255,255,.95))}
 }
+:root[data-pastel="true"][data-artwork]:not([data-artwork="none"]) #view-chat .conversation{background:linear-gradient(to right,color-mix(in srgb,var(--scene-bg) 90%,transparent),color-mix(in srgb,var(--scene-bg) 65%,transparent) 70%,color-mix(in srgb,var(--scene-bg) 30%,transparent))}
 
 /* ── Model status pill ─────────────────────────────────────────── */
 .model-pill{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:20px;font:600 11px inherit;color:var(--muted);background:transparent;cursor:pointer;white-space:nowrap}
@@ -125,12 +157,10 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 .task-progress-overview p strong{color:var(--muted);font-weight:600}
 .task-progress-overview progress{width:100%;height:8px;accent-color:var(--md-primary,#7898ff);margin-top:7px}
 .task-progress-overview .task-step-count{display:block;margin:2px 0 0;color:var(--muted)}
-.task-activity ol{list-style:none;margin:0;padding:0 0 0 10px;border-left:1px solid var(--line)}
-.task-activity li{position:relative;display:flex;flex-direction:column;gap:2px;padding:0 0 11px 12px;font-size:12px;line-height:1.4}
-.task-activity li:last-child{padding-bottom:0}
-.task-activity li:before{content:'';position:absolute;left:-15px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--md-primary,#7898ff)}
-.task-activity li[data-kind="waiting"]:before{background:var(--muted)}
-.task-activity li[data-kind="advice"]:before{background:#9b84e8}
+.task-activity ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.task-activity li{display:flex;flex-direction:column;gap:3px;padding:10px 12px;font-size:12px;line-height:1.4;border:1px solid var(--line);border-radius:4px;background:var(--panel)}
+.task-activity li[data-kind="waiting"]{border-left:3px solid var(--muted)}
+.task-activity li[data-kind="advice"]{border-left:3px solid #9b84e8}
 .task-activity small,.task-performance small,.task-experiments small{color:var(--muted);font-size:11px}
 .task-performance p{margin:7px 0;font-size:12px;line-height:1.4}
 .task-card.selected{outline:2px solid var(--md-primary,#7898ff)}
@@ -147,12 +177,6 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 .task-card-actions .task-toggle input:checked{background:var(--md-primary,#7898ff);border-color:var(--md-primary,#7898ff)}
 .task-card-actions .task-toggle input:after{content:'';position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;background:var(--muted)}
 .task-card-actions .task-toggle input:checked:after{left:15px;background:var(--md-on-primary,#fff)}
-.messages.task-chat .message{max-width:800px}
-.messages.task-chat .message .bubble{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px 16px;white-space:pre-wrap}
-.messages.task-chat .message.user .bubble{background:var(--md-primary-container,#33408f);border-color:var(--md-outline,var(--line));color:var(--md-on-primary-container,#dce1ff)}
-.task-chat-activity{max-width:800px;margin:10px auto 24px;padding:14px 16px;border:1px solid var(--line);border-radius:4px;background:var(--panel)}
-.task-chat-activity h3{margin:0 0 8px;font-size:13px}
-.task-chat-activity ol{margin:0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.6}
 .task-more-options>summary{cursor:pointer;font-size:12px;color:var(--muted);margin:6px 0}
 
 .task-editor[hidden]{display:none}
@@ -166,3 +190,8 @@ main>.view,main>#toast,main>#error{position:relative;z-index:1}
 #view-tasks label.task-toggle input{width:auto;margin:0}
 #view-tasks .tasks-list-pane .foreman-area>p:empty{display:none}
 #view-chat header .chat-tokens{display:block;margin-top:3px;color:var(--muted);font-size:11.5px;font-weight:400;letter-spacing:normal;text-transform:none}
+
+/* Keep task controls above progress without squeezing the conversation button. */
+.task-detail .task-head > .task-actions{grid-column:1/-1;grid-row:3}
+.task-detail .task-head > button{grid-column:2/-1;justify-self:end;white-space:nowrap}
+.task-detail .task-detail-model{grid-column:1/-1;grid-row:4;color:var(--muted)}

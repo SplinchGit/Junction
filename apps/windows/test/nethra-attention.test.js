@@ -106,7 +106,7 @@ test('milestone check-in fires once after a completed step',t=>{
   assert.equal(attention.reconcileCheckIns(),0);
   assert.equal(store.attention(task.id).filter(item=>item.kind==='DIRECTION_REVIEW').length,1);
 });
-test('scheduler claims a due direction review with a single inference and leaves quiet work asleep',async t=>{
+test('scheduler runs a due direction review once and preserves an explicit input gate',async t=>{
   const f=fixture(t),store=f.open(),task=store.create({goal:'Review progress',checkIn:'DAILY'});
   store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+7*86_400_000,evidence:[{tool:'read_file'}]});
   f.advance(86_400_000);
@@ -114,6 +114,19 @@ test('scheduler claims a due direction review with a single inference and leaves
   const scheduler=new NethraScheduler({store,now:f.now,execute:async current=>{runs++;assert.equal(current.id,task.id);assert.equal(store.attention(task.id)[0].state,'CLAIMED');return {status:'WAITING_FOR_USER',summary:'Direction requested'};}});
   await scheduler.tick();assert.equal(runs,1);assert.equal(store.get(task.id).status,'WAITING_FOR_USER');
   await scheduler.tick();assert.equal(runs,1);
+});
+
+test('a progress check-in reaches the runner as nonblocking attention',async t=>{
+  const f=fixture(t),store=f.open(),task=store.create({goal:'Continue the project',checkIn:'MILESTONES'});
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:f.now()+7*86_400_000,plan:['Stage one','Stage two'],completedSteps:['Stage one'],pendingSteps:['Stage two']});
+  let seed,system;
+  const runtime={withInference:fn=>fn(),chat:async(_model,messages)=>{seed=JSON.parse(messages[1].content);system=messages[0].content;return {message:{role:'assistant',content:'Progress saved; continuing stage two.',tool_calls:[{function:{name:'schedule_wake',arguments:{at:f.now()+60_000,reason:'Continue stage two after the progress check-in'}}}]}};}};
+  const {NethraRunner}=require('../src/nethra-runner'),runner=new NethraRunner({store,runtime,now:f.now});
+  await new NethraScheduler({store,now:f.now,execute:(claimed,options)=>runner.execute(claimed,options)}).tick();
+  assert.equal(seed.directionReview?.blocking,false);
+  assert.match(system,/DIRECTION_REVIEW[^.]*nonblocking/i);
+  assert.doesNotMatch(system,/DIRECTION_REVIEW[^.]*with request_input/i);
+  assert.equal(store.get(task.id).status,'SLEEPING');assert.equal(store.get(task.id).ownerInputs.length,0);
 });
 
 test('objectives from before schema 4 receive the weekly check-in the clients display',t=>{

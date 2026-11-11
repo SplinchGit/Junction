@@ -3,7 +3,12 @@
 // host-memory failure classification that makes a failed 14B load recoverable.
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { telemetryLine } = require("../renderer/message-format");
+const { telemetryLine, speedLine } = require("../renderer/message-format");
+
+test("normal chat can show measured generation speed without verbose metrics", () => {
+  assert.equal(speedLine({tokensPerSecond: 30.78, model: "qwen3:30b"}), "30.8 tok/s");
+  assert.equal(speedLine({tokensPerSecond: null}), "");
+});
 const { LocalAgentRuntime, isResourceFailure, resourceFailureMessage, newTimings, addTimings, modelMetrics } = require("../src/local-agent-runtime");
 
 test("telemetry footer reports speed, tokens and timing", () => {

@@ -37,12 +37,22 @@ object ObjectiveStatusMonitor {
             .onSuccess { cached -> state.value = cached.objectives; syncTime.value = cached.asOf }
     }
 
-    fun publish(context: Context, objectives: List<Map<*, *>>) {
+    private val refreshGate = ObjectiveRefreshGate()
+    fun beginRefresh(): Long = refreshGate.begin()
+    fun accepts(ticket: Long): Boolean = refreshGate.accepts(ticket)
+    fun removeAcknowledged(context: Context, id: String) {
+        refreshGate.invalidate()
+        publish(context, state.value.filterNot { it["id"]?.toString() == id })
+    }
+
+    fun publish(context: Context, objectives: List<Map<*, *>>, ticket: Long = beginRefresh()): Boolean {
+        if (!refreshGate.accepts(ticket)) return false
         val now = System.currentTimeMillis()
         state.value = objectives
         syncTime.value = now
         connection.value = true
-        runCatching { KeyStorage(context.applicationContext).setSecret(CACHE_KEY, ObjectiveSnapshotCodec.encode(now, objectives)) }
+        KeyStorage(context.applicationContext).setSecret(CACHE_KEY, ObjectiveSnapshotCodec.encode(now, objectives))
+        return true
     }
 
     fun disconnected() { connection.value = false }
@@ -52,7 +62,15 @@ object ObjectiveStatusMonitor {
         while (true) {
             var failed = false
             try {
-                publish(context, (client.request("nethra.list")["objectives"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty())
+                val ticket = beginRefresh()
+                var page = client.request("nethra.list")
+                val rows = mutableListOf<Map<*, *>>()
+                while (true) {
+                    rows += (page["objectives"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
+                    val next = page["nextOffset"] as? Number ?: break
+                    page = client.request("nethra.list", mapOf("offset" to next.toInt()))
+                }
+                publish(context, rows.distinctBy { it["id"] }, ticket)
             } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { failed = true; disconnected() }
             delay(if (!failed && NethraClient.lastTransport == NethraClient.Transport.LAN) 60_000L else 180_000L)
         }

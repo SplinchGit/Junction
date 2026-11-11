@@ -46,8 +46,8 @@ class MessageHandler {
         if (content.isBlank()) {
             return false to "Message cannot be empty"
         }
-        if (content.length > 4000) {
-            return false to "Message too long (max 4000 characters)"
+        if (content.length > 10_000) {
+            return false to "Message too long (max 10,000 characters)"
         }
         val uniqueChars = content.toSet().size
         if (uniqueChars < 3 && content.length > 10) {

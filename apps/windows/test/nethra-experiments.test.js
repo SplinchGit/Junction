@@ -38,6 +38,29 @@ test('the rank test separates clearly different timings and not identical ones',
   assert.ok(mannWhitneyP([7000,7100,6900,7050,6950],[7020,6980,7080,6920,7010])>0.3);
 });
 
+test('a reviewed Foreman Apply is visible to the objective and its code experiment',async t=>{
+  const {Foreman}=require('../src/foreman');
+  const {ForemanApi}=require('../src/foreman-api');
+  const {createWorkStatus}=require('../src/nethra-work-status');
+  const {codeWorkFacts}=require('../src/nethra-runner');
+  const {changePoint}=require('../src/nethra-experiments');
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-applied-work-'));
+  let now=START;
+  const foreman=new Foreman(directory,{now:()=>now,executor:{inspect:async()=>({}),applyReviewed:async()=>({summary:'Applied the exact reviewed patch'})}});
+  t.after(()=>{foreman.close();fs.rmSync(directory,{recursive:true,force:true});});
+  const project=await foreman.create({name:'Nethra patch',objective:'Reviewed implementation',repoPath:'demo',sourceObjectiveId:'objective-1',codeReviewVerdict:'READY',tasks:[{title:'Implement measured change',acceptance:'Existing checks pass and the exact patch is reviewed'}]});
+  const saved=foreman.get(project.id);saved.status='COMPLETED';saved.tasks[0].status='COMPLETED';saved.tasks[0].attempts=[{status:'COMPLETED',finishedAt:START,promoted:null}];foreman.save(saved,'VERIFIED','Verified candidate');
+  const workStatus=createWorkStatus(foreman),checkpoint={codeWorkDraft:{workId:project.id,status:'DRAFT'}};
+  assert.equal(codeWorkFacts(checkpoint,workStatus).applied,false);
+  assert.equal(changePoint({changeKind:'code',startedAt:START-1,workId:project.id},{store:{},workStatus,now}).waiting,'WAITING_FOR_CHANGE');
+  now=START+MIN;
+  await new ForemanApi(foreman).dispatch('task.apply',{id:project.id,revision:foreman.get(project.id).revision},'apply-reviewed','desktop');
+  assert.equal(codeWorkFacts(checkpoint,workStatus).applied,true);
+  assert.equal(workStatus(project.id).promotedAt,START+MIN);
+  assert.equal(changePoint({changeKind:'code',startedAt:START-1,workId:project.id},{store:{},workStatus,now}).waiting,'WAITING_FOR_RESTART');
+  assert.equal(workStatus('unknown'),null);
+});
+
 test('abandoning an unused baseline appears in task progress',async t=>{
   const h=harness(t);
   for(const ms of [7000,7100,7200,7300,7400])h.chat(ms);

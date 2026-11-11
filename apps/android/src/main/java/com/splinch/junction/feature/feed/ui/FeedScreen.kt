@@ -260,7 +260,12 @@ fun FeedScreen(
                 },
                 onOpen = {
                     val item = selectedItem ?: return@FeedActionSheet
-                    val opened = item.threadKey?.let { NotificationTapStore.trySend(it) } == true
+                    val taskId = item.threadKey?.takeIf { item.source == "Nethra" && it.startsWith("nethra-task:") }?.removePrefix("nethra-task:")
+                    val opened = if (!taskId.isNullOrBlank()) {
+                        context.startActivity(com.splinch.junction.feature.scheduler.NotificationHelper.taskIntent(context, taskId,
+                            item.actionHint?.takeIf { it.startsWith("review_approval:") }?.removePrefix("review_approval:")))
+                        true
+                    } else item.threadKey?.let { NotificationTapStore.trySend(it) } == true
                     if (!opened) {
                         val packageName = item.packageName
                         if (!packageName.isNullOrBlank()) {

@@ -14,7 +14,7 @@ import java.util.Base64
  * unexpired, and never seen before. Fails closed on anything else.
  */
 object DeviceCommandVerifier {
-    val KINDS = mapOf("STATUS" to "READ", "SMOKE_TEST" to "READ", "COLLECT_LOGS" to "READ", "CONFIRM_INSTALL" to "CONFIRM")
+    val KINDS = mapOf("NETHRA_NOTIFICATION" to "NOTIFY", "STATUS" to "READ", "SMOKE_TEST" to "READ", "COLLECT_LOGS" to "READ", "CONFIRM_INSTALL" to "CONFIRM")
     private const val MAX_BODY = 8_000
     private const val MAX_LIFETIME_MS = 24 * 3_600_000L
     private const val CLOCK_SKEW_MS = 5 * 60_000L
@@ -26,7 +26,9 @@ object DeviceCommandVerifier {
         val requestedBy: String,
         val args: JSONObject,
         val createdAt: Long,
-        val expiresAt: Long
+        val expiresAt: Long,
+        val notificationActions: Boolean = false,
+        val instanceId: String = ""
     )
 
     sealed class Outcome {
@@ -74,7 +76,9 @@ object DeviceCommandVerifier {
             expiresAt <= now -> Outcome.Refused(id, "command expired")
             expiresAt - createdAt > MAX_LIFETIME_MS -> Outcome.Refused(id, "command lifetime too long")
             seen(id) -> Outcome.Refused(id, "command already handled")
-            else -> Outcome.Accepted(Command(id, kind, KINDS.getValue(kind), json.optString("requestedBy"), json.optJSONObject("args") ?: JSONObject(), createdAt, expiresAt))
+            else -> Outcome.Accepted(Command(id, kind, KINDS.getValue(kind), json.optString("requestedBy"), json.optJSONObject("args") ?: JSONObject(), createdAt, expiresAt,
+                notificationActions = kind == "NETHRA_NOTIFICATION" && json.optInt("notificationActions") == 1,
+                instanceId = expectedInstanceId))
         }
     }
 

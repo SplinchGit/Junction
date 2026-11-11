@@ -24,6 +24,31 @@ class DeviceCommandVerifierTest {
     private fun refusal(outcome: DeviceCommandVerifier.Outcome) = (outcome as DeviceCommandVerifier.Outcome.Refused).reason
 
     @Test
+    fun acceptsHostSignedTaskNotificationAndRejectsChangedTarget() {
+        val notification = JSONObject(javaClass.classLoader!!.getResource("nethra-notification-vector.json")!!.readText())
+        val json = notification.getJSONObject("envelope")
+        val signed = json.keys().asSequence().associateWith { json.get(it) as Any? }
+        val accepted = verify(envelope = signed, pin = notification.getString("pin")) as DeviceCommandVerifier.Outcome.Accepted
+        assertEquals("NOTIFY", accepted.command.tier)
+        assertEquals("task-1", accepted.command.args.getString("taskId"))
+        assertEquals(false, accepted.command.notificationActions) // Older hosts do not advertise action support.
+        assertEquals("command is for a different device", refusal(verify(envelope = signed, pin = notification.getString("pin"), device = "phone-2")))
+        assertEquals("invalid signature", refusal(verify(envelope = signed + ("body" to (signed["body"] as String).replace("task-1", "task-2")), pin = notification.getString("pin"))))
+    }
+
+    @Test
+    fun notificationActionsRequireTheHostsSignedCapability() {
+        val vector = JSONObject(javaClass.classLoader!!.getResource("nethra-notification-actions-vector.json")!!.readText())
+        val json = vector.getJSONObject("envelope")
+        val signed = json.keys().asSequence().associateWith { json.get(it) as Any? }
+        val accepted = verify(envelope = signed, pin = vector.getString("pin")) as DeviceCommandVerifier.Outcome.Accepted
+        assertTrue(accepted.command.notificationActions)
+        assertEquals("instance-1", accepted.command.instanceId)
+        val changed = signed + ("body" to (signed["body"] as String).replace("\"notificationActions\":1", "\"notificationActions\":0"))
+        assertEquals("invalid signature", refusal(verify(envelope = changed, pin = vector.getString("pin"))))
+    }
+
+    @Test
     fun acceptsTheWindowsSignedCommand() {
         val command = (verify() as DeviceCommandVerifier.Outcome.Accepted).command
         assertEquals("COLLECT_LOGS", command.kind)

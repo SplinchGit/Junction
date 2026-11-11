@@ -52,6 +52,21 @@ test('linked task chat returns one state-grounded reply and never enters a secon
   assert.equal(handleTaskTurn({store,conversationId:'other',content:'Hello',requestId:'msg-2'}),null);
 });
 
+test('a 10,000-character task chat message is saved whole and reaches the model unshortened',async t=>{
+  const {store}=fixture(t);
+  const {handleTaskTurn}=require('../src/nethra-task-turn');
+  const task=store.create({goal:'Prepare a report',conversationId:'chat-1'});
+  const long='Use these figures. '+'x'.repeat(9980)+'!';
+  assert.equal(long.length,10000);
+  assert.match(handleTaskTurn({store,conversationId:'chat-1',content:long,requestId:'long-1'}),/saved/i);
+  assert.equal(store.get(task.id).ownerInputs[0].text,long);
+  assert.throws(()=>store.chatTurn(task.id,long+'x','long-2'),/Invalid task chat message/);
+  let seed='';
+  const runtime={withInference:fn=>fn(),chat:async(_model,messages)=>{seed=messages[1].content;return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'request_input',arguments:{reason:'OWNER_PREFERENCE',blocking:true,question:'Which section first?'}}}]}};}};
+  await new NethraRunner({store,runtime}).execute(store.get(task.id));
+  assert.equal(JSON.parse(seed).latestOwnerInput.text,long);
+});
+
 test('a task-chat answer resumes a question but an approval remains gated',t=>{
   const {store}=fixture(t);
   const {handleTaskTurn}=require('../src/nethra-task-turn');
@@ -107,7 +122,7 @@ test('an owner turn arriving during inference cancels stale tool calls and reach
     }
     secondSeed=messages[1].content;
     assert.ok(messages.filter(message=>message.role==='assistant').every(message=>!Object.hasOwn(message,'ownerInputKey')));
-    return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'request_input',arguments:{question:'Which source should I inspect?'}}}]}};
+    return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'request_input',arguments:{reason:'OWNER_PREFERENCE',blocking:true,question:'Which source should I inspect?'}}}]}};
   }};
   const result=await new NethraRunner({store,runtime}).execute(task);
   assert.equal(result.status,'WAITING_FOR_USER');
@@ -135,4 +150,20 @@ test('the task runner can answer its latest chat turn once through the shared co
   assert.equal(replies.length,1);
   assert.match(replies[0].content,/have not inspected the source yet/i);
   assert.equal(store.get(task.id).evidence.some(item=>item.tool==='reply_to_owner'&&item.result.posted===true),true);
+});
+
+test('a task reply returns to the owner conversation that supplied its latest message',async t=>{
+  const {store,now}=fixture(t),directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-cross-chat-reply-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const localData=new LocalDataStore(directory);
+  localData.ensureConversation('task-chat');localData.ensureConversation('ordinary-chat');
+  const task=store.create({goal:'Prepare workshop notes',conversationId:'task-chat'});
+  store.chatTurn(task.id,'Which result is saved?','cross-chat-question',{conversationId:'ordinary-chat'});
+  let calls=0;
+  const runtime={withInference:fn=>fn(),chat:async()=>({message:{role:'assistant',tool_calls:[{function:calls++===0?
+    {name:'reply_to_owner',arguments:{message:'The workshop notes are still being prepared.'}}:
+    {name:'schedule_wake',arguments:{at:now()+60_000,reason:'Continue preparing the notes'}}}]}})};
+  await new NethraRunner({store,runtime,localData}).execute(store.get(task.id));
+  assert.equal(localData.conversation('ordinary-chat').messages.filter(item=>item.role==='assistant').length,1);
+  assert.equal(localData.conversation('task-chat').messages.filter(item=>item.role==='assistant').length,0);
 });

@@ -22,6 +22,20 @@ import android.util.Log
 class NotificationTapReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_TASK_CHOICE) {
+            // Commit locally before clearing the alert. Network work belongs to the existing worker.
+            try {
+                val eventId = requireNotNull(intent.getStringExtra(EXTRA_EVENT_ID))
+                com.splinch.junction.data.sync.lan.DeviceCommandSync(context).queueNotificationAction(
+                    requireNotNull(intent.getStringExtra(EXTRA_COMMAND_ID)), eventId,
+                    requireNotNull(intent.getStringExtra(EXTRA_HOST_ID)), requireNotNull(intent.getStringExtra(EXTRA_CHOICE)))
+                context.getSystemService(NotificationManager::class.java)?.cancel(eventId, 0)
+                com.splinch.junction.feature.scheduler.DeviceCommandWorker.requestSync(context)
+            } catch (failure: Exception) {
+                Log.e(TAG, "Could not persist or schedule the notification choice", failure)
+            }
+            return
+        }
         val threadKey = intent.getStringExtra(EXTRA_THREAD_KEY)
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME)
         val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
@@ -56,6 +70,11 @@ class NotificationTapReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "NotificationTapReceiver"
         const val ACTION_OPEN_SOURCE = "com.splinch.junction.action.OPEN_NOTIFICATION_SOURCE"
+        const val ACTION_TASK_CHOICE = "com.splinch.junction.action.TASK_NOTIFICATION_CHOICE"
+        const val EXTRA_COMMAND_ID = "nethra_command_id"
+        const val EXTRA_EVENT_ID = "nethra_event_id"
+        const val EXTRA_HOST_ID = "nethra_host_id"
+        const val EXTRA_CHOICE = "nethra_notification_choice"
         const val EXTRA_THREAD_KEY = "thread_key"
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_NOTIFICATION_ID = "notification_id"

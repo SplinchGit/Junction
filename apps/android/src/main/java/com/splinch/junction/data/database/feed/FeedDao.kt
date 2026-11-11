@@ -11,6 +11,13 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface FeedDao {
+    /** A retried notification must not unarchive or mark a seen item new again. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertNotificationOnce(item: FeedItemEntity): Long
+
+    @Query("UPDATE feed_items SET status = 'SEEN', aggregateCount = 0, updatedAt = :updatedAt WHERE id = :id AND status = 'NEW'")
+    suspend fun markNotificationSeen(id: String, updatedAt: Long)
+
     @Query("SELECT * FROM feed_items ORDER BY timestamp DESC")
     fun feedStream(): Flow<List<FeedItemEntity>>
 

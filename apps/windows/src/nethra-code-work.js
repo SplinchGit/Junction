@@ -4,8 +4,9 @@ const path=require('node:path');
 const measurableAcceptance=value=>typeof value==='string'&&value.trim().length>=30;
 const reviewVerdict=value=>/^VERDICT:\s*(READY|REVISE)\b/i.exec(String(value||'').trim())?.[1]?.toUpperCase()||null;
 
-function createCodeWorkProposer({foreman,junctionRepository}){
+function createCodeWorkProposer({foreman,junctionRepository,assertObjective=null}){
   return async ({objective,description,acceptance,review})=>{
+    assertObjective?.(objective.id);
     const root=fs.realpathSync(junctionRepository);
     if(!objective.allowCodeWork||!(objective.readRoots||[]).some(item=>{try{return fs.realpathSync(item)===root;}catch{return false;}}))throw new Error('Approve the Junction read folder and Codex work on Windows first');
     if(review?.source!=='codex'||reviewVerdict(review.advice)!=='READY')throw new Error('Codex must return a READY verdict for this exact code proposal');
@@ -14,6 +15,9 @@ function createCodeWorkProposer({foreman,junctionRepository}){
     const existing=foreman.list().find(project=>project.sourceObjectiveId===objective.id&&project.tasks?.some(task=>task.title===title&&task.acceptance===acceptance));
     if(existing)return {id:existing.id,status:existing.status};
     const project=await foreman.create({name:'Nethra Windows Self Improvement',repoPath:path.join(root,'apps','windows'),sourceObjectiveId:objective.id,codeReviewVerdict:'READY',conversationId:objective.conversationId,objective:`Nethra objective: ${objective.goal}. Proposed change: ${description}. Read-only Codex review (${String(review.model||'Codex').slice(0,80)}): ${review.advice.slice(0,2800)}. Owner Start is required before implementation; owner review and Apply are required before original-checkout changes.`,tasks:[{title,kind:'codex',acceptance}],verification:[{command:[process.platform==='win32'?'npm.cmd':'npm','test'],cwd:'.',protectedPaths:['test','package.json']}]});
+    try{assertObjective?.(objective.id);}catch(error){
+      await foreman.control(project.id,'stop',project.revision,`deleted-${objective.id}-${project.revision}`);throw error;
+    }
     return {id:project.id,status:project.status};
   };
 }

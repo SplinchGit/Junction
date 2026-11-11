@@ -114,6 +114,7 @@ class ChatManager(
         prefs = prefs,
         authManager = authManager,
         history = { _messages.value },
+        pairedProviderSelected = { prefs.providerConfigFlow.first().providerId == "local" },
         toolDefinitions = { ToolRegistry.allDefinitions() },
         listener = this
     )
@@ -302,6 +303,7 @@ class ChatManager(
          */
         onTurnComplete: ((TurnOutcome) -> Unit)? = null
     ) {
+        val requirePairedProvider = voiceCoordinator.isPairedCall()
         // §1.1 explicit escalation request: "/frontier <message>" forces the
         // frontier lane for this turn without being swallowed by the
         // MessageHandler's generic "/"-prefixed command dispatch.
@@ -372,6 +374,7 @@ class ChatManager(
         // printing "Voice isn't available right now" on *every single* utterance and
         // making working on-device voice look broken.
         if (
+            !requirePairedProvider && prefs.providerConfigFlow.first().providerId != "local" &&
             voiceCoordinator.backendState.value == VoiceBackend.REALTIME &&
             voiceCoordinator.speechModeEnabled.value &&
             imagePath == null
@@ -389,6 +392,7 @@ class ChatManager(
 
         // Text mode: use LLM provider
         val activeProvider: com.splinch.junction.assistant.provider.LlmProvider = providerRouter.activeProvider()
+            ?.takeIf { !requirePairedProvider || it.id == "local" }
             ?: run {
                 val configurationError = providerRegistry.activeProviderConfigurationError()
                     ?: "No AI provider configured. Open Settings to configure one."
@@ -1355,7 +1359,9 @@ class ChatManager(
 
     override fun onLocalUtterance(text: String) {
         if (text.isBlank()) return
+        val pairedSession = voiceCoordinator.activeLocalCallSession().takeIf { voiceCoordinator.isPairedCall() }
         scope.launch {
+            if (pairedSession != null && (prefs.providerConfigFlow.first().providerId != "local" || voiceCoordinator.activeLocalCallSession() != pairedSession)) return@launch
             if (handleSpokenApproval(text)) return@launch
             sendUserMessage(text, inputMode = InputMode.SPOKEN)
         }

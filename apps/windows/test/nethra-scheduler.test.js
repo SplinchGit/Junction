@@ -1,6 +1,14 @@
 'use strict';
 const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');
-const {NethraStore}=require('../src/nethra-store');const {NethraScheduler,clampWake,monitorWakeAt}=require('../src/nethra-scheduler');
+const {NethraStore}=require('../src/nethra-store');const {NethraScheduler,clampWake,monitorWakeAt,inputFingerprint,MAX_RUNTIME}=require('../src/nethra-scheduler');
+test('a model switch changes the wake input even with unchanged evidence',()=>{
+  const task={id:'one',goal:'Revise draft',successCriteria:'Better opening',plan:[],completedSteps:[],pendingSteps:[],evidence:[],ownerInputs:[],model:'qwen3:30b'};
+  const store={approvals:()=>[],attention:()=>[]};
+  const before=inputFingerprint(task,store);
+  task.model='junction-qwen3-next:80b-q3km';
+  assert.notEqual(inputFingerprint(task,store),before);
+});
+test('a normal Nethra wake can work for twenty minutes',()=>{assert.equal(MAX_RUNTIME,20*60_000);});
 function fixture(t){const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-scheduler-'));let time=1000000;const store=new NethraStore(directory,{now:()=>time});t.after(()=>{store.close();fs.rmSync(directory,{recursive:true,force:true});});return {store,now:()=>time,advance:n=>time+=n};}
 test('successful runs persist checkpoints and sleeping tasks use no further executions before wake',async t=>{const f=fixture(t),a=f.store.create({goal:'Check later'});let runs=0;const scheduler=new NethraScheduler({...f,execute:async(task,{checkpoint,inference})=>{runs++;checkpoint({evidence:['source']});await inference(async()=>f.advance(5000));return {status:'SLEEPING',nextWakeAt:f.now()+1};}});await scheduler.tick();const task=f.store.get(a.id);assert.equal(task.nextWakeAt,1305000);assert.deepEqual(task.evidence,['source']);assert.equal(task.budget.totalMs,5000);await scheduler.tick();assert.equal(runs,1);});
 test('concurrent schedulers cannot execute two objectives',async t=>{const f=fixture(t);f.store.create({goal:'One'});f.store.create({goal:'Two'});let finish,started;const ready=new Promise(r=>started=r);let runs=0;const execute=()=>{runs++;started();return new Promise(r=>finish=r);};const a=new NethraScheduler({...f,execute}),b=new NethraScheduler({...f,execute});const run=a.tick();await ready;await b.tick();assert.equal(runs,1);finish({status:'COMPLETED'});await run;});
@@ -38,7 +46,7 @@ test('waiting in the real inference queue does not consume a daily allowance',as
   const f=fixture(t),task=f.store.create({goal:'Research housing'});f.store.setSettings({objectiveDailyBudgetMs:50});
   const runtime=new LocalAgentRuntime();let release,entered;const ready=new Promise(resolve=>entered=resolve);
   const held=runtime.withInference(async()=>{entered();await new Promise(resolve=>release=resolve);});await ready;
-  let chats=0;runtime.chat=async()=>{chats++;f.advance(20);return {message:{content:'',tool_calls:[{function:{name:'request_input',arguments:{question:'Choose an area'}}}]}};};
+  let chats=0;runtime.chat=async()=>{chats++;f.advance(20);return {message:{content:'',tool_calls:[{function:{name:'request_input',arguments:{reason:'OWNER_PREFERENCE',blocking:true,question:'Choose an area'}}}]}};};
   const runner=new NethraRunner({store:f.store,runtime,now:f.now});const scheduler=new NethraScheduler({...f,pollMs:10,execute:(task,options)=>runner.execute(task,options)});
   const run=scheduler.tick();await new Promise(resolve=>setTimeout(resolve,80));f.advance(5000);
   assert.equal(f.store.usage(task.id).taskMs,0);assert.equal(chats,0);
@@ -48,7 +56,7 @@ test('waiting in the real inference queue does not consume a daily allowance',as
 
 test('research waiting between model calls is excluded from inference usage',async t=>{
   const {NethraRunner}=require('../src/nethra-runner');const f=fixture(t),task=f.store.create({goal:'Research housing'});let calls=0;
-  const runtime={withInference:fn=>fn(),chat:async()=>{calls++;f.advance(10);return {message:{content:'',tool_calls:[{function:calls===1?{name:'web_search',arguments:{query:'housing research'}}:{name:'request_input',arguments:{question:'Choose source'}}}]}};}};
+  const runtime={withInference:fn=>fn(),chat:async()=>{calls++;f.advance(10);return {message:{content:'',tool_calls:[{function:calls===1?{name:'web_search',arguments:{query:'housing research'}}:{name:'request_input',arguments:{reason:'OWNER_PREFERENCE',blocking:true,question:'Choose source'}}}]}};}};
   const researchCoordinator={run:async()=>{f.advance(5000);return {sources:[{url:'https://example.com/housing',title:'Housing',snippet:'Housing facts'}]};}};
   const runner=new NethraRunner({store:f.store,runtime,researchCoordinator,now:f.now});await new NethraScheduler({...f,execute:(task,options)=>runner.execute(task,options)}).tick();
   assert.equal(f.store.usage(task.id).taskMs,20);assert.equal(calls,2);

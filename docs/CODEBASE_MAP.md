@@ -83,9 +83,11 @@ Contains only reusable Compose components and the shared theme. Feature screens 
 
 Location: `apps/windows/` (Electron, Node.js). Entry point: `src/main.js`. Tests: `test/`, run with `npm test`. Everything Nethra's speed and awareness depend on is here, not in the Android Gradle files.
 
+Detailed current architecture, task/model/tool contracts, data locations, verified behavior and limitations: [Nethra harness guide](NETHRA_HARNESS_GUIDE.md).
+
 - **Local model:**
-  - `src/local-agent-runtime.js` — chat with qwen3:30b through Ollama: routing, tools, thinking budgets, timings.
-  - `src/model-context.js` — the shared 8,192-token window and context compaction.
+  - `src/local-agent-runtime.js` — chat with the supported 30B/80B Ollama models: shared inference queue, routing, tools, thinking budgets and timings.
+  - `src/model-context.js` — the shared 16,384-token window and context compaction.
   - `src/model-warmer.js` — loading the model before it is needed.
   - `src/intent-router.js` — when a chat message must search the web.
 - **Objectives (Nethra's tasks):**
@@ -93,6 +95,8 @@ Location: `apps/windows/` (Electron, Node.js). Entry point: `src/main.js`. Tests
   - `src/nethra-scheduler.js` — wakes, leases, daily limits.
   - `src/nethra-store.js` — SQLite state and journal.
   - `src/nethra-tools.js` — objective tools.
+  - `src/nethra-task-contract.js` and `src/nethra-checkpoint.js` — executable/blocked steps, owner questions and durable model handoff.
+  - `src/nethra-model-inference.js` — resumable independent local inference and measured jobs requested by the task model.
   - `src/nethra-progress.js` — what the Tasks page and activity show.
   - `src/nethra-conversation-report.js` — posts to task chats.
 - **Self-improvement:**

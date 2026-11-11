@@ -1,4 +1,5 @@
 'use strict';
+const {createHash}=require('node:crypto');
 
 /** Deterministic attention gate. Source adapters must pass stable source IDs and revisions. */
 class NethraAttention {
@@ -19,6 +20,32 @@ class NethraAttention {
     for(const task of this.store.list()){
       if(task.status!=='SLEEPING'||!task.persistent)continue;
       try{queued+=this.reconcileTask(task);}catch(error){this.errors.push({taskId:task.id,message:String(error?.message||error).slice(0,400)});}
+    }
+    return queued;
+  }
+  /** Advance already-authorized sleeping work when its saved prerequisites finish. */
+  reconcileDependencies() {
+    const tasks=this.store.list(),byId=new Map(tasks.map(task=>[task.id,task]));
+    const completionEvents=new Map();
+    let queued=0;
+    for(const task of tasks){
+      if(task.status!=='SLEEPING'||!task.persistent||!task.dependencies?.length)continue;
+      const ids=[...new Set(task.dependencies)].sort();
+      if(!ids.every(id=>byId.get(id)?.status==='COMPLETED'))continue;
+      try{
+        const completions=ids.map(id=>{
+          if(!completionEvents.has(id))completionEvents.set(id,this.store.latestDependencyCompletion(id));
+          return completionEvents.get(id);
+        });
+        if(completions.some(event=>!event))continue;
+        const newest=completions.reduce((latest,event)=>event.seq>latest.seq?event:latest);
+        const lastClaim=task.lastExecutionAt==null?null:this.store.latestTaskClaim(task.id);
+        if(lastClaim?newest.seq<=lastClaim.seq:task.lastExecutionAt!=null&&newest.at<=task.lastExecutionAt)continue;
+        // Metadata edits do not alter the persisted completion sequence. A re-completion does.
+        const revision=createHash('sha256').update(JSON.stringify(ids.map((id,index)=>[id,completions[index].seq]))).digest('hex');
+        const result=this.observe({taskId:task.id,source:'objective',sourceId:'dependencies',revision,kind:'DEPENDENCIES_READY',evidenceRef:`objective:${newest.taskId}:event:${newest.seq}`,priority:task.priority||3});
+        if(result.created)queued++;
+      }catch(error){this.errors.push({taskId:task.id,message:String(error?.message||error).slice(0,400)});}
     }
     return queued;
   }

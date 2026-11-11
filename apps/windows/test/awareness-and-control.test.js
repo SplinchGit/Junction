@@ -5,6 +5,50 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {NethraStore}=require('../src/nethra-store');
 const {NethraApi}=require('../src/nethra-api');
 const {handleNethraChat,parseNethraChat,resolveObjective}=require('../src/nethra-chat');
+
+test('keep one objective never cancels the named exception',async()=>{
+  const tasks=[
+    {id:'self',goal:'Self Improvement',status:'WAITING_FOR_USER',revision:4},
+    {id:'mail',goal:'Track my emails',status:'SLEEPING',revision:2},
+    {id:'hello',goal:'hello?',status:'PAUSED',revision:3}
+  ];
+  const controls=[];
+  const api={dispatch:async(type,payload)=>{
+    if(type==='nethra.list')return {objectives:tasks.map(task=>({...task}))};
+    if(type==='nethra.get')return {task:{...tasks.find(task=>task.id===payload.id)},progress:{waitingFor:{kind:'approval',detail:'Review draft'}}};
+    if(type==='nethra.control'){
+      controls.push({...payload});
+      const task=tasks.find(task=>task.id===payload.id);
+      task.status=payload.action==='cancel'?'CANCELLED':'ACTIVE';task.revision++;
+      return {task:{...task}};
+    }
+    throw Error(type);
+  }};
+  assert.deepEqual(parseNethraChat('Drop everything but self improvement. Continue with that task'),{action:'keep_only',topic:'self improvement',continue:true});
+  const reply=await handleNethraChat({api,content:'Drop everything but self improvement. Continue with that task',requestId:'keep-one'});
+  assert.deepEqual(controls.map(call=>[call.id,call.action]),[['mail','cancel'],['hello','cancel']]);
+  assert.equal(tasks[0].status,'WAITING_FOR_USER');
+  assert.match(reply,/Self Improvement/);
+  assert.match(reply,/Review draft/);
+});
+test('task follow-up questions read the saved work log instead of guessing from chat history',async()=>{
+  const task={id:'self',goal:'Self Improvement',status:'WAITING_FOR_USER',revision:7,conversationId:'task-chat',summary:'Approval needed before writing the draft',plan:['Measure speed','Review draft']};
+  const calls=[];
+  const api={dispatch:async(type,payload)=>{
+    calls.push(type);
+    if(type==='nethra.list')return {objectives:[task]};
+    if(type==='nethra.get')return {task,progress:{waitingFor:{kind:'approval',detail:'Approve exact draft in Tasks'}}};
+    throw Error(type);
+  }};
+  for(const content of ['Can you see what it was doing?',"Surely it's in your tasks chat?"]){
+    const answer=await handleNethraChat({api,content,requestId:content});
+    assert.match(answer,/Self Improvement/);
+    assert.match(answer,/Approve exact draft/);
+    assert.match(answer,/task chat/i);
+  }
+  assert.deepEqual(calls,['nethra.list','nethra.get','nethra.list','nethra.get']);
+  assert.equal(parseNethraChat('Cool, wanna continue with it?')?.command,'continue');
+});
 const {situationContext,sanitizeSession}=require('../src/assistant-environment');
 const {PresenceTracker}=require('../src/presence');
 const {AppearanceStore,APPEARANCE_DEFAULTS}=require('../src/appearance-store');

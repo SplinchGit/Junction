@@ -49,7 +49,7 @@ test('an objective holds the model slot only during model calls, not during tool
   const task=store.create({goal:'Research housing policy changes'});
   const queue=new InferenceCoordinator();let releaseSearch,searchStarted;const started=new Promise(resolve=>searchStarted=resolve);
   let turn=0;
-  const runtime={withInference:(fn,signal,options)=>queue.run(fn,signal,options),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[turn++===0?{function:{name:'web_search',arguments:{query:'housing policy changes'}}}:{function:{name:'request_input',arguments:{question:'Which region?'}}}]}})};
+  const runtime={withInference:(fn,signal,options)=>queue.run(fn,signal,options),chat:async()=>({message:{role:'assistant',content:'',tool_calls:[turn++===0?{function:{name:'web_search',arguments:{query:'housing policy changes'}}}:{function:{name:'request_input',arguments:{reason:'OWNER_PREFERENCE',blocking:true,question:'Which region?'}}}]}})};
   const research={run:()=>{searchStarted();return new Promise(resolve=>releaseSearch=()=>resolve({query:'housing policy changes',sources:[{id:'S1',title:'Housing',url:'https://example.gov',passages:[{id:'S1.p1',text:'housing policy changes',score:1}]}]}));}};
   const runner=new NethraRunner({store,runtime,researchCoordinator:research});
   const execution=runner.execute(store.get(task.id));

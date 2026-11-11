@@ -51,7 +51,7 @@ app.on("browser-window-created", (_event, window) => {
       const chatDark = await shot("appearance-sakura-dark.png");
       // The chat header shows how long the chat is and how much of it Nethra reads.
       const tokenLine = await window.webContents.executeJavaScript(`(()=>{renderMessages(Array.from({length:20},(_,i)=>({id:'m'+i,role:i%2?'assistant':'user',content:'y'.repeat(900),provenance:i%2?'JUNCTION':'OWNER',createdAt:Date.now(),...(i===19?{telemetry:{inputTokens:2411}}:{})})));return document.getElementById('chat-tokens').textContent;})()`);
-      assert.match(tokenLine, /≈5\.2k tokens in this chat · Nethra reads the latest ≈1\.0k \(4 of 20 messages\) · last reply's prompt 2,411 of 8,192/);
+      assert.match(tokenLine, /≈5\.2k tokens in this chat · Nethra reads the latest ≈1\.0k \(4 of 20 messages\) · last reply's prompt 2,411 of 16,384/);
       const tokenShot = await shot("chat-token-line.png");
       // Reduced motion stops the petal layer; the artwork remains.
       const reduced = await window.webContents.executeJavaScript(`(async()=>{
@@ -74,18 +74,19 @@ app.on("browser-window-created", (_event, window) => {
         document.getElementById('objective-status').click();
         for(let i=0;i<100&&!document.querySelector('#view-tasks .tracking');i++)await new Promise(r=>setTimeout(r,30));
         const text=document.querySelector('#view-tasks .tracking')?.textContent||'';document.querySelector('#view-tasks .tracking')?.scrollIntoView({block:'center'});
-        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',metrics:document.querySelector('.task-performance')?.textContent||'',experiments:document.querySelector('.task-experiments')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
+        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',activityBox:getComputedStyle(document.querySelector('.task-activity li')).borderTopStyle,metrics:document.querySelector('.task-performance')?.textContent||'',experiments:document.querySelector('.task-experiments')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
       })()`);
       assert.match(tracking.text, /Routine daily monitoring/); assert.match(tracking.text, /Searched the web/);
-      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
+      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.equal(tracking.activityBox,'solid');assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);
       const drawer = await shot("appearance-task-tracking.png");
       const taskChat = await window.webContents.executeJavaScript(`(async()=>{
         document.querySelector('.task-card .task-title').click();
-        for(let i=0;i<100&&!document.querySelector('.task-chat-activity');i++)await new Promise(r=>setTimeout(r,30));
-        return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),emptyHome:!!document.querySelector('#messages .chat-home'),actions:document.querySelector('.task-chat-activity')?.textContent||'',controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
+        for(let i=0;i<100&&!document.getElementById('view-chat').classList.contains('active');i++)await new Promise(r=>setTimeout(r,30));
+        renderMessages([{id:'speed-check',role:'assistant',content:'Done',provenance:'JUNCTION',createdAt:Date.now(),telemetry:{tokensPerSecond:24.66}}]);
+        return {visible:document.getElementById('view-chat').classList.contains('active'),boxed:document.getElementById('messages').classList.contains('task-chat'),actions:!!document.querySelector('.task-chat-activity'),speed:document.querySelector('#messages .telemetry')?.textContent,controls:[...document.querySelectorAll('.task-card-actions button')].map(b=>b.textContent)};
       })()`);
-      assert.equal(taskChat.visible,true);assert.equal(taskChat.boxed,true);assert.equal(taskChat.emptyHome,false);assert.match(taskChat.actions,/Searched the web/);assert.deepEqual(taskChat.controls,['Pause','Edit','Delete']);
+      assert.equal(taskChat.visible,true);assert.equal(taskChat.boxed,false);assert.equal(taskChat.actions,false);assert.match(taskChat.speed,/24\.7 tok\/s/);assert.deepEqual(taskChat.controls,['Pause','Edit','Delete']);
       const taskChatShot = await shot("appearance-task-chat.png");
       const settings = await window.webContents.executeJavaScript(`(async()=>{document.getElementById('objective-status').click();showView('settings');await new Promise(r=>setTimeout(r,200));return {appearance:!!document.getElementById('appearance-settings'),readiness:document.querySelector('.settings').textContent.includes('Keep loaded after last use'),advisors:document.querySelector('.settings').textContent.includes('Self-improvement advisors')&&document.querySelector('.settings').textContent.includes('Keep for my own use')};})()`);
       assert.deepEqual(settings, { appearance: true, readiness: true, advisors: true });

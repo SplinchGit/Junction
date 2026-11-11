@@ -56,6 +56,7 @@ class VoiceCoordinator(
     private val prefs: UserPrefsRepository,
     authManager: AuthManager,
     private val history: () -> List<ChatMessage>,
+    private val pairedProviderSelected: suspend () -> Boolean,
     private val toolDefinitions: () -> List<ToolDefinition>,
     private val listener: VoiceCoordinatorListener
 ) : RealtimeEventListener, LocalVoiceListener {
@@ -88,6 +89,8 @@ class VoiceCoordinator(
     private var clearEndedJob: Job? = null
 
     private var backend = VoiceBackend.LOCAL
+    private var pairedCall = false
+    private val callBackend get() = if (pairedCall) VoiceBackend.LOCAL else backend
     private var chatVisible = false
     private var disconnectAfterResponse = false
 
@@ -128,7 +131,7 @@ class VoiceCoordinator(
 
     fun setChatVisible(visible: Boolean) {
         chatVisible = visible
-        if (visible && _speechModeEnabled.value && backend == VoiceBackend.REALTIME) {
+        if (visible && _speechModeEnabled.value && callBackend == VoiceBackend.REALTIME) {
             scope.launch { ensureConnected(keepAlive = true) }
         } else if (!visible) {
             realtime.disconnect()
@@ -136,7 +139,7 @@ class VoiceCoordinator(
     }
 
     suspend fun trySendRealtimeText(text: String): Boolean {
-        if (backend != VoiceBackend.REALTIME || !_speechModeEnabled.value) return false
+        if (callBackend != VoiceBackend.REALTIME || !_speechModeEnabled.value) return false
         val configured = prefs.realtimeEndpointFlow.first().isNotBlank() ||
             prefs.realtimeClientSecretEndpointFlow.first().isNotBlank()
         if (!configured) return false
@@ -168,8 +171,12 @@ class VoiceCoordinator(
             localVoice.stop()
             VoiceCallService.stop(appContext)
             callEnded()
+            if (pairedCall) {
+                pairedCall = false
+                return
+            }
         }
-        if (backend == VoiceBackend.LOCAL) return
+        if (callBackend == VoiceBackend.LOCAL) return
         if (enabled && chatVisible) {
             realtime.disconnect()
             ensureConnected(keepAlive = true)
@@ -181,25 +188,33 @@ class VoiceCoordinator(
     }
 
     suspend fun startCall() {
+        if (_micEnabled.value) return
+        val usePaired = pairedProviderSelected()
+        if (usePaired && !pairedCall) {
+            if (_speechModeEnabled.value) setSpeechMode(false)
+            pairedCall = true
+            realtime.disconnect()
+        }
         clearEndedJob?.cancel()
         publishCall(callClock.idle())
         publishCall(callClock.connecting())
         setSpeechMode(true)
         setMicEnabled(true)
-        if (backend == VoiceBackend.REALTIME && realtime.isConnected()) publishCall(callClock.active(SystemClock.elapsedRealtime()))
+        if (callBackend == VoiceBackend.REALTIME && realtime.isConnected()) publishCall(callClock.active(SystemClock.elapsedRealtime()))
     }
 
     suspend fun endCall() {
         setMicEnabled(false)
         setSpeechMode(false)
         callEnded()
+        pairedCall = false
     }
 
     fun setMicEnabled(enabled: Boolean) {
         VoiceTrace.mic(enabled)
         _micEnabled.value = enabled
         if (enabled) startCallService() else VoiceCallService.stop(appContext)
-        if (backend == VoiceBackend.LOCAL) {
+        if (callBackend == VoiceBackend.LOCAL) {
             if (enabled) localVoice.startListening() else localVoice.stopListening()
             return
         }
@@ -225,10 +240,12 @@ class VoiceCoordinator(
     }
 
     fun isLocalCall(): Boolean =
-        backend == VoiceBackend.LOCAL && _speechModeEnabled.value && _micEnabled.value
+        callBackend == VoiceBackend.LOCAL && _speechModeEnabled.value && _micEnabled.value
 
     /** The live local call's session ID, or null when no owner-started local call is running. */
     fun activeLocalCallSession(): String? = if (isLocalCall()) _callStatus.value.sessionId else null
+
+    fun isPairedCall(): Boolean = pairedCall
 
     fun isRealtimeConnected(): Boolean = realtime.isConnected()
 
@@ -302,7 +319,12 @@ class VoiceCoordinator(
     }
 
     private suspend fun ensureConnected(keepAlive: Boolean): Boolean {
+        if (pairedCall || pairedProviderSelected()) return false
         val connected = realtime.connect(keepAlive, _speechModeEnabled.value)
+        if (pairedCall || pairedProviderSelected()) {
+            realtime.disconnect()
+            return false
+        }
         if (connected) {
             realtime.sendToolDefinitions(toolDefinitions())
             realtime.seedConversation(history())
@@ -314,13 +336,13 @@ class VoiceCoordinator(
         VoiceCallController.onHangUp = {
             scope.launch(Dispatchers.Main) {
                 endCall()
-                listener.onVoiceCallEnded()
             }
         }
         VoiceCallService.start(appContext)
     }
 
     private fun resolveCloudVoice(): AzureNeuralVoice? {
+        if (pairedCall) return null
         val key = KeyStorage(appContext).getApiKey(AzureNeuralVoice.KEY_ID)
         if (key.isBlank()) return null
         val choice = voicePrefs
@@ -329,7 +351,7 @@ class VoiceCoordinator(
 
     override fun onConnectionState(state: RealtimeConnectionState) {
         _connectionState.value = state
-        if (backend != VoiceBackend.REALTIME || !_micEnabled.value) return
+        if (callBackend != VoiceBackend.REALTIME || !_micEnabled.value) return
         val now = SystemClock.elapsedRealtime()
         when (state) {
             RealtimeConnectionState.CONNECTED -> publishCall(callClock.active(now))

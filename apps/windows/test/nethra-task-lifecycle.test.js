@@ -147,15 +147,15 @@ test('a productive cycle posts what was actually done to the task chat, once',as
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),true);
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'idempotent');
   const message=f.localData.conversation(task.conversationId).messages.at(-1).content;
-  assert.match(message,/Searched the web for “standing desk reviews”/);assert.match(message,/1 of 2 steps done/);assert.match(message,/Next: Compare prices/);assert.match(message,/Continuing now/);assert.match(message,/My note: Two strong options/);
-  assert.match(message,/Recorded actions:/);assert.match(message,/• Searched the web for “standing desk reviews”/);
+  assert.match(message,/Completed: Search reviews/);assert.match(message,/1 of 2 steps done/);assert.match(message,/Next: Compare prices/);
+  assert.doesNotMatch(message,/Recorded actions:|Searched the web|My note/);
   f.store.update(task.id,{lastCycleProgressed:false},'EXECUTED');
   assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false,'no progress, no post');
 });
 
-test('an ongoing task that works continuously posts its steps; a plain ongoing monitor does not',async t=>{
+test('routine measurements remain diagnostic for both continuous work and monitoring',async t=>{
   const f=fixture(t),settings={proactiveUpdates:'ALL',quietHours:{enabled:false,start:'22:00',end:'07:00'}};
-  for(const [continuous,expected] of [[true,true],[false,false]]){
+  for(const [continuous,expected] of [[true,false],[false,false]]){
     const {task}=await f.api.dispatch('nethra.create',{goal:`Self Improvement ${continuous}`,mode:'ONGOING',continuous},`ongoing-${continuous}`,'desktop');
     const claim=f.store.claim('a');
     f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:35}}}]},'nethra_tool_result',claim.token);
@@ -187,7 +187,7 @@ test("a progress post never presents the owner's own message as Nethra's note",a
   f.store.answer(task.id,"That's fine. Show token counts for chats.",f.store.get(task.id).revision,'ans-1');
   assert.equal(f.store.get(task.id).summary,'','the answer is an owner input, not the summary');
   claim=f.store.claim('a');
-  f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:9}}}]},'nethra_tool_result',claim.token);
+  f.store.update(task.id,{completedSteps:['Measure current runtime'],evidence:[{tool:'performance_report',result:{objective:{sampleCount:9}}}]},'nethra_tool_result',claim.token);
   f.store.release(task.id,claim.token);
   // Older records may still hold the owner's words as the summary.
   f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,summary:"That's fine. Show token counts for chats.",nextWakeAt:f.now()+20_000,wakeReason:{kind:'CONTINUE',detail:'Continuous work',at:f.now()+20_000}},'EXECUTED');

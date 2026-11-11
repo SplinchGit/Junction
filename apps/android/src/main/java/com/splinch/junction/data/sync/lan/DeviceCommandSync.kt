@@ -36,6 +36,7 @@ class DeviceCommandSync(context: Context) {
     suspend fun runOnce(now: Long = System.currentTimeMillis()): Int = LOCK.withLock {
         val pairing = identity.loadPairing() ?: return 0 // Without a pinned PC key nothing can be verified.
         prune(now)
+        val actionFailure = flushNotificationActions(pairing.instanceId)
         flush()
         val deviceId = identity.deviceId()
         @Suppress("UNCHECKED_CAST")
@@ -64,7 +65,59 @@ class DeviceCommandSync(context: Context) {
             }
         }
         flush()
+        if (actionFailure != null) throw actionFailure
         handled
+    }
+
+    /** The receiver only commits a choice; it never waits for the network mutex or starts audio. */
+    fun queueNotificationAction(id: String, eventId: String, instanceId: String, action: String): Boolean = synchronized(ACTION_LOCK) {
+        require(id.matches(Regex("[0-9a-fA-F-]{36}")) && eventId.length in 1..160 && instanceId.length in 1..160)
+        require(action in setOf("SNOOZE", "DISMISS"))
+        val all = notificationActions()
+        if (all.has(id)) return@synchronized false // One owner choice per displayed delivery.
+        val now = System.currentTimeMillis()
+        all.put(id, JSONObject().put("id", id).put("eventId", eventId).put("instanceId", instanceId)
+            .put("action", action).put("createdAt", now).put("keepUntil", now + RETAIN_MS).put("reported", false))
+        saveNotificationActions(all)
+        true
+    }
+
+    internal fun pendingNotificationActions(): List<JSONObject> = synchronized(ACTION_LOCK) {
+        val all = notificationActions()
+        all.keys().asSequence().map { all.getJSONObject(it) }.filter { !it.optBoolean("reported") }.toList()
+    }
+
+    private suspend fun flushNotificationActions(instanceId: String): Exception? {
+        var failure: Exception? = null
+        for (entry in pendingNotificationActions().take(20)) {
+            val id = entry.getString("id")
+            if (entry.getString("instanceId") != instanceId) {
+                updateNotificationAction(id) { it.put("reported", true).put("lastError", "Pairing changed; choice was not sent to another host") }
+                android.util.Log.w("DeviceCommandSync", "Notification choice belongs to a previous host: $id")
+                continue
+            }
+            try {
+                com.splinch.junction.data.database.JunctionDatabase.getInstance(context).feedDao()
+                    .markNotificationSeen(entry.getString("eventId"), entry.getLong("createdAt"))
+                val response = client.request("nethra.device.result", mapOf("deviceId" to identity.deviceId(), "id" to id, "state" to "SUCCEEDED",
+                    "result" to mapOf("notificationAction" to entry.getString("action"))))
+                check(response["ownerAction"] is Map<*, *> || response["state"] == "CANCELLED") { "Host did not acknowledge the notification choice" }
+                updateNotificationAction(id) { it.put("reported", true).put("acknowledgedAt", System.currentTimeMillis()).remove("lastError") }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                updateNotificationAction(id) { it.put("lastError", error.message.orEmpty().take(300)).put("lastAttemptAt", System.currentTimeMillis()) }
+                android.util.Log.w("DeviceCommandSync", "Notification choice $id remains pending", error)
+                failure = error
+            }
+        }
+        return failure
+    }
+
+    private fun updateNotificationAction(id: String, update: (JSONObject) -> Unit) = synchronized(ACTION_LOCK) {
+        val all = notificationActions()
+        all.optJSONObject(id)?.let(update)
+        saveNotificationActions(all)
     }
 
     fun pendingConsents(now: Long = System.currentTimeMillis()): List<Consent> {
@@ -126,18 +179,27 @@ class DeviceCommandSync(context: Context) {
         val results = results(); results.keys().asSequence().toList().filter { results.getJSONObject(it).let { r -> r.optBoolean("reported") && r.getLong("keepUntil") < now } }.forEach { results.remove(it) }
         val held = consents(); held.keys().asSequence().toList().filter { held.getJSONObject(it).getLong("expiresAt") <= now }.forEach { held.remove(it) }
         prefs.edit().putString(SEEN, seen.toString()).putString(RESULTS, results.toString()).putString(CONSENTS, held.toString()).commit()
+        synchronized(ACTION_LOCK) {
+            val all = notificationActions()
+            all.keys().asSequence().toList().filter { all.getJSONObject(it).let { action -> action.optBoolean("reported") && action.getLong("keepUntil") < now } }.forEach { all.remove(it) }
+            saveNotificationActions(all)
+        }
     }
 
     private fun seen() = JSONObject(prefs.getString(SEEN, "{}")!!)
     private fun results() = JSONObject(prefs.getString(RESULTS, "{}")!!)
     private fun consents() = JSONObject(prefs.getString(CONSENTS, "{}")!!)
+    private fun notificationActions() = JSONObject(prefs.getString(NOTIFICATION_ACTIONS, "{}")!!)
+    private fun saveNotificationActions(value: JSONObject) = check(prefs.edit().putString(NOTIFICATION_ACTIONS, value.toString()).commit()) { "Could not save the notification choice" }
     private fun saveResults(value: JSONObject) = check(prefs.edit().putString(RESULTS, value.toString()).commit()) { "Could not save the command result" }
 
     companion object {
         private val LOCK = Mutex()
+        private val ACTION_LOCK = Any()
         private const val SEEN = "seen_v1"
         private const val RESULTS = "results_v1"
         private const val CONSENTS = "consents_v1"
+        private const val NOTIFICATION_ACTIONS = "notification_actions_v1"
         private const val CHANNEL = "junction_device_requests"
         private const val NOTIFICATION_BASE = 4000
         // Seen ids outlive any command lifetime (24 h max), so a replay is always recognised.

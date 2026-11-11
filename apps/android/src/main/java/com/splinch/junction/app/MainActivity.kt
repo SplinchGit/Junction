@@ -79,9 +79,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+private data class TaskOpenRequest(val taskId: String, val token: Int, val approvalId: String?, val reply: Boolean, val invitationQuestionId: String?, val invitationCommandId: String?)
+
 class MainActivity : ComponentActivity() {
     private val voiceOpenRequests = MutableStateFlow(0)
     private val chatOpenRequests = MutableStateFlow(0)
+    private val taskOpenRequests = MutableStateFlow<TaskOpenRequest?>(null)
 
     /** Bumped on every resume, so the update check can run when Junction comes forward. */
     private val foregroundTicks = MutableStateFlow(0)
@@ -140,6 +143,7 @@ class MainActivity : ComponentActivity() {
                 val firebaseSyncEnabled by prefs.firebaseSyncEnabledFlow.collectAsState(initial = false)
                 val voiceToken by voiceOpenRequests.collectAsState()
                 val chatToken by chatOpenRequests.collectAsState()
+                val taskRequest by taskOpenRequests.collectAsState()
                 val sessionId by chatManager.sessionId.collectAsState()
                 val speechModeEnabled by chatManager.speechModeEnabled.collectAsState()
                 val agentToolsEnabled by chatManager.agentToolsEnabled.collectAsState()
@@ -250,6 +254,7 @@ class MainActivity : ComponentActivity() {
                     authManager = authManager,
                     voiceToken = voiceToken,
                     chatToken = chatToken,
+                    taskRequest = taskRequest,
                     actionLogDao = database.actionLogDao(),
                     modelUsageDao = database.modelUsageDao(),
                     worldAuditDao = database.worldAuditDao(),
@@ -281,7 +286,14 @@ class MainActivity : ComponentActivity() {
                 ).show()
             }
         }
-        if (intent?.getBooleanExtra(EXTRA_OPEN_VOICE, false) == true) {
+        val taskId = intent?.getStringExtra(EXTRA_TASK_ID)?.takeIf { it.isNotBlank() && it.length <= 160 }
+        if (taskId != null) {
+            taskOpenRequests.value = TaskOpenRequest(taskId, (taskOpenRequests.value?.token ?: 0) + 1,
+                intent?.getStringExtra(EXTRA_APPROVAL_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
+                intent?.getBooleanExtra(EXTRA_REPLY_TO_TASK, false) == true,
+                intent?.getStringExtra(EXTRA_INVITATION_QUESTION_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
+                intent?.getStringExtra(EXTRA_INVITATION_COMMAND_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) })
+        } else if (intent?.getBooleanExtra(EXTRA_OPEN_VOICE, false) == true) {
             voiceOpenRequests.value = voiceOpenRequests.value + 1
         } else if (intent?.getBooleanExtra(EXTRA_OPEN_CHAT, false) == true) {
             chatOpenRequests.value = chatOpenRequests.value + 1
@@ -291,6 +303,11 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREWARM_INTERVAL_MS = 10 * 60_000L
         private var lastPrewarmAt = -PREWARM_INTERVAL_MS
+        const val EXTRA_INVITATION_COMMAND_ID = "extra_nethra_invitation_command_id"
+        const val EXTRA_INVITATION_QUESTION_ID = "extra_nethra_invitation_question_id"
+        const val EXTRA_REPLY_TO_TASK = "extra_nethra_task_reply"
+        const val EXTRA_APPROVAL_ID = "extra_nethra_approval_id"
+        const val EXTRA_TASK_ID = "extra_nethra_task_id"
         const val EXTRA_OPEN_CHAT = "extra_open_chat"
         const val EXTRA_OPEN_VOICE = "extra_open_voice"
         private const val TAG = "MainActivity"
@@ -342,6 +359,7 @@ private fun JunctionApp(
     authManager: AuthManager,
     voiceToken: Int,
     chatToken: Int,
+    taskRequest: TaskOpenRequest?,
     actionLogDao: com.splinch.junction.data.database.audit.ActionLogDao,
     modelUsageDao: com.splinch.junction.data.database.usage.ModelUsageDao,
     worldAuditDao: com.splinch.junction.data.database.audit.WorldAuditDao,
@@ -352,10 +370,16 @@ private fun JunctionApp(
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(JunctionTab.CHAT) }
     var selectedWorkspace by remember { mutableStateOf(JunctionWorkspace.CHAT) }
+    var handledReplyToken by remember { mutableIntStateOf(0) }
+    var invitationSessionId by remember { mutableStateOf<String?>(null) }
     var objectivesRequest by rememberSaveable { mutableIntStateOf(0) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val sessionSummaries by chatManager.sessionSummaries.collectAsState(initial = emptyList())
     val currentSessionId by chatManager.sessionId.collectAsState()
+
+    LaunchedEffect(taskRequest) {
+        if (taskRequest != null) selectedTab = JunctionTab.TASKS
+    }
 
     LaunchedEffect(chatToken) {
         if (chatToken > 0) {
@@ -368,8 +392,9 @@ private fun JunctionApp(
         if (voiceToken > 0) {
             selectedTab = JunctionTab.CHAT
             selectedWorkspace = JunctionWorkspace.CHAT
-            chatManager.setSpeechMode(true)
-            chatManager.setMicEnabled(true)
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                chatManager.startVoiceCall()
+            }
         }
     }
 
@@ -466,6 +491,8 @@ private fun JunctionApp(
                         onOpenNavigation = { scope.launch { drawerState.open() } },
                         onOpenSettings = { selectedWorkspace = JunctionWorkspace.SETTINGS },
                         objectivesRequest = objectivesRequest,
+                        invitationSessionId = invitationSessionId,
+                        onInvitationConsumed = { invitationSessionId = null },
                         modifier = Modifier.padding(padding)
                     )
                     JunctionWorkspace.BUILD -> WorkspaceScreen(
@@ -517,11 +544,30 @@ private fun JunctionApp(
                 JunctionTab.TASKS -> Column(Modifier.padding(padding).fillMaxSize()) {
                     Text("Tasks", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp))
                     Text("Nethra works on these on your PC, even when this app is closed.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+                    androidx.compose.runtime.key(taskRequest) {
                     com.splinch.junction.feature.projects.NethraPanel(
                         modifier = Modifier.fillMaxSize().padding(12.dp),
                         conversationId = null,
-                        onOpenChat = { id -> scope.launch { chatManager.switchToSession(id); selectedTab = JunctionTab.CHAT; selectedWorkspace = JunctionWorkspace.CHAT } }
+                        initialTaskId = taskRequest?.taskId,
+                        initialApprovalId = taskRequest?.approvalId,
+                        initialInvitationQuestionId = taskRequest?.invitationQuestionId,
+                        initialInvitationCommandId = taskRequest?.invitationCommandId,
+                        openInitialTaskChat = taskRequest?.let { it.reply && it.approvalId == null && it.token != handledReplyToken } == true,
+                        onInitialTaskChatConsumed = { handledReplyToken = taskRequest?.token ?: 0 },
+                        onOpenChat = { id -> scope.launch {
+                            chatManager.switchToSession(id)
+                            invitationSessionId = null
+                            selectedTab = JunctionTab.CHAT
+                            selectedWorkspace = JunctionWorkspace.CHAT
+                        } },
+                        onInvitationChatOpened = { id -> scope.launch {
+                            chatManager.switchToSession(id)
+                            invitationSessionId = id
+                            selectedTab = JunctionTab.CHAT
+                            selectedWorkspace = JunctionWorkspace.CHAT
+                        } }
                     )
+                    }
                 }
             }
         }
