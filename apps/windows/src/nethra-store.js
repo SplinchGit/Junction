@@ -18,7 +18,7 @@ const WARM_STARTUP=new Set(['desktop','always','never']);
 const RETENTION=new Set(['15m','30m','1h','2h','4h','8h']);
 const PROACTIVE=new Set(['ALL','IMPORTANT','OFF']);
 const CLOCK=/^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const SETTING_DEFAULTS=Object.freeze({notificationDeviceId:null,notificationDeviceSince:0,voiceInvitations:false,childDelegation:false,projectNotifications:Object.freeze({}),advisorReservePercent:10,warmOnStartup:'desktop',idleRetention:'2h',proactiveUpdates:'ALL',quietHours:Object.freeze({enabled:true,start:'22:00',end:'07:00'})});
+const SETTING_DEFAULTS=Object.freeze({notificationDeviceId:null,notificationDeviceSince:0,voiceInvitations:false,childDelegation:false,taskAgentsEnabled:true,projectNotifications:Object.freeze({}),advisorReservePercent:10,warmOnStartup:'desktop',idleRetention:'2h',proactiveUpdates:'ALL',quietHours:Object.freeze({enabled:true,start:'22:00',end:'07:00'})});
 const validSources=value=>Array.isArray(value)&&value.length<=SOURCES.size&&value.every(item=>SOURCES.has(item))&&new Set(value).size===value.length;
 const canonical = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k,v[k]])) : v);
 const DAY = 86400000;
@@ -137,6 +137,7 @@ class NethraStore {
       const binding=canonical({kind:'create',input}),old=requestId&&this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
       if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return this.replay(old);}
       const parent=parentTaskId===undefined?null:this.get(parentTaskId);
+      if(parent&&!this.settings().taskAgentsEnabled)throw new Error('Full task agents are disabled');
       if(parent?.parentId)throw new Error('Launch agents from a top-level task');
       const existing=this.list();
       // The same request re-sent in the same conversation (a retry, or a resend while a reply is slow)
@@ -220,7 +221,7 @@ class NethraStore {
   settings() {const r=this.db.prepare('SELECT body FROM settings WHERE singleton=1').get();const value={enabled:true,thinking:true,verbose:false,persistentStartup:true,minWakeMs:300000,maxWakeMs:604800000,globalDailyBudgetMs:3600000,objectiveDailyBudgetMs:1200000,...SETTING_DEFAULTS,...(r?JSON.parse(r.body):{}),thinking:true};return {...value,quietHours:{...SETTING_DEFAULTS.quietHours,...(value.quietHours||{})},globalDailyMs:value.globalDailyBudgetMs,objectiveDailyMs:value.objectiveDailyBudgetMs};}
   setSettings(patch,{restore=false}={}) {
     const stopped=[];
-    const settings=this.transaction(()=>{const allowed=['enabled','thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyBudgetMs','objectiveDailyBudgetMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent','notificationDeviceId','voiceInvitations','childDelegation','projectNotifications',...(restore?['notificationDeviceSince']:[])];if(Object.keys(patch).some(k=>!allowed.includes(k)))throw new Error('Unknown Nethra setting');if(patch.thinking===false)throw new Error('Qwen3 30B always uses thinking');const value={...this.settings(),...patch};if(Object.hasOwn(patch,'globalDailyMs'))value.globalDailyBudgetMs=patch.globalDailyMs;if(Object.hasOwn(patch,'objectiveDailyMs'))value.objectiveDailyBudgetMs=patch.objectiveDailyMs;for(const key of ['globalDailyBudgetMs','objectiveDailyBudgetMs'])if(value[key]!==null&&(!Number.isFinite(value[key])||value[key]<0))throw new Error('Invalid budget');if(!Number.isFinite(value.minWakeMs)||value.minWakeMs<300000||!Number.isFinite(value.maxWakeMs)||value.maxWakeMs>604800000||value.maxWakeMs<value.minWakeMs)throw new Error('Invalid wake bounds');for(const key of ['enabled','thinking','verbose','persistentStartup','voiceInvitations','childDelegation'])if(typeof value[key]!=='boolean')throw new Error('Invalid boolean setting');
+    const settings=this.transaction(()=>{const allowed=['enabled','thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyBudgetMs','objectiveDailyBudgetMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent','notificationDeviceId','voiceInvitations','childDelegation','taskAgentsEnabled','projectNotifications',...(restore?['notificationDeviceSince']:[])];if(Object.keys(patch).some(k=>!allowed.includes(k)))throw new Error('Unknown Nethra setting');if(patch.thinking===false)throw new Error('Qwen3 30B always uses thinking');const value={...this.settings(),...patch};if(Object.hasOwn(patch,'globalDailyMs'))value.globalDailyBudgetMs=patch.globalDailyMs;if(Object.hasOwn(patch,'objectiveDailyMs'))value.objectiveDailyBudgetMs=patch.objectiveDailyMs;for(const key of ['globalDailyBudgetMs','objectiveDailyBudgetMs'])if(value[key]!==null&&(!Number.isFinite(value[key])||value[key]<0))throw new Error('Invalid budget');if(!Number.isFinite(value.minWakeMs)||value.minWakeMs<300000||!Number.isFinite(value.maxWakeMs)||value.maxWakeMs>604800000||value.maxWakeMs<value.minWakeMs)throw new Error('Invalid wake bounds');for(const key of ['enabled','thinking','verbose','persistentStartup','voiceInvitations','childDelegation','taskAgentsEnabled'])if(typeof value[key]!=='boolean')throw new Error('Invalid boolean setting');
     if(!WARM_STARTUP.has(value.warmOnStartup))throw new Error('Invalid startup warming preference');if(!RETENTION.has(value.idleRetention))throw new Error('Invalid idle retention');if(!PROACTIVE.has(value.proactiveUpdates))throw new Error('Invalid update preference');if(!Number.isInteger(value.advisorReservePercent)||value.advisorReservePercent<0||value.advisorReservePercent>50)throw new Error('Advisor reserve must be a whole percentage from 0 to 50');
     if(value.notificationDeviceId!==null&&(typeof value.notificationDeviceId!=='string'||!value.notificationDeviceId.trim()||value.notificationDeviceId==='*'||value.notificationDeviceId.length>160))throw new Error('Invalid notification device');
     if(!restore&&Object.hasOwn(patch,'notificationDeviceId')&&patch.notificationDeviceId!==this.settings().notificationDeviceId)value.notificationDeviceSince=this.now();
@@ -229,6 +230,11 @@ class NethraStore {
     if(!rules||typeof rules!=='object'||Array.isArray(rules)||Object.keys(rules).length>256||Object.entries(rules).some(([id,mode])=>!/^[A-Za-z0-9_-]{1,160}$/.test(id)||!['IMPORTANT','OFF'].includes(mode)))throw new Error('Invalid project notification rules');
     const quiet=value.quietHours;if(!quiet||typeof quiet!=='object'||Array.isArray(quiet)||Object.keys(quiet).some(k=>!['enabled','start','end'].includes(k))||typeof quiet.enabled!=='boolean'||!CLOCK.test(quiet.start)||!CLOCK.test(quiet.end))throw new Error('Invalid quiet hours');
     value.quietHours={enabled:quiet.enabled,start:quiet.start,end:quiet.end};
+    if(patch.taskAgentsEnabled===false){
+      for(const task of this.list()){
+        if(task.parentId&&task.status!=='PAUSED'&&!TERMINAL.has(task.status))this.controlInside(task,'pause');
+      }
+    }
     if(patch.childDelegation===false){
       const rows=this.db.prepare("SELECT body FROM children WHERE json_extract(body,'$.status')='ACTIVE'").all();
       for(const row of rows){
@@ -324,12 +330,19 @@ class NethraStore {
     const task=this.get(id);
     if(task.revision!==revision)throw new Error('Nethra revision conflict');
     if(TERMINAL.has(task.status))throw new Error('Task is already finished');
+    if(task.parentId&&!this.settings().taskAgentsEnabled&&['resume','wake'].includes(action))throw new Error('Full task agents are disabled');
+    const result=this.controlInside(task,action);
+    this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));
+    return result;
+  });}
+  controlInside(task,action) {
+    const {id}=task;
     if(action==='resume'&&['WAITING_FOR_USER','BLOCKED'].includes(task.status))throw new Error(`Cannot resume a ${task.status} objective without resolving its gate`);
     if(action==='wake'){
       // "Check it now": bring a sleeping objective's next wake forward. Gates still apply.
       if(task.status!=='SLEEPING')throw new Error(task.status==='PAUSED'?'Resume this objective first':`A ${task.status} objective cannot be woken early`);
       task.nextWakeAt=this.now();task.wakeReason={kind:'OWNER',detail:'The owner asked Nethra to check now',at:this.now()};task.unchangedWakes=0;task.lastCycleProgressed=null;
-      const result=this.save(task,'WAKE_REQUESTED');this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
+      return this.save(task,'WAKE_REQUESTED');
     }
     if(action==='pause'&&task.status!=='PAUSED'){
       task.pausedFromStatus=task.status;task.pausedWakeAt=task.nextWakeAt;
@@ -346,8 +359,8 @@ class NethraStore {
     }
     const lease=this.db.prepare('SELECT * FROM lease WHERE taskId=?').get(id);
     if(lease){this.closeInferenceIntervals(lease.token);this.accountUsage(id,this.now()-this.execution(lease.token).startedAt,lease.token);task.budget=this.get(id).budget;this.interruptChildrenInside(id,lease.token);this.db.prepare('UPDATE attention SET state=?,leaseToken=NULL WHERE leaseToken=?').run(action==='cancel'?'DONE':'PENDING',lease.token);this.db.prepare('DELETE FROM lease WHERE taskId=?').run(id);}
-    const result=this.save(task,action.toUpperCase());this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
-  });}
+    return this.save(task,action.toUpperCase());
+  }
   recoverInside() {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(!lease||lease.expiresAt>this.now())return 0;this.closeInferenceIntervals(lease.token);this.accountUsage(lease.taskId,this.now()-this.execution(lease.token).startedAt,lease.token);this.interruptChildrenInside(lease.taskId,lease.token);this.db.prepare('UPDATE attention SET state=\'PENDING\',leaseToken=NULL WHERE leaseToken=?').run(lease.token);this.db.prepare('DELETE FROM lease WHERE singleton=1').run();const task=this.get(lease.taskId);if(['ACTIVE','PLANNING'].includes(task.status)){task.status=task.persistent?'ACTIVE':'PAUSED';task.summary='Interrupted execution recovered from durable checkpoint';this.save(task,'RECOVERED');}return 1;}
   recoverExpired() {return this.transaction(()=>this.recoverInside());}
   usage(taskId,at=this.now()) {const day=Math.floor(at/DAY),rows=this.db.prepare('SELECT taskId,ms FROM usage WHERE day=?').all(day);return {day,globalMs:rows.reduce((s,r)=>s+r.ms,0),taskMs:rows.find(r=>r.taskId===taskId)?.ms||0};}
@@ -394,7 +407,7 @@ class NethraStore {
     this.closeInferenceIntervals(token);return this.accountUsage(id,0,token);
   });}
   recordUsage(id,elapsed,token) {return this.transaction(()=>this.accountUsage(id,elapsed,token));}
-  claim(owner,leaseMs=420000) {return this.transaction(()=>{this.recoverInside();if(this.db.prepare('SELECT 1 FROM lease').get())return null;const settings=this.settings();if(!settings.enabled)return null;const effective=task=>Math.max(1,(task.priority??3)-Math.floor(Math.max(0,this.now()-(task.lastExecutionAt??task.createdAt??this.now()))/3600000));const tasks=this.list().filter(task=>['CREATED','ACTIVE','PLANNING','SLEEPING'].includes(task.status)&&!(task.nextWakeAt>this.now())).sort((a,b)=>effective(a)-effective(b)||(a.lastExecutionAt??0)-(b.lastExecutionAt??0)||(a.createdAt??0)-(b.createdAt??0));for(const task of tasks){if(task.dependencies.some(id=>{try{return this.get(id).status!=='COMPLETED';}catch{return true;}}))continue;const u=this.usage(task.id),limits=dailyLimits(settings);if(u.globalMs>=limits.globalMs||u.taskMs>=limits.taskMs){task.status='SLEEPING';task.nextWakeAt=(u.day+1)*DAY;this.save(task,'BUDGET_WAIT');continue;}const token=randomUUID();this.db.prepare('INSERT INTO lease VALUES(1,?,?,?,?)').run(task.id,token,String(owner),this.now()+leaseMs);this.db.prepare('INSERT INTO executions(token,taskId,startedAt,inferenceOnly) VALUES(?,?,?,1)').run(token,task.id,this.now());this.db.prepare('UPDATE attention SET state=\'CLAIMED\',leaseToken=? WHERE taskId=? AND state=\'PENDING\' AND dueAt<=?').run(token,task.id,this.now());task.status=task.status==='CREATED'?'PLANNING':'ACTIVE';task.lastExecutionAt=this.now();task.nextWakeAt=null;return {task:this.save(task,'CLAIMED',{owner}),token};}return null;});}
+  claim(owner,leaseMs=420000) {return this.transaction(()=>{this.recoverInside();if(this.db.prepare('SELECT 1 FROM lease').get())return null;const settings=this.settings();if(!settings.enabled)return null;const effective=task=>Math.max(1,(task.priority??3)-Math.floor(Math.max(0,this.now()-(task.lastExecutionAt??task.createdAt??this.now()))/3600000));const tasks=this.list().filter(task=>(!task.parentId||settings.taskAgentsEnabled)&&['CREATED','ACTIVE','PLANNING','SLEEPING'].includes(task.status)&&!(task.nextWakeAt>this.now())).sort((a,b)=>effective(a)-effective(b)||(a.lastExecutionAt??0)-(b.lastExecutionAt??0)||(a.createdAt??0)-(b.createdAt??0));for(const task of tasks){if(task.dependencies.some(id=>{try{return this.get(id).status!=='COMPLETED';}catch{return true;}}))continue;const u=this.usage(task.id),limits=dailyLimits(settings);if(u.globalMs>=limits.globalMs||u.taskMs>=limits.taskMs){task.status='SLEEPING';task.nextWakeAt=(u.day+1)*DAY;this.save(task,'BUDGET_WAIT');continue;}const token=randomUUID();this.db.prepare('INSERT INTO lease VALUES(1,?,?,?,?)').run(task.id,token,String(owner),this.now()+leaseMs);this.db.prepare('INSERT INTO executions(token,taskId,startedAt,inferenceOnly) VALUES(?,?,?,1)').run(token,task.id,this.now());this.db.prepare('UPDATE attention SET state=\'CLAIMED\',leaseToken=? WHERE taskId=? AND state=\'PENDING\' AND dueAt<=?').run(token,task.id,this.now());task.status=task.status==='CREATED'?'PLANNING':'ACTIVE';task.lastExecutionAt=this.now();task.nextWakeAt=null;return {task:this.save(task,'CLAIMED',{owner}),token};}return null;});}
   renew(id,token,leaseMs=420000) {return this.transaction(()=>{const changed=this.db.prepare('UPDATE lease SET expiresAt=? WHERE singleton=1 AND taskId=? AND token=? AND expiresAt>?').run(this.now()+leaseMs,id,token,this.now()).changes===1;if(changed)this.accountUsage(id,this.now()-this.execution(token).startedAt,token);return changed;});}
   release(id,token,consumed=true) {return this.transaction(()=>{const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1 AND taskId=? AND token=?').get(id,token);if(!lease)return false;this.closeInferenceIntervals(token);this.accountUsage(id,this.now()-this.execution(token).startedAt,token);this.interruptChildrenInside(id,token);this.db.prepare('UPDATE attention SET state=?,leaseToken=NULL WHERE leaseToken=?').run(consumed?'DONE':'PENDING',token);this.db.prepare('DELETE FROM lease WHERE singleton=1').run();return true;});}
   answer(id,text,revision,requestId,questionId=null) {return this.transaction(()=>{
@@ -472,6 +485,7 @@ class NethraStore {
       if(!requestId)throw new Error('A request ID is required');
       const binding=canonical({kind:'edit',id,changes,revision,...(execution!=='replan'||instruction?{execution,instruction}:{})}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return this.replay(old);}
       let task=this.get(id);if(task.revision!==revision)throw new Error('Nethra revision conflict');
+      if(execution==='continue'&&task.parentId&&!this.settings().taskAgentsEnabled)throw new Error('Full task agents are disabled');
       if(TERMINAL.has(task.status)&&execution==='replan')throw new Error('Clarify whether to continue this finished task');
       this.fenceInside(id);task=this.get(id);
       const superseded=execution==='preserve'?[]:this.supersedeApprovalsInside(id);

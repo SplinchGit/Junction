@@ -62,11 +62,11 @@ When the paired PC provider is selected, a call uses the existing Android local 
 
 The shared notification policy now supports opt-in voice invitations for a single persisted blocking owner decision. Answer opens the task’s verified conversation and shows a separate foreground Start Nethra call control. Later and Decline use existing durable notification choices. The app requests microphone permission only after the foreground call action. It checks the target conversation again when the permission prompt returns. Paired-device call and notification acceptance remain to be exercised.
 
-## Nethra research agents
+## Nethra research helpers
 
-Research agents are off by default. Enable them in Android Tasks under Research agents or in Windows Settings under Model readiness and updates. An authorized task may delegate a bounded research step to a child using the same selected local model. The child can search public sources and read files within the parent’s existing scope. It cannot write, delegate again, approve an action, or finish the parent objective. The parent reviews the result.
+Read-only research helpers are off by default. Enable them in Android Tasks or in Windows Settings under Model readiness and updates. An authorized task may delegate a bounded research step to a child using the same selected local model. The child can search public sources and read files within the parent’s existing scope. It cannot write, delegate again, approve an action, or finish the parent objective. The parent reviews the result.
 
-The parent task shows recent agents, their scope, status and report. Stop agent fences that child while preserving the parent task. Turning research agents off stops active children and prevents new delegation. Start with a typed objective describing the research and expected result. A paired voice call uses the same instruction path and permissions.
+The parent task shows recent agents, their scope, status and report. Stop helper fences that child while preserving the parent task. Turning research helpers off stops active children and prevents new delegation. Start with a typed objective describing the research and expected result. A paired voice call uses the same instruction path and permissions.
 
 Android Answer now passes the signed delivery identity to the existing `nethra.openChat` route. The host validates the delivery state, device, task, question, expiry and current policy before recording the owner acknowledgement. Retries return the same acceptance without answering the task question. A declined, expired or wrong-device invitation cannot open a call. The app clears the accepted alert and still requires a separate foreground Start call action.
 
@@ -74,4 +74,4 @@ Android Answer now passes the signed delivery identity to the existing `nethra.o
 
 Open a top-level task and choose Task agents → Launch task agent. The assignment creates a regular persistent task with its own chat, workspace, scheduler state, checkpoints, approvals and stop controls. Its parent and project links are durable. The agent starts with the parent's model. File roots, document grants, watched sources and coding authorization remain scoped to each task. A private parent also keeps its agent on the private tool policy. Existing short read-only research delegation remains separately controlled.
 
-This slice supports explicit owner launch and individual task control. Model-proposed full agents, owner approval for that delegation and a bulk stop for full agents remain open. Full agents are independent tasks, so stopping or deleting the parent does not stop them automatically.
+Full task agents are enabled by default for compatibility with existing assignments. Turning the switch off pauses unfinished agents, fences their active leases and blocks new launches or resumes. Parent tasks and pending approvals are retained. Re-enabling the switch lets you resume individual agents from their saved state. Model-proposed full assignments and approval for those proposals remain open. Full agents are independent tasks, so stopping or deleting the parent does not stop them automatically.

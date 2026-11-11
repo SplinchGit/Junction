@@ -264,7 +264,7 @@ class NethraApi {
       this.settingsPending=new Promise(resolve=>{release=resolve;});
       await pending;
       try {
-      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent','notificationDeviceId','voiceInvitations','childDelegation','projectNotification'];
+      const allowed=['thinking','verbose','persistentStartup','minWakeMs','maxWakeMs','globalDailyMs','objectiveDailyMs','warmOnStartup','idleRetention','quietHours','proactiveUpdates','advisorReservePercent','notificationDeviceId','voiceInvitations','childDelegation','taskAgentsEnabled','projectNotification'];
       if(Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Unknown Nethra setting');
       if(('persistentStartup' in payload||'warmOnStartup' in payload)&&source!=='desktop')throw new Error('Change Windows startup on this PC');
       if('advisorReservePercent' in payload&&source!=='desktop')throw new Error('Change advisor usage on this PC');
@@ -272,6 +272,10 @@ class NethraApi {
       if(payload.thinking===false)throw new Error('Qwen3 30B always uses thinking');
       if('verbose' in payload&&typeof payload.verbose!=='boolean')throw new Error('Invalid verbose preference');
       if('persistentStartup' in payload&&typeof payload.persistentStartup!=='boolean')throw new Error('Invalid startup preference');
+      if(Object.hasOwn(payload,'taskAgentsEnabled')){
+        if(Object.keys(payload).length!==1)throw new Error('Change the full task agent setting separately');
+        return {settings:s.setSettings({taskAgentsEnabled:payload.taskAgentsEnabled})};
+      }
       const before=s.settings();
       const {projectNotification,...patch}=payload;
       if(Object.hasOwn(payload,'projectNotification')){

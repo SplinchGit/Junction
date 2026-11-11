@@ -116,3 +116,30 @@ test('owner-launched agents are durable task records with their own scope and st
   await api.dispatch('nethra.control',{id:agent.id,revision:agent.revision,action:'cancel'},'stop-agent','android');
   assert.equal(store.get(agent.id).status,'CANCELLED');assert.equal(store.get(parent.id).status,'CREATED');
 });
+
+test('disabling full task agents fences active work and keeps the parent available',async t=>{
+  const {store,dir,api}=fixture(t);
+  const parent=store.create({goal:'Parent task',priority:5});
+  const request={id:parent.id,goal:'Draft a project section'};
+  const {task:agent}=await api.dispatch('nethra.agent.create',request,'launch','android');
+  const claim=store.claim('test');
+  assert.equal(claim.task.id,agent.id);
+  await api.dispatch('nethra.settings',{taskAgentsEnabled:false},'disable','android');
+  const paused=store.get(agent.id);
+  assert.equal(paused.status,'PAUSED');
+  assert.equal(store.renew(agent.id,claim.token),false);
+  assert.throws(()=>store.update(agent.id,{status:'COMPLETED'},'EXECUTED',claim.token),/lease/i);
+  assert.equal(store.get(parent.id).status,'CREATED');
+  assert.equal((await api.dispatch('nethra.agent.create',request,'launch','android')).task.id,agent.id);
+  await assert.rejects(api.dispatch('nethra.agent.create',request,'new-launch','android'),/disabled/);
+  await assert.rejects(api.dispatch('nethra.control',{id:agent.id,revision:paused.revision,action:'resume'},'resume-disabled','android'),/disabled/);
+  const reopened=new NethraStore(dir);
+  try{
+    assert.equal(reopened.settings().taskAgentsEnabled,false);
+    assert.equal(reopened.claim('restart').task.id,parent.id);
+  }finally{reopened.close();}
+  await api.dispatch('nethra.settings',{taskAgentsEnabled:true},'enable','android');
+  assert.equal(store.get(agent.id).status,'PAUSED');
+  await api.dispatch('nethra.control',{id:agent.id,revision:paused.revision,action:'resume'},'resume-enabled','android');
+  assert.equal(store.get(agent.id).status,'ACTIVE');
+});

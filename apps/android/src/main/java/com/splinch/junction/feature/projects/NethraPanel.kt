@@ -251,10 +251,18 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             NotificationPreferences(settings, thisDevice, connected && !busy) { patch -> perform("nethra.settings", patch) }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
-                    Text("Research agents")
-                    Text("Let Nethra delegate bounded read-only research. You can stop an agent in its task.", style = MaterialTheme.typography.bodySmall)
+                    Text("Full task agents")
+                    Text(if (connected && "taskAgentsEnabled" !in settings) "Update Junction on Windows to manage full task agents here." else "Launch agents from task details. Turning this off pauses their work.", style = MaterialTheme.typography.bodySmall)
                 }
-                Switch(checked = settings["childDelegation"] == true, enabled = connected && !busy,
+                Switch(checked = settings["taskAgentsEnabled"] == true, enabled = connected && !busy && "taskAgentsEnabled" in settings,
+                    onCheckedChange = { perform("nethra.settings", mapOf("taskAgentsEnabled" to it)) })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text("Read-only research helpers")
+                    Text("Let Nethra delegate bounded read-only research. You can stop a helper in its task.", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = settings["childDelegation"] == true, enabled = connected && !busy && "childDelegation" in settings,
                     onCheckedChange = { perform("nethra.settings", mapOf("childDelegation" to it)) })
             }
             TextButton(onClick = { showHostDetails = !showHostDetails }) { Text(if (showHostDetails) "Hide PC status" else "PC status and sources") }
@@ -441,25 +449,26 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     var agentAssignment by rememberSaveable(id) { mutableStateOf("") }
                     TextButton(onClick = { showAgents = !showAgents }) { Text(if (showAgents) "Hide task agents" else "Task agents") }
                     if (showAgents) {
+                        Text("Full agents run as separate tasks with their own permissions.")
                         maps(detail?.get("agents")).forEach { agent ->
                             Text("${agent["goal"]} · ${agent["status"]}")
                             TextButton(onClick = { selectedId = agent["id"]?.toString() }) { Text("View agent task") }
                         }
                         OutlinedTextField(agentAssignment, { if (it.length <= 2000) agentAssignment = it }, label = { Text("Agent assignment") }, modifier = Modifier.fillMaxWidth())
-                        Button(enabled = connected && !busy && agentAssignment.isNotBlank(), onClick = {
+                        Button(enabled = connected && !busy && settings["taskAgentsEnabled"] != false && detail?.containsKey("agents") == true && agentAssignment.isNotBlank(), onClick = {
                             perform("nethra.agent.create", mapOf("id" to id, "goal" to agentAssignment.trim()))
                         }) { Text("Launch task agent") }
                     }
                 }
                 val children = maps(detail?.get("children"))
                 if (children.isNotEmpty()) {
-                    Text("Research agents", style = MaterialTheme.typography.titleSmall)
+                    Text("Research helpers", style = MaterialTheme.typography.titleSmall)
                     children.forEach { child ->
                         Text("${child["status"]?.toString()?.lowercase()?.replaceFirstChar { it.uppercase() }} · ${child["scope"]}")
                         if (child["status"] == "ACTIVE") {
                             OutlinedButton(enabled = connected && !busy, onClick = {
                                 perform("nethra.child.stop", mapOf("id" to id, "childId" to child["id"]))
-                            }) { Text("Stop agent") }
+                            }) { Text("Stop helper") }
                         }
                         child["report"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         child["error"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

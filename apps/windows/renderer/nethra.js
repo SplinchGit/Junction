@@ -39,9 +39,11 @@
  const quietStartLabel=el('label','Quiet from ');quietStartLabel.append(quietStart);const quietEndLabel=el('label','until ');quietEndLabel.append(quietEnd);
  warmGrid.append(warmStartup.wrapper,retention.wrapper,taskBudget.wrapper,proactive.wrapper,quietOn.label,quietStartLabel,quietEndLabel);document.querySelector('.settings').append(warmPanel);
  const saveSetting=patch=>perform(()=>api('nethra.settings',patch));
- const researchAgents=checkbox(' Allow read-only research agents');
+ const taskAgents=checkbox(' Allow full task agents');
+ taskAgents.input.onchange=()=>saveSetting({taskAgentsEnabled:taskAgents.input.checked});
+ const researchAgents=checkbox(' Allow read-only research helpers');
  researchAgents.input.onchange=()=>saveSetting({childDelegation:researchAgents.input.checked});
- warmGrid.append(researchAgents.label);
+ warmGrid.append(taskAgents.label,el('p','Turning off full task agents pauses their work.'),researchAgents.label);
  const advisorPanel=el('article');advisorPanel.className='panel';advisorPanel.append(el('h2','Self-improvement advisors'),el('p','On tasks where you enable self-improvement, Nethra may ask Codex and Claude for read-only advice whenever your live plan usage allows. It stops when any usage window reaches the ceiling below and resumes after that window resets.'));
  const reserve=select('Keep for my own use ',[[0,'Nothing (use everything available)'],[5,'5%'],[10,'10% (default)'],[20,'20%'],[30,'30%'],[50,'50%']],'10');const advisorStatus=el('p','Usage not checked yet.');
  const describeAdvisor=(label,item)=>!item?.ready?`${label}: ${item?.detail||'not signed in'}`:item.limits?.error?`${label}: usage unavailable (${item.limits.error})`:`${label}: ${item.limits?.available?'available':'resting'} · ${(item.limits?.windows||[]).filter(w=>!w.stale).map(w=>`${w.name.replace('_',' ')} ${w.usedPercent}%`).join(', ')||item.limits?.source||'no reading yet'}${item.limits?.nextAvailableAt?` · back at ${time(item.limits.nextAvailableAt)}`:''}`;
@@ -49,7 +51,7 @@
  advisorStatus.style.whiteSpace='pre-line';reserve.field.onchange=()=>saveSetting({advisorReservePercent:Number(reserve.field.value)});const checkNow=el('button','Check usage now');checkNow.type='button';checkNow.onclick=checkAdvisors;advisorPanel.append(reserve.wrapper,advisorStatus,checkNow);document.querySelector('.settings').append(advisorPanel);
  warmStartup.field.onchange=()=>saveSetting({warmOnStartup:warmStartup.field.value});retention.field.onchange=()=>saveSetting({idleRetention:retention.field.value});proactive.field.onchange=()=>saveSetting({proactiveUpdates:proactive.field.value});taskBudget.field.onchange=()=>{const [task,total]=BUDGETS[taskBudget.field.value];saveSetting({objectiveDailyMs:task,globalDailyMs:total});};
  const saveQuiet=()=>{if(quietStart.value&&quietEnd.value)saveSetting({quietHours:{enabled:quietOn.input.checked,start:quietStart.value,end:quietEnd.value}});};quietOn.input.onchange=saveQuiet;quietStart.onchange=saveQuiet;quietEnd.onchange=saveQuiet;
- const showSettings=value=>{if(!value)return;researchAgents.input.checked=value.childDelegation===true;taskBudget.field.value=Object.keys(BUDGETS).find(key=>BUDGETS[key][0]===(value.objectiveDailyMs??null))||'20m';reserve.field.value=String(value.advisorReservePercent??10);warmStartup.field.value=value.warmOnStartup||'desktop';retention.field.value=value.idleRetention||'2h';proactive.field.value=value.proactiveUpdates||'ALL';quietOn.input.checked=Boolean(value.quietHours?.enabled);quietStart.value=value.quietHours?.start||'22:00';quietEnd.value=value.quietHours?.end||'07:00';};
+ const showSettings=value=>{if(!value)return;taskAgents.input.checked=value.taskAgentsEnabled===true;researchAgents.input.checked=value.childDelegation===true;taskBudget.field.value=Object.keys(BUDGETS).find(key=>BUDGETS[key][0]===(value.objectiveDailyMs??null))||'20m';reserve.field.value=String(value.advisorReservePercent??10);warmStartup.field.value=value.warmOnStartup||'desktop';retention.field.value=value.idleRetention||'2h';proactive.field.value=value.proactiveUpdates||'ALL';quietOn.input.checked=Boolean(value.quietHours?.enabled);quietStart.value=value.quietHours?.start||'22:00';quietEnd.value=value.quietHours?.end||'07:00';};
  // Read-only Google grants owned by this PC; consent opens in the default browser. Each source has its own grant.
  const sourcePanel=(key,label,noun)=>{
    const panel=el('article');panel.className='panel';const status=el('p',`${label}: checking…`);
@@ -156,7 +158,7 @@
        detailCard.append(delegation);
      }
      if(children.length){
-       const agents=el('section');agents.append(el('h3','Research agents'));
+       const agents=el('section');agents.append(el('h3','Research helpers'));
        for(const child of children){
          const item=el('div');item.append(el('p',`${child.status.toLowerCase()} · ${child.scope}`));
          if(child.status==='ACTIVE')item.append(button('Stop agent',()=>api('nethra.child.stop',{id:task.id,childId:child.id})));
