@@ -134,24 +134,32 @@ will warn on unsigned installers; production distribution requires an Authentico
 certificate and CI signing. Elevated apps and custom-rendered/game surfaces may not
 expose usable UI Automation metadata. No broad automation is implemented.
 
-## Qwen3 30B on Windows and Android
+## Local Qwen models on Windows and Android
 
-Choose **Local LLM** in either app. **Qwen3 30B** (`qwen3:30b`) is the only local
-model and the default. Older saved local selections and phone requests are
-redirected to 30B; no deleted model is downloaded automatically. This installed
-2507 variant always uses native thinking, so the interface reports thinking as
-on and does not offer an off switch.
+Choose **Local LLM** in either app. **Qwen3 30B** (`qwen3:30b`) remains the default
+for chat and Nethra tasks. **Qwen3-Next 80B A3B Instruct · Q3_K_M** can be selected
+for chat or individual Nethra tasks. Either model resumes the task's saved plan,
+evidence and checkpoint. The 80B option uses the local Ollama alias
+`junction-qwen3-next:80b-q3km`. To prepare another paired PC, run
+`ollama pull hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M`, then
+`ollama create junction-qwen3-next:80b-q3km -f models/qwen3-next-80b-q3km.Modelfile`
+from `apps/windows`. The alias shares the downloaded weights and fixes an upstream
+chat template that otherwise returns empty replies. Existing selections of the
+upstream tag migrate to the alias. Older unsupported local selections resolve to
+30B. The installed 30B variant always uses native thinking; this 80B alias does not.
 
 Keep Junction and Ollama running on the paired PC. Android uses the authenticated
 LAN connection or the separately selected encrypted relay mode; weights stay on
-the PC. Both platforms use the existing agent runtime with native tools, a 4K
+the PC. Both platforms use the existing agent runtime with native tools, a 16K
 context budget, and one active model request at a time. Web research requires
 internet. Coding work uses the existing explicitly requested Codex workflow.
 
-The installed model is approximately 19 GB. On this PC it was observed running
+The 30B model is approximately 19 GB. On this PC it was observed running
 45% GPU / 55% CPU at a 4096-token context and about 22–24 output tokens/second
 once loaded. Keep free space for Windows' paging file and enough system RAM for
-the portion not resident in VRAM. Junction World uses this model too.
+the portion not resident in VRAM. Junction World uses this model too. The Q3_K_M
+80B model is about 38 GB and exceeds this PC's 32 GB physical RAM; partial GPU
+offload and paging may make it slow or unable to load while other apps are open.
 
 Rebuild the Windows runtime and Android APK to update the selectors and defaults.
 
@@ -193,3 +201,12 @@ Current status and measurements: [`docs/NETHRA_DELIVERY_2026-10-25.md`](../../do
   your messages.
 - **Appearance.** Settings → Appearance: light/dark, palette, Sakura Mountain artwork, petals and
   motion. Reduced motion in Windows is respected.
+
+
+### Nethra P0 verification
+
+The task detail header exposes Delete before progress; its normal view keeps diagnostics collapsed. The existing deletion endpoint now fences execution, keeps deletion tombstones and retries failed cleanup. The ordinary conversation is retained.
+
+Run `npm test`, then `node_modules/.bin/electron scripts/nethra-delete-ui-smoke.js` for isolated renderer/IPC/SQLite deletion verification (network and inference disabled). `npm run pack` creates the complete directory runtime under `dist/win-unpacked`; keep the executable beside `resources`. For a packaged SQLite check, run `scripts/nethra-package-smoke.cjs` with that runtime under `ELECTRON_RUN_AS_NODE=1`. These checks use temporary profiles and do not install over the active owner runtime.
+
+For upgrade, schema and Android installation/verification details, see `../../docs/NETHRA_P0_DELIVERY.md`.

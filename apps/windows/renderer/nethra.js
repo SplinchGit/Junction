@@ -11,15 +11,17 @@
  const notice=el('p','One local agent on your Windows PC. Enabled objectives continue while the desktop window is closed.');area.append(notice);
  const reunion=el('details');reunion.append(el('summary','Since you were away'));const reunionBody=el('div','Checking saved activity…');reunion.append(reunionBody);area.append(reunion);
  const error=el('p');error.role='status';area.append(error);
- const form=el('form');form.className='panel';const goal=el('textarea');goal.placeholder='Give Nethra a goal and describe what success looks like';goal.setAttribute('aria-label','Objective');goal.rows=3;goal.required=true;goal.maxLength=8000;
+ const form=el('form');form.className='panel';const goal=el('textarea');goal.placeholder='Give Nethra a goal and describe what success looks like';goal.setAttribute('aria-label','Objective');goal.rows=3;goal.required=true;goal.maxLength=10000;
  const roots=el('input');roots.placeholder='Optional approved read folder on this PC';roots.setAttribute('aria-label','Approved read folder');
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
+ const taskModels=[['qwen3:30b','Qwen3 30B · faster'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · deeper, slower']];
+ const newTaskModel=select('Task model ',taskModels,'qwen3:30b');
  const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');
  const priority=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],'3');
  const checkIn=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],'WEEKLY');
- const policyFields=el('div');policyFields.className='objective-policy';policyFields.append(mode.wrapper,autonomy.wrapper,priority.wrapper,checkIn.wrapper);
+ const policyFields=el('div');policyFields.className='objective-policy';policyFields.append(newTaskModel.wrapper,mode.wrapper,autonomy.wrapper,priority.wrapper,checkIn.wrapper);
  const checkbox=(text,checked=false)=>{const input=el('input');input.type='checkbox';input.checked=checked;const label=el('label',text);label.prepend(input);return {label,input};};
  const watchCalendar=checkbox(' Watch my Google Calendar (read-only)'),watchGmail=checkbox(' Watch new Gmail inbox mail (headers only)'),codeWorkNew=checkbox(' Allow Codex advice and development drafts (uses shared plan allowance)');
  const continuousNew=checkbox(' Keep working continuously until done',true);const create=el('button','Create task');create.type='submit';const moreOptions=el('details');moreOptions.className='task-more-options';moreOptions.append(el('summary','More options'),roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label,codeWorkNew.label,el('p','Advice is limited to three Codex calls per UTC day across all tasks. Development drafts wait in Work Activity until you start them.'));form.append(goal,continuousNew.label,moreOptions,create);const createDetails=el('details');createDetails.className='task-create-details';createDetails.append(el('summary','+ New task'),form);area.append(createDetails);
@@ -37,6 +39,9 @@
  const quietStartLabel=el('label','Quiet from ');quietStartLabel.append(quietStart);const quietEndLabel=el('label','until ');quietEndLabel.append(quietEnd);
  warmGrid.append(warmStartup.wrapper,retention.wrapper,taskBudget.wrapper,proactive.wrapper,quietOn.label,quietStartLabel,quietEndLabel);document.querySelector('.settings').append(warmPanel);
  const saveSetting=patch=>perform(()=>api('nethra.settings',patch));
+ const researchAgents=checkbox(' Allow read-only research agents');
+ researchAgents.input.onchange=()=>saveSetting({childDelegation:researchAgents.input.checked});
+ warmGrid.append(researchAgents.label);
  const advisorPanel=el('article');advisorPanel.className='panel';advisorPanel.append(el('h2','Self-improvement advisors'),el('p','On tasks where you enable self-improvement, Nethra may ask Codex and Claude for read-only advice whenever your live plan usage allows. It stops when any usage window reaches the ceiling below and resumes after that window resets.'));
  const reserve=select('Keep for my own use ',[[0,'Nothing (use everything available)'],[5,'5%'],[10,'10% (default)'],[20,'20%'],[30,'30%'],[50,'50%']],'10');const advisorStatus=el('p','Usage not checked yet.');
  const describeAdvisor=(label,item)=>!item?.ready?`${label}: ${item?.detail||'not signed in'}`:item.limits?.error?`${label}: usage unavailable (${item.limits.error})`:`${label}: ${item.limits?.available?'available':'resting'} · ${(item.limits?.windows||[]).filter(w=>!w.stale).map(w=>`${w.name.replace('_',' ')} ${w.usedPercent}%`).join(', ')||item.limits?.source||'no reading yet'}${item.limits?.nextAvailableAt?` · back at ${time(item.limits.nextAvailableAt)}`:''}`;
@@ -44,7 +49,7 @@
  advisorStatus.style.whiteSpace='pre-line';reserve.field.onchange=()=>saveSetting({advisorReservePercent:Number(reserve.field.value)});const checkNow=el('button','Check usage now');checkNow.type='button';checkNow.onclick=checkAdvisors;advisorPanel.append(reserve.wrapper,advisorStatus,checkNow);document.querySelector('.settings').append(advisorPanel);
  warmStartup.field.onchange=()=>saveSetting({warmOnStartup:warmStartup.field.value});retention.field.onchange=()=>saveSetting({idleRetention:retention.field.value});proactive.field.onchange=()=>saveSetting({proactiveUpdates:proactive.field.value});taskBudget.field.onchange=()=>{const [task,total]=BUDGETS[taskBudget.field.value];saveSetting({objectiveDailyMs:task,globalDailyMs:total});};
  const saveQuiet=()=>{if(quietStart.value&&quietEnd.value)saveSetting({quietHours:{enabled:quietOn.input.checked,start:quietStart.value,end:quietEnd.value}});};quietOn.input.onchange=saveQuiet;quietStart.onchange=saveQuiet;quietEnd.onchange=saveQuiet;
- const showSettings=value=>{if(!value)return;taskBudget.field.value=Object.keys(BUDGETS).find(key=>BUDGETS[key][0]===(value.objectiveDailyMs??null))||'20m';reserve.field.value=String(value.advisorReservePercent??10);warmStartup.field.value=value.warmOnStartup||'desktop';retention.field.value=value.idleRetention||'2h';proactive.field.value=value.proactiveUpdates||'ALL';quietOn.input.checked=Boolean(value.quietHours?.enabled);quietStart.value=value.quietHours?.start||'22:00';quietEnd.value=value.quietHours?.end||'07:00';};
+ const showSettings=value=>{if(!value)return;researchAgents.input.checked=value.childDelegation===true;taskBudget.field.value=Object.keys(BUDGETS).find(key=>BUDGETS[key][0]===(value.objectiveDailyMs??null))||'20m';reserve.field.value=String(value.advisorReservePercent??10);warmStartup.field.value=value.warmOnStartup||'desktop';retention.field.value=value.idleRetention||'2h';proactive.field.value=value.proactiveUpdates||'ALL';quietOn.input.checked=Boolean(value.quietHours?.enabled);quietStart.value=value.quietHours?.start||'22:00';quietEnd.value=value.quietHours?.end||'07:00';};
  // Read-only Google grants owned by this PC; consent opens in the default browser. Each source has its own grant.
  const sourcePanel=(key,label,noun)=>{
    const panel=el('article');panel.className='panel';const status=el('p',`${label}: checking…`);
@@ -58,7 +63,7 @@
    return show;
  };
  const showCalendar=sourcePanel('calendar','Google Calendar','calendar'),showGmail=sourcePanel('gmail','Gmail','mail');
- const chatThinking=el('div','Thinking on');chatThinking.id='chat-thinking';chatThinking.className='research-toggle fixed-option';chatThinking.title='Qwen3 30B uses thinking on every reply';chatThinking.setAttribute('aria-disabled','true');document.getElementById('research-toggle').after(chatThinking);
+ const chatThinking=el('div','Thinking on');chatThinking.id='chat-thinking';chatThinking.className='research-toggle fixed-option';chatThinking.title='Qwen3 30B uses thinking on every reply';chatThinking.setAttribute('aria-disabled','true');document.getElementById('research-toggle').after(chatThinking);window.junction.provider().then(renderChatSelection).catch(()=>{});
  const openObjectives=el('button','Continue as objective');openObjectives.id='new-objective';openObjectives.type='button';openObjectives.className='research-toggle';document.querySelector('.chat-options-panel').append(openObjectives);
  const objectiveStatus=el('button','Tasks');objectiveStatus.id='objective-status';objectiveStatus.type='button';objectiveStatus.title='View active Nethra tasks and next wakes';objectiveStatus.setAttribute('aria-controls','nethra-task-drawer');objectiveStatus.setAttribute('aria-expanded','false');document.getElementById('new-chat').before(objectiveStatus);
  const taskFilters=el('div');taskFilters.className='task-list-filters';
@@ -81,17 +86,13 @@
  const perform=async fn=>{try{error.textContent='';await fn();}catch(e){error.textContent=e.message;}finally{await refresh();}};
  const button=(label,fn)=>{const b=el('button',label);b.type='button';b.onclick=()=>perform(fn);return b;};
  const time=value=>value?new Date(value).toLocaleString():'None scheduled';
- const deleteTask=async task=>{
-   if(!window.confirm(`Permanently delete “${String(task.goal||'Task').slice(0,100)}”?\n\nIts task history and workspace drafts will be removed. Its chat will be kept. This cannot be undone.`))return;
-   await api('nethra.delete',{id:task.id,confirm:true});
-   if(selectedId===task.id)selectedId=null;
-   error.textContent='Task deleted. Its chat was kept.';
- };
  const details=(label,value)=>{const d=el('details');d.append(el('summary',label),el('pre',typeof value==='string'?value:JSON.stringify(value,null,2)));return d;};
  const stateOf=row=>row.live?'working':['WAITING_FOR_USER','BLOCKED'].includes(row.status)||needsOwner(row.tracking?.waitingFor?.kind)?'needs':row.status==='PAUSED'?'paused':row.status==='COMPLETED'?'done':['FAILED','CANCELLED'].includes(row.status)?'ended':row.status==='SLEEPING'?'sleeping':'queued';
  const stateLabel=row=>({working:'Working now',needs:'Needs you',paused:'Paused',done:'Done',ended:row.status==='CANCELLED'?'Stopped':'Failed',sleeping:row.tracking?.waitingFor?.kind==='budget'?'Daily limit reached':row.continuous&&row.tracking?.wake?.kind==='CONTINUE'?'Continuing shortly':row.mode==='ONGOING'?'Monitoring':'Sleeping',queued:row.continuous?'Queued for next pass':'Queued'})[stateOf(row)];
+ const deletedIds=new Set();
+ const deleteTask=async id=>{const result=await api('nethra.delete',{id,confirm:true});if(result.deleted){deletedIds.add(id);if(selectedId===id)selectedId=null;}return result;};
  async function refresh(){if(loading){refreshAgain=true;return;}loading=true;try{
-   const result=await api('nethra.list');thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;window.junctionTaskByChat=new Map(result.objectives.filter(row=>row.conversationId).map(row=>[row.conversationId,row.id]));window.junctionTaskChats=new Set(window.junctionTaskByChat.keys());document.getElementById('messages')?.classList.toggle('task-chat',window.junctionTaskChats.has(activeConversationId));updateObjectiveStatus(result.objectives);updateStrip();
+   const result=await api('nethra.list');let next=result.nextOffset;while(next!=null){const page=await api('nethra.list',{offset:next});result.objectives.push(...page.objectives);next=page.nextOffset;}result.objectives=[...new Map(result.objectives.map(row=>[row.id,row])).values()];result.objectives=result.objectives.filter(row=>!deletedIds.has(row.id));thinking.checked=true;startup.checked=result.settings.persistentStartup;showSettings(result.settings);lastObjectives=result.objectives;window.junctionTaskByChat=new Map(result.objectives.filter(row=>row.conversationId).map(row=>[row.conversationId,row.id]));window.junctionTaskChats=new Set(window.junctionTaskByChat.keys());updateObjectiveStatus(result.objectives);updateStrip();
    const answerDrafts=new Map([...document.querySelectorAll('#view-tasks article[data-objective-id]')].map(card=>[card.dataset.objectiveId,card.querySelector('textarea[aria-label="Answer Nethra"]')?.value||'']));
    const expandedId=detailPane.querySelector('article[data-objective-id]')?.dataset.objectiveId;
    const expandedSections=new Set([...detailPane.querySelectorAll('details[open][data-section]')].map(node=>node.dataset.section));
@@ -122,14 +123,48 @@
      if(!['COMPLETED','CANCELLED','FAILED'].includes(row.status)){
        const quick=checkbox(' Continuous',row.continuous===true);quick.label.className='task-toggle task-quick';quick.label.title='Continue useful plan steps in short passes';quick.input.onchange=()=>perform(()=>api('nethra.configure',{id:row.id,revision:row.revision,continuous:quick.input.checked}));quickActions.append(quick.label);
        quickActions.append(button(row.status==='PAUSED'?'Resume':'Pause',()=>api('nethra.control',{id:row.id,action:row.status==='PAUSED'?'resume':'pause',revision:row.revision})));
-       const quickEdit=el('button','Edit');quickEdit.type='button';quickEdit.onclick=async()=>{selectedId=row.id;await refresh();const editor=detailPane.querySelector('.task-editor');if(editor){editor.hidden=false;editor.querySelector('textarea')?.focus();}};quickActions.append(quickEdit);
      }
-     const quickDelete=button('Delete',()=>deleteTask(row));quickDelete.className='danger';quickActions.append(quickDelete);card.append(quickActions);
+       const quickEdit=el('button','Edit');quickEdit.type='button';quickEdit.onclick=async()=>{selectedId=row.id;await refresh();const editor=detailPane.querySelector('.task-editor');if(editor){editor.hidden=false;editor.querySelector('textarea')?.focus();}};quickActions.append(quickEdit);
+     const quickDelete=button('Delete',async()=>{if(!window.confirm('Delete this task, its history and drafts? Its chat is kept. This cannot be undone.'))return;await deleteTask(row.id);});quickDelete.className='danger';quickActions.append(quickDelete);card.append(quickActions);
      list.append(card);
      if(selectedId!==row.id)continue;
      card.classList.add('selected');const detailCard=el('article');detailCard.className='task-detail';detailCard.dataset.objectiveId=row.id;
      const detailHead=el('div');detailHead.className='task-head';detailHead.append(Object.assign(el('span',stateLabel(row)),{className:'task-chip'}),Object.assign(el('h2',row.goal),{className:'task-detail-title'}),button(row.conversationId?'Open task chat':'Create task chat',async()=>{const opened=await api('nethra.openChat',{id:row.id});await openConversation(opened.conversationId);showView('chat');}));detailCard.dataset.state=stateOf(row);detailCard.append(detailHead);detailPane.replaceChildren(detailCard);
-     const {task,approvals,events,attention,progress,performance,experiments}=await api('nethra.get',{id:row.id});
+     const topActions=el('div');topActions.className='task-actions';
+     const topDelete=button('Delete',async()=>{if(window.confirm('Delete this task and its drafts? Its ordinary conversation is kept. This cannot be undone.'))await deleteTask(row.id);});topDelete.className='danger';
+     const editButton=el('button','Edit');editButton.type='button';editButton.onclick=()=>{const editor=detailCard.querySelector('.task-editor');if(editor){editor.hidden=!editor.hidden;if(!editor.hidden)editor.scrollIntoView({block:'nearest'});}};
+     topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',row.model==='junction-qwen3-next:80b-q3km'?'Qwen3-Next 80B':'Qwen3 30B'),{className:'task-detail-model'}));
+     const {task,approvals,events,attention,progress,performance,experiments,projects=[],children=[],agents=[],projectDocuments=[],approvedDocumentStatus=[]}=await api('nethra.get',{id:row.id});
+     if(deletedIds.has(row.id)||selectedId!==row.id)continue;
+     for(const document of approvedDocumentStatus){
+       if(document.status==='NEWER_AVAILABLE')detailCard.append(el('p',`${document.name}: revision ${document.latestRevision} is available. This task can read only approved revision ${document.revision}.`));
+       if(document.status==='UNAVAILABLE')detailCard.append(el('p',`${document.name}: approved revision ${document.revision} is unavailable.`));
+     }
+     const diagnostics=el('details');diagnostics.dataset.section='diagnostics';diagnostics.open=keepExpanded(row.id,'diagnostics');diagnostics.append(el('summary','Diagnostics'));
+     if(!task.parentId){
+       const delegation=el('details');delegation.append(el('summary','Task agents'),el('p','Agents run as separate tasks. Pause or stop them from their task details.'));
+       for(const agent of agents){
+         const entry=el('div');entry.append(el('p',`${agent.goal} · ${agent.status.toLowerCase()}`));
+         const inspect=el('button','View agent task');inspect.type='button';inspect.onclick=()=>{selectedId=agent.id;refresh();};
+         entry.append(inspect);delegation.append(entry);
+       }
+       const assignment=el('textarea');assignment.setAttribute('aria-label','Agent assignment');assignment.placeholder='What should this agent accomplish?';assignment.maxLength=2000;
+       delegation.append(assignment,button('Launch task agent',async()=>{
+         const {task:agent}=await api('nethra.agent.create',{id:task.id,goal:assignment.value.trim()});
+         selectedId=agent.id;
+       }));
+       detailCard.append(delegation);
+     }
+     if(children.length){
+       const agents=el('section');agents.append(el('h3','Research agents'));
+       for(const child of children){
+         const item=el('div');item.append(el('p',`${child.status.toLowerCase()} · ${child.scope}`));
+         if(child.status==='ACTIVE')item.append(button('Stop agent',()=>api('nethra.child.stop',{id:task.id,childId:child.id})));
+         if(child.report||child.error)item.append(details('Agent report',child.report||child.error));
+         agents.append(item);
+       }
+       detailCard.append(agents);
+     }
      const open=!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
      const pendingApprovals=approvals.filter(a=>a.status==='PENDING');
      // What Nethra needs from the owner comes first.
@@ -152,51 +187,96 @@
        add('Last recorded action',progress.lastAccomplished?`${progress.lastAccomplished.line} (${time(progress.lastAccomplished.at)})`:null);
        add('Wakes',progress.wake?`${time(progress.wake.at)} — ${progress.wake.reason}`:null);
        if(['source','dependency','budget'].includes(progress.waitingFor.kind))add('Waiting for',progress.waitingFor.detail);
-       add('Outputs',progress.outputs.length?progress.outputs.map(item=>`${item.path}${item.current?'':' (changed since written)'}`).join('\n'):null);
-       add('Evidence',progress.evidence.length?progress.evidence.map(item=>`${item.ok?'✓':'✗'} ${item.line}`).join('\n'):null);
+       add('Outputs',progress.outputs.length?progress.outputs.map(item=>`${String(item.path).split(/[\\/]/).at(-1)}${item.current?'':' (changed since written)'}`).join('\n'):null);
+
        if(task.summary&&!['WAITING_FOR_USER','BLOCKED'].includes(task.status))add("Nethra's note",task.summary);
        if(row.usage)add('Model time today',result.settings.objectiveDailyMs==null?`${Math.round(row.usage.todayMs/60000)} min · no daily limit`:`${Math.round(row.usage.todayMs/60000)} min of ${Math.round(result.settings.objectiveDailyMs/60000)} min daily limit`);
        detailCard.append(dl);}
-     if(progress){const timeline=el('details');timeline.className='task-activity';timeline.dataset.section='work-log';timeline.open=keepExpanded(row.id,'work-log');timeline.append(el('summary','Work log · newest first'));if(progress.activity?.length){const items=el('ol');for(const item of progress.activity){const li=el('li');li.dataset.kind=item.kind;li.append(el('span',item.line),el('small',`${time(item.at)} · ${item.actor||'Junction'}${item.model?` (${item.model})`:''}`));items.append(li);}timeline.append(items);}else timeline.append(el('p','No recorded actions yet.'));detailCard.append(timeline);}
-     if(performance){const metrics=el('details');metrics.className='task-performance';metrics.dataset.section='performance';metrics.open=keepExpanded(row.id,'performance');metrics.append(el('summary','Measured performance · last 7 days'));const seconds=ms=>`${(ms/1000).toFixed(1)} s`;const objective=performance.objective,chat=performance.chat;
+     if(progress){const timeline=el('section');timeline.className='task-activity';timeline.append(el('h3','Work log · newest first'));if(progress.activity?.length){const items=el('ol');for(const item of progress.activity){const li=el('li');li.dataset.kind=item.kind;li.append(el('span',item.line),el('small',`${time(item.at)} · ${item.actor||'Junction'}${item.model?` (${item.model})`:''}`));items.append(li);}timeline.append(items);}else timeline.append(el('p','No recorded actions yet.'));diagnostics.append(timeline);}
+     if(performance){const metrics=el('section');metrics.className='task-performance';metrics.append(el('h3','Measured performance · last 7 days'));const seconds=ms=>`${(ms/1000).toFixed(1)} s`;const objective=performance.objective,chat=performance.chat;
        metrics.append(el('p',objective.sampleCount?`${objective.sampleCount} task model call${objective.sampleCount===1?'':'s'} · median inference ${seconds(objective.medianInferenceMs)} · latest ${time(objective.lastSampleAt)}`:'No measured samples for this task in the last 7 days.'));
        metrics.append(el('p',chat.sampleCount?`${chat.sampleCount} local chat repl${chat.sampleCount===1?'ies':'y'} across all conversations · median response ${seconds(chat.medianResponseMs)}${chat.medianTokensPerSecond?` · ${chat.medianTokensPerSecond} tokens/s`:''} · latest ${time(chat.lastSampleAt)}`:'No measured samples for local chat in the last 7 days.'));
-       metrics.append(el('small','These are recorded timings, not a before-and-after speedup test.'));detailCard.append(metrics);}
-     if(experiments?.length){const card=el('details');card.className='task-experiments';card.dataset.section='experiments';card.open=keepExpanded(row.id,'experiments');card.append(el('summary','Experiments · verdicts computed by Junction'));const items=el('ol');const status={BASELINE:'Baseline recorded; waiting for the change',CHANGED:'Change recorded; collecting samples',CONCLUDED:'Concluded'};
-       for(const item of experiments){const li=el('li');li.dataset.verdict=item.result?.verdict||item.status;li.append(el('span',`${item.hypothesis} · ${item.metric.replace(/_/g,' ')}`),el('small',item.result?`${item.result.verdict.replace(/_/g,' ').toLowerCase()} · ${item.result.detail||''}`:`${status[item.status]||item.status} · baseline ${item.baseline.count} samples, median ${item.baseline.median}`));items.append(li);}card.append(items);detailCard.append(card);}
+       metrics.append(el('small','These are recorded timings, not a before-and-after speedup test.'));diagnostics.append(metrics);}
+     if(experiments?.length){const card=el('section');card.className='task-experiments';card.append(el('h3','Experiments · verdicts computed by Junction'));const items=el('ol');const status={BASELINE:'Baseline recorded; waiting for the change',CHANGED:'Change recorded; collecting samples',CONCLUDED:'Concluded'};
+       for(const item of experiments){const li=el('li');li.dataset.verdict=item.result?.verdict||item.status;li.append(el('span',`${item.hypothesis} · ${item.metric.replace(/_/g,' ')}`),el('small',item.result?`${item.result.verdict.replace(/_/g,' ').toLowerCase()} · ${item.result.detail||''}`:`${status[item.status]||item.status} · baseline ${item.baseline.count} samples, median ${item.baseline.median}`));items.append(li);}card.append(items);diagnostics.append(card);}
+       // Edit the objective's wording; completed steps and evidence are kept.
+       const editor=el('div');editor.className='task-editor';editor.hidden=true;const goalField=el('textarea');goalField.value=task.goal;goalField.setAttribute('aria-label','Edit goal');goalField.rows=3;
+       const criteriaField=el('textarea');criteriaField.value=task.successCriteria&&task.successCriteria!==task.goal?task.successCriteria:'';criteriaField.placeholder='What does done look like? (optional)';criteriaField.setAttribute('aria-label','Edit success criteria');
+       const instructionField=el('textarea');instructionField.placeholder='Describe the change, for example: redo the research using official sources';instructionField.setAttribute('aria-label','Edit instruction');
+       const editActions=el('div');editActions.className='task-actions';editActions.append(button('Save changes',async()=>{const result=await api('nethra.edit',{id:task.id,revision:task.revision,goal:goalField.value,successCriteria:criteriaField.value,instruction:instructionField.value});if(result.clarification)throw new Error(result.clarification);}),Object.assign(el('button','Cancel'),{type:'button',onclick:()=>{editor.hidden=true;}}));
+       editor.append(el('label','Goal'),goalField,el('label','Success criteria'),criteriaField,instructionField,editActions);editButton.onclick=()=>{editor.hidden=!editor.hidden;if(!editor.hidden)goalField.focus();};detailCard.append(editor);
+       if(projects.length||task.projectId){
+         const projectField=el('select');projectField.setAttribute('aria-label','Saved project');
+         projectField.append(Object.assign(el('option','No project'),{value:''}));
+         for(const project of projects)projectField.append(Object.assign(el('option',project.name),{value:project.id}));
+         if(task.projectId&&!projects.some(project=>project.id===task.projectId))projectField.append(Object.assign(el('option','Unavailable project'),{value:task.projectId}));
+         projectField.value=task.projectId||'';
+         const saveProject=button('Save project',()=>api('nethra.project',{id:task.id,revision:task.revision,projectId:projectField.value||null}));
+         saveProject.disabled=true;
+         projectField.onchange=()=>{saveProject.disabled=projectField.value===(task.projectId||'');};
+         editor.append(el('label','Saved project'),projectField,saveProject);
+       }
+       const linkedProject=projects.find(project=>project.id===task.projectId);
+       if(linkedProject&&(projectDocuments.length||task.projectDocuments?.length)){
+         editor.append(el('h3','Approved project documents'),el('p','Approving a revision makes this task local-only for research and advisors.'));
+         for(const grant of task.projectDocuments||[]){
+           editor.append(el('p',`${grant.name} · revision ${grant.revision}`),button('Revoke access',()=>api('nethra.projectDocument',{id:task.id,revision:task.revision,documentId:grant.id,documentRevision:null})));
+         }
+         const available=projectDocuments.filter(document=>!task.projectDocuments?.some(grant=>grant.id===document.id&&grant.revision===document.revision));
+         if(available.length){
+           const field=el('select');field.setAttribute('aria-label','Project document revision');
+           for(const document of available)field.append(Object.assign(el('option',`${document.name} · revision ${document.revision}`),{value:document.id}));
+           editor.append(field,button('Approve document access',()=>{
+             const selected=available.find(document=>document.id===field.value);
+             return api('nethra.projectDocument',{id:task.id,revision:task.revision,documentId:selected.id,documentRevision:selected.revision});
+           }));
+         }
+       }
+       if(linkedProject){
+         const notifications=el('select');
+         notifications.setAttribute('aria-label',`Phone notifications for ${linkedProject.name}`);
+         for(const [value,label] of [['INHERIT','Use global preference'],['IMPORTANT','Important only'],['OFF','Muted']]){
+           notifications.append(Object.assign(el('option',label),{value}));
+         }
+         const current=result.settings?.projectNotifications?.[linkedProject.id]||'INHERIT';
+         notifications.value=current;
+         const saveNotifications=button('Save notification preference',()=>api('nethra.settings',{projectNotification:{id:linkedProject.id,mode:notifications.value}}));
+         saveNotifications.disabled=true;
+         notifications.onchange=()=>{saveNotifications.disabled=notifications.value===current;};
+         editor.append(el('label',`Phone notifications for ${linkedProject.name}`),notifications,saveNotifications);
+       }
      if(open){
        const actions=el('div');actions.className='task-actions';
        if(task.status==='PAUSED')actions.append(button('Resume',()=>api('nethra.control',{id:task.id,action:'resume',revision:task.revision})));
        else if(!['WAITING_FOR_USER','BLOCKED'].includes(task.status))actions.append(button('Pause',()=>api('nethra.control',{id:task.id,action:'pause',revision:task.revision})));
        if(task.status==='SLEEPING')actions.append(button('Check now',()=>api('nethra.control',{id:task.id,action:'wake',revision:task.revision})));
-       const editButton=el('button','Edit');editButton.type='button';actions.append(editButton);
+
        const stop=button('Stop task',async()=>{if(!window.confirm('Stop this task? It will not run again. Its chat, evidence and drafts are kept.'))return;await api('nethra.control',{id:task.id,action:'cancel',revision:task.revision});});stop.className='danger';actions.append(stop);
-       const remove=button('Delete',()=>deleteTask(task));remove.className='danger';actions.append(remove);
-       detailCard.append(actions);
+
+       topActions.prepend(actions);
        {const continuous=checkbox(' Continue useful steps in short passes',task.continuous===true);continuous.label.className='task-toggle';
        continuous.input.onchange=()=>perform(()=>api('nethra.configure',{id:task.id,revision:task.revision,continuous:continuous.input.checked}));detailCard.append(continuous.label);if(task.mode==='ONGOING')detailCard.append(el('small','Once the plan is complete, monitoring follows its normal schedule.'));}
-       // Edit the objective's wording; completed steps and evidence are kept.
-       const editor=el('div');editor.className='task-editor';editor.hidden=true;const goalField=el('textarea');goalField.value=task.goal;goalField.setAttribute('aria-label','Edit goal');goalField.rows=3;
-       const criteriaField=el('textarea');criteriaField.value=task.successCriteria&&task.successCriteria!==task.goal?task.successCriteria:'';criteriaField.placeholder='What does done look like? (optional)';criteriaField.setAttribute('aria-label','Edit success criteria');
-       const editActions=el('div');editActions.className='task-actions';editActions.append(button('Save changes',()=>api('nethra.edit',{id:task.id,revision:task.revision,goal:goalField.value,successCriteria:criteriaField.value})),Object.assign(el('button','Cancel'),{type:'button',onclick:()=>{editor.hidden=true;}}));
-       editor.append(el('label','Goal'),goalField,el('label','Success criteria'),criteriaField,editActions);editButton.onclick=()=>{editor.hidden=!editor.hidden;if(!editor.hidden)goalField.focus();};detailCard.append(editor);
-       const redirect=el('details');redirect.append(el('summary','Change direction'));const redirectRow=el('div');redirectRow.className='redirect-row';const direction=el('textarea');direction.placeholder='Tell Nethra the new direction (keeps verified evidence)';direction.setAttribute('aria-label','Redirect objective');direction.maxLength=4000;
+       const redirect=el('details');redirect.append(el('summary','Change direction'));const redirectRow=el('div');redirectRow.className='redirect-row';const direction=el('textarea');direction.placeholder='Tell Nethra the new direction (keeps verified evidence)';direction.setAttribute('aria-label','Redirect objective');direction.maxLength=10000;
        redirectRow.append(direction,button('Redirect',()=>api('nethra.redirect',{id:task.id,revision:task.revision,instruction:direction.value})));redirect.append(redirectRow);detailCard.append(redirect);
        const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
+       const taskModel=select('Task model ',taskModels,task.model||'qwen3:30b');
        const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
        const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
        const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');
        const watches=checkbox(' Watch Google Calendar',(task.sources||[]).includes('calendar')),watchesMail=checkbox(' Watch Gmail',(task.sources||[]).includes('gmail')),codeWork=checkbox(' Self-improvement: Codex and Claude advice, measured experiments and development drafts (uses your plan allowances)',task.allowCodeWork===true);
-       const approach=el('details');approach.append(el('summary','Approach and sources'));const controls=el('div');controls.className='objective-policy';controls.append(taskMode.wrapper,profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,codeWork.label,el('p','Advice uses your live Codex and Claude plan usage, stopping at the reserve set in Settings. A development draft waits in Work Activity until you start it. Applying verified code to this checkout still requires your review.'),button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,mode:taskMode.field.value,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,allowCodeWork:codeWork.input.checked,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));approach.append(controls);detailCard.append(approach);
-     }else{
-       const remove=button('Delete',()=>deleteTask(task));remove.className='danger';
-       const actions=el('div');actions.className='task-actions';actions.append(remove);detailCard.append(actions);
+       const approach=el('details');approach.append(el('summary','Approach and sources'));const controls=el('div');controls.className='objective-policy';controls.append(taskModel.wrapper,taskMode.wrapper,profile.wrapper,rank.wrapper,review.wrapper,watches.label,watchesMail.label,codeWork.label,el('p','The selected model continues the same saved plan, evidence, and approvals. 80B loads slowly and uses more memory.'),el('p','Advice uses your live Codex and Claude plan usage, stopping at the reserve set in Settings. A development draft waits in Work Activity until you start it. Applying verified code to this checkout still requires your review.'),button('Save approach',()=>api('nethra.configure',{id:task.id,revision:task.revision,model:taskModel.field.value,mode:taskMode.field.value,autonomy:profile.field.value,priority:Number(rank.field.value),checkIn:review.field.value,allowCodeWork:codeWork.input.checked,sources:[...(watches.input.checked?['calendar']:[]),...(watchesMail.input.checked?['gmail']:[])]})));approach.append(controls);detailCard.append(approach);
      }
-     const record=el('details');record.dataset.section='full-record';record.open=keepExpanded(row.id,'full-record');record.append(el('summary','Full record'),details('Plan',{steps:task.plan,completed:task.completedSteps,pending:task.pendingSteps}),details('Evidence',task.evidence),details('Attention',attention||[]),details('History',events),details('Errors',task.errors));detailCard.append(record);
+     const record=el('details');record.append(el('summary','Full record'),details('Plan',{steps:task.plan,completed:task.completedSteps,pending:task.pendingSteps}),details('Evidence',task.evidence),details('Attention',attention||[]),details('History',events),details('Errors',task.errors));diagnostics.append(record);
+     let diagnosticCursor={seq:0,offset:0};const fullHistory=el('div');
+     const loadHistory=el('button','Load full history');loadHistory.type='button';loadHistory.onclick=async()=>{
+       loadHistory.disabled=true;
+       try{const page=await api('nethra.get',{id:task.id,diagnosticsCursor:diagnosticCursor});for(const item of page.events)fullHistory.append(details(`${time(item.at)} · ${item.kind}${item.continued?' (continued)':''}`,item.detail));diagnosticCursor=page.nextCursor;loadHistory.hidden=!diagnosticCursor;loadHistory.textContent='Load more history';}
+       catch(failure){error.textContent=failure.message;}finally{loadHistory.disabled=false;}
+     };diagnostics.append(fullHistory,loadHistory);detailCard.append(diagnostics);
    }
  }catch(e){error.textContent=e.message;}finally{loading=false;if(refreshAgain){refreshAgain=false;refresh();}}}
+ form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,conversationId:activeConversationId||null,persistent:persistent.checked,model:newTaskModel.field.value,mode:mode.field.value,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,continuous:continuousNew.input.checked,allowCodeWork:codeWorkNew.input.checked,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=codeWorkNew.input.checked=false;});};
  taskSearch.oninput=()=>refresh();taskFilter.onchange=()=>{selectedId=null;refresh();};
- form.onsubmit=event=>{event.preventDefault();perform(async()=>{await api('nethra.create',{goal:goal.value,conversationId:activeConversationId||null,persistent:persistent.checked,mode:mode.field.value,readRoots:roots.value.trim()?[roots.value.trim()]:[],autonomy:autonomy.field.value,priority:Number(priority.field.value),checkIn:checkIn.field.value,continuous:continuousNew.input.checked,allowCodeWork:codeWorkNew.input.checked,sources:[...(watchCalendar.input.checked?['calendar']:[]),...(watchGmail.input.checked?['gmail']:[])]});goal.value='';watchCalendar.input.checked=watchGmail.input.checked=codeWorkNew.input.checked=false;});};
  startup.onchange=()=>perform(()=>api('nethra.settings',{persistentStartup:startup.checked}));
  openObjectives.onclick=()=>{const draft=document.getElementById('message-input').value.trim();if(draft)goal.value=draft;document.getElementById('chat-options').open=false;createDetails.open=true;setDrawerOpen(true);goal.focus();};
  objectiveStatus.onclick=()=>setDrawerOpen(!section.classList.contains('open'));

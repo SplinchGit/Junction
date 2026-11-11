@@ -3,9 +3,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {measurableAcceptance}=require('./nethra-code-work');
+const {readApprovedDocument}=require('./foreman-documents');
 const { DatabaseSync } = require('node:sqlite');
 const ACTIVE = new Set(['RUNNING', 'WAITING_CODEX', 'VERIFYING']);
 const text = (value, max, label) => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`Invalid ${label}`); return value.trim(); };
+const CONTEXT_ID = /^[A-Za-z0-9_-]{1,160}$/;
+const CONTEXT_LIMIT = 16;
+
+function projectContext(project) {
+  return {
+    conversationIds: project.conversationIds || [],
+    decisions: project.decisions || [],
+    questions: project.questions || []
+  };
+}
+
+function documentMetadata({id,revision,name,sha256,importedAt}) { return {id,revision,name,sha256,importedAt}; }
 
 /** Durable work is not permission to execute: activation lives only in this process. */
 class Foreman {
@@ -21,16 +34,23 @@ class Foreman {
     const version=this.db.prepare('PRAGMA user_version').get().user_version;
     if(version>1) throw new Error('Foreman database requires a newer Junction.');
     this.db.exec('CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, binding TEXT NOT NULL); PRAGMA user_version=1;');
+    this.db.exec(`CREATE TABLE IF NOT EXISTS project_documents(
+      project TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,source TEXT NOT NULL,sourceKey TEXT NOT NULL,
+      name TEXT NOT NULL,sha256 TEXT NOT NULL,content TEXT NOT NULL,importedAt INTEGER NOT NULL,
+      PRIMARY KEY(project,id,revision)
+    )`);
     for (const p of this.list()) if (ACTIVE.has(p.status)) { p.status='PAUSED'; p.nextAction='Resume explicitly to reconcile interrupted work'; this.save(p,'RECOVERED','Application reopened; execution remains paused'); }
   }
   list() { return this.db.prepare('SELECT body FROM projects ORDER BY rowid DESC').all().map(r=>JSON.parse(r.body)); }
-  get(id) { const r=this.db.prepare('SELECT body FROM projects WHERE id=?').get(id); if(!r)throw new Error('Unknown project');return JSON.parse(r.body); }
-  save(p,kind,detail,receipt=null) {
+  find(id) { const r=this.db.prepare('SELECT body FROM projects WHERE id=?').get(id); return r?JSON.parse(r.body):null; }
+  get(id) { const project=this.find(id);if(!project)throw new Error('Unknown project');return project; }
+  save(p,kind,detail,receipt=null,writeExtra=null) {
     p.revision++; p.updatedAt=this.now();
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare('INSERT INTO projects VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(p.id,JSON.stringify(p));
       this.db.prepare('INSERT INTO events(project,at,kind,detail) VALUES(?,?,?,?)').run(p.id,p.updatedAt,kind,String(detail).slice(0,4000));
+      writeExtra?.();
       if(receipt)this.db.prepare('INSERT INTO receipts VALUES(?,?)').run(receipt.id,receipt.binding);
       this.db.exec('COMMIT');
     } catch(e){this.db.exec('ROLLBACK');this.enabled.delete(p.id);this.jobs.get(p.id)?.controller.abort();throw e;}
@@ -39,6 +59,120 @@ class Foreman {
     return structuredClone(p);
   }
   events(id,after=0) { return this.db.prepare('SELECT * FROM events WHERE project=? AND seq>? ORDER BY seq LIMIT 50').all(id,after); }
+  listDocuments(id, query='') {
+    this.get(id);
+    if(typeof query!=='string'||query.length>120)throw new Error('Invalid document search');
+    const term=query.trim();
+    return this.db.prepare(`SELECT id,revision,name,sha256,importedAt FROM project_documents AS doc
+      WHERE project=? AND revision=(SELECT MAX(revision) FROM project_documents WHERE project=doc.project AND id=doc.id)
+      ${term?'AND (instr(lower(content),lower(?))>0 OR instr(lower(name),lower(?))>0)':''}
+      ORDER BY importedAt DESC, rowid DESC`).all(id,...(term?[term,term]:[])).map(documentMetadata);
+  }
+  getDocument(id, documentId, revision) {
+    this.get(id);
+    if(typeof documentId!=='string'||!CONTEXT_ID.test(documentId))throw new Error('Invalid document ID');
+    if(revision!==undefined&&(!Number.isSafeInteger(revision)||revision<1))throw new Error('Invalid document revision');
+    const row=this.db.prepare(`SELECT id,revision,name,sha256,importedAt,source,content FROM project_documents
+      WHERE project=? AND id=? AND (? IS NULL OR revision=?) ORDER BY revision DESC LIMIT 1`).get(id,documentId,revision??null,revision??null);
+    if(!row)throw new Error('Project document not found');
+    return {...documentMetadata(row),source:row.source,content:row.content};
+  }
+  documentImportReceipt(id, requestId) {
+    text(requestId,160,'request ID');
+    const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
+    if(!previous)return null;
+    const [type,project,documentId,revision]=JSON.parse(previous.binding);
+    if(type!=='project.document.import'||project!==id)throw new Error('Request ID reused');
+    return documentMetadata(this.getDocument(id,documentId,revision));
+  }
+  async importDocument(id, requestId, selectedPath) {
+    if(this.closed)throw new Error('Junction is quitting');
+    const replay=this.documentImportReceipt(id,requestId);
+    if(replay)return replay;
+    this.get(id);
+    if(this.jobs.has(id)||this.operations.has(id))throw new Error('Wait for current project work or review to finish before importing');
+    const document=await readApprovedDocument(selectedPath);
+    if(this.closed)throw new Error('Junction is quitting');
+    const project=this.get(id);
+    if(this.jobs.has(id)||this.operations.has(id))throw new Error('Wait for current project work or review to finish before importing');
+    const previous=this.db.prepare('SELECT * FROM project_documents WHERE project=? AND sourceKey=? ORDER BY revision DESC LIMIT 1').get(id,document.sourceKey);
+    const sameContent=previous?.sha256===document.sha256;
+    if(!sameContent&&this.db.prepare('SELECT COUNT(*) AS total FROM project_documents WHERE project=?').get(id).total>=64)throw new Error('Project document revision limit reached');
+    const row=sameContent?previous:{...document,id:previous?.id||crypto.randomUUID(),revision:(previous?.revision||0)+1,importedAt:this.now()};
+    const receipt={id:requestId,binding:JSON.stringify(['project.document.import',id,row.id,row.revision])};
+    if(sameContent)this.db.prepare('INSERT INTO receipts VALUES(?,?)').run(receipt.id,receipt.binding);
+    else this.save(project,'DOCUMENT_IMPORTED',`Saved document revision ${row.revision}`,receipt,()=>{
+      this.db.prepare('INSERT INTO project_documents VALUES(?,?,?,?,?,?,?,?,?)').run(id,row.id,row.revision,row.source,row.sourceKey,row.name,row.sha256,row.content,row.importedAt);
+    });
+    return documentMetadata(row);
+  }
+  removeDocument(id, documentId, revision, requestId) {
+    text(requestId,160,'request ID');
+    if(!Number.isSafeInteger(revision)||revision<1)throw new Error('Invalid document revision');
+    const binding=JSON.stringify(['project.document.remove',id,documentId,revision]);
+    const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
+    if(previous){if(previous.binding!==binding)throw new Error('Request ID reused');return;}
+    const project=this.get(id);
+    if(this.jobs.has(id)||this.operations.has(id))throw new Error('Wait for current project work or review to finish before removing documents');
+    if(this.getDocument(id,documentId).revision!==revision)throw new Error('Stale document revision; refresh first');
+    this.save(project,'DOCUMENT_REMOVED','Owner removed the document and all saved revisions',{id:requestId,binding},()=>{
+      this.db.prepare('DELETE FROM project_documents WHERE project=? AND id=?').run(id,documentId);
+    });
+  }
+  updateContext(change, requestId, conversationExists) {
+    if(this.closed)throw new Error('Junction is quitting');
+    text(requestId,160,'request ID');
+    if(!change||typeof change!=='object'||Array.isArray(change))throw new Error('Invalid project context change');
+    const {id,revision,kind,action,key}=change;
+    if(typeof id!=='string'||!CONTEXT_ID.test(id))throw new Error('Invalid project ID');
+    if(!['conversation','decision','question'].includes(kind))throw new Error('Invalid project context kind');
+    const actions=kind==='conversation'?['link','remove']:['save','remove'];
+    if(!actions.includes(action))throw new Error('Invalid project context action');
+    const fields=['id','revision','kind','action','key'];
+    if(action==='save')fields.push('text');
+    if(kind==='question'&&action==='save')fields.push('status');
+    if(Object.keys(change).some(field=>!fields.includes(field)))throw new Error('Invalid project context fields');
+    if((key!==undefined||action!=='save')&&(typeof key!=='string'||!CONTEXT_ID.test(key)))throw new Error('Invalid project context ID');
+    const entryText=action==='save'?text(change.text,400,'project context text'):null;
+    const status=kind==='question'&&action==='save'?(change.status??'OPEN'):null;
+    if(status!==null&&!['OPEN','RESOLVED'].includes(status))throw new Error('Invalid question status');
+    const binding=JSON.stringify(['project.context',id,revision,kind,action,key??null,entryText,status]);
+    const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
+    if(previous){if(previous.binding!==binding)throw new Error('Request ID reused');return this.get(id);}
+
+    const project=this.get(id);
+    if(project.revision!==revision)throw new Error('Stale project revision; refresh first');
+    if(this.jobs.has(id)||this.operations.has(id))throw new Error('Wait for current project work or review to finish before editing context');
+    const context=projectContext(project);
+    if(kind==='conversation'){
+      if(action==='link'){
+        if(!conversationExists(key))throw new Error('Conversation not found');
+        if(project.conversationId!==key&&!context.conversationIds.includes(key)){
+          if(context.conversationIds.length>=CONTEXT_LIMIT)throw new Error('Project conversation link limit reached');
+          context.conversationIds.push(key);
+        }
+      }else{
+        if(!context.conversationIds.includes(key))throw new Error('Unknown project conversation link');
+        context.conversationIds=context.conversationIds.filter(id=>id!==key);
+      }
+    }else{
+      const entries=kind==='decision'?context.decisions:context.questions;
+      const index=key===undefined?-1:entries.findIndex(entry=>entry.id===key);
+      if(key!==undefined&&index<0)throw new Error('Unknown project context entry');
+      if(action==='remove')entries.splice(index,1);
+      else {
+        const now=this.now();
+        if(index<0&&entries.length>=CONTEXT_LIMIT)throw new Error('Project context entry limit reached');
+        const current=entries[index];
+        const entry={id:current?.id||crypto.randomUUID(),text:entryText,source:'owner',createdAt:current?.createdAt??now,updatedAt:now};
+        if(status!==null)entry.status=status;
+        if(index<0)entries.push(entry);
+        else entries[index]=entry;
+      }
+    }
+    Object.assign(project,context);
+    return this.save(project,'CONTEXT_UPDATED',`${kind} ${action}`,{id:requestId,binding});
+  }
   async create(input) {
     if(this.closed)throw new Error('Junction is quitting');
     if(this.list().length>=50)throw new Error('Project limit reached');
@@ -128,4 +262,4 @@ class Foreman {
   async shutdown(){this.closed=true;for(const id of [...this.enabled]){const p=this.get(id);await this.control(id,'pause',p.revision,crypto.randomUUID());}await this.executor.stop?.();await this.idle();await Promise.allSettled([...this.operations.values()]);}
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
-module.exports={Foreman};
+module.exports={Foreman,projectContext};

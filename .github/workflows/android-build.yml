@@ -13,6 +13,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      build_number: ${{ steps.version.outputs.build_number }}
+      version_code: ${{ steps.version.outputs.version_code }}
     env:
       JAVA_TOOL_OPTIONS: -Xmx3g
 
@@ -83,14 +86,19 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build Debug APK (capture logs even on failure)
-        env:
-          JUNCTION_BUILD_NUMBER: ${{ github.run_number }}
+      - name: Set release version
+        id: version
         run: |
-          # Gradle maps this into the 100000+ range. The +1000 offset keeps CI builds above
-          # the locally numbered 1001xx builds already installed, so the in-app updater
-          # never sees a downgrade. Must match VERSION_CODE in publish-pages.
-          export JUNCTION_VERSION_CODE=$(( ${{ github.run_number }} + 1000 ))
+          # Keep releases newer than local candidates through build 212.
+          build_number=$((GITHUB_RUN_NUMBER + 8))
+          version_code=$((101000 + build_number))
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "JUNCTION_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+          echo "JUNCTION_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+
+      - name: Build Debug APK (capture logs even on failure)
+        run: |
           ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1 || true
           # Compiler diagnostics first. --stacktrace emits several hundred lines of
           # Gradle internals, which pushed the actual "e: ..." lines off the end of
@@ -215,10 +223,8 @@ jobs:
           FULL_SHA=$(git rev-parse HEAD)
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' apps/android/build.gradle.kts)
-          # Must mirror apps/android/build.gradle.kts. The offset puts CI releases above
-          # every legacy APK while the run number makes each push strictly newer.
-          VERSION_CODE=$((101000 + ${{ github.run_number }}))
-          BUILD_NUMBER=${{ github.run_number }}
+          VERSION_CODE=${{ needs.build.outputs.version_code }}
+          BUILD_NUMBER=${{ needs.build.outputs.build_number }}
           REPO="${GITHUB_REPOSITORY}"
           BASE_URL="https://splinchgit.github.io/Junction"
 
@@ -349,8 +355,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Junction build ${{ github.run_number }}
+          tag_name: build-${{ needs.build.outputs.build_number }}
+          name: Junction build ${{ needs.build.outputs.build_number }}
           body: |
             Automated signed APK build from `${{ github.sha }}`. This APK passed build, unit tests, and a Pixel 6 emulator install-and-launch smoke test.
 

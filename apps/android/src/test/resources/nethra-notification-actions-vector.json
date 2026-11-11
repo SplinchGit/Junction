@@ -1,0 +1,8 @@
+{
+  "pin": "9ba45847572f4b69131034617f4eab885b5d6948aa41677cd3aff1a58a1b08b2",
+  "envelope": {
+    "body": "{\"v\":1,\"id\":\"73f6f1f3-7b7c-4163-8e03-baaa6ed036df\",\"instanceId\":\"instance-1\",\"deviceId\":\"phone-1\",\"kind\":\"NETHRA_NOTIFICATION\",\"args\":{\"eventId\":\"nethra-notification-task-1-4\",\"taskId\":\"task-1\",\"title\":\"Nethra - Funding\",\"body\":\"This task needs your input.\"},\"tier\":\"NOTIFY\",\"requestedBy\":\"nethra\",\"createdAt\":1800000000000,\"expiresAt\":1800086400000,\"nonce\":\"hR3bCTiBqvPX9afj9dad6Q\",\"notificationActions\":1}",
+    "signature": "EGFzNmXTWlULE2M9Xv7LCbAyahmpbStj1Vxkp754fywQx4EIl7FKRr34k9ODRr15CwpcHXU6xJLWCsa+1RIrZczQX7+UBDxqOnOlhZc0mV/hyLQfIcermenehpXLsWleQyKzJIoNAEJdeHu6XkVjJ+xt5+g5sLHGqzyQugLsYo8xZpKe4K3kOk6VSMjDuxV0V14D/r/0l8j6reNExcKV/Y6oVB/99TP9PCriw9LzYHVhKS/2ZDVWjSiCeAv7fbmVgYlPW8WL8bvuBOiaGB182rSCOzzNQzN+SVieNX286lNKpmvVOd1yzlYEba9SGyrjXHNMtmJI16aQUfAkh4JMmg==",
+    "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoTBqQJORkfBNiMXJk1u0im0KAPm03geYmPFCL4qUjC0E8umB6fjajcTNznoPYo9wofP+whPLrv9Cnubtfi2bu2zIpNtEOPwXZXWd3TdXU3NchwB0FVNJ8u3etHF0wPCT/2Eu7CgELx5SyglqLtU8X6hxxFZiMrQjUUIVEwgz/X1AZPaAW6/mIZUvA31/lG+K3GxCyjF7X5QPLivZv5pNwJ9CDRTTAkAaPH7Lhjxa8BWhGufJDTGNsau+rimbOT+0TpsdM1TIzNlda+7Hc7tJhvkD5EGyJ/ux4v7XtSXIFHnzZj02jyuhYF+pVncZbxzwRbsqFiVUdmJ8ykPIQ/iCXwIDAQAB"
+  }
+}

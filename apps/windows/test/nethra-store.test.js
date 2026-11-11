@@ -9,7 +9,8 @@ const {NethraStore}=require('../src/nethra-store');
 function fixture(t){const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-'));let time=1000000;const stores=[];const open=()=>{const s=new NethraStore(directory,{now:()=>time});stores.push(s);return s;};t.after(()=>{for(const s of stores)try{s.close();}catch{}fs.rmSync(directory,{recursive:true,force:true});});return {open,advance:n=>time+=n,directory};}
 
 test('durable children are bounded, sequential, fenced and never schedulable',t=>{
-  const f=fixture(t),s=f.open(),parent=s.create({goal:'Research facts'}),lease=s.claim('worker',100);
+  const f=fixture(t),s=f.open();s.setSettings({childDelegation:true});
+  const parent=s.create({goal:'Research facts'}),lease=s.claim('worker',100);
   const child=s.startChild(parent.id,'Read the report','run-one',lease.token);
   assert.equal(child.parentId,parent.id);assert.equal(child.model,'qwen3:30b');assert.equal(s.list().length,1);
   assert.throws(()=>s.startChild(parent.id,'Other scope','run-one',lease.token),/sequential/i);
@@ -29,6 +30,40 @@ test('a slow 30B wake accounts more than six minutes of actual inference',t=>{
   assert.equal(s.usage(task.id).taskMs,420000);
   s.release(task.id,claim.token);
 });
+test('a twenty-minute wake accounts every inference interval beyond the old ten-minute cap',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Long model work'}),claim=s.claim('worker',1_300_000);
+  s.beginInference(task.id,claim.token);f.advance(660_000);s.endInference(task.id,claim.token);
+  s.beginInference(task.id,claim.token);f.advance(480_000);s.endInference(task.id,claim.token);
+  assert.equal(s.usage(task.id).taskMs,1_140_000);
+  s.release(task.id,claim.token);
+});
+test('new evidence still counts as progress when the retained list is full',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Research'});
+  const old=Array.from({length:30},(_,i)=>({tool:'read_file',result:{path:`file-${i}`,content:'facts'}}));
+  s.update(task.id,{evidence:old});const before=s.get(task.id).lastMeaningfulProgressAt;
+  f.advance(1);
+  s.update(task.id,{evidence:[...old.slice(1),{tool:'read_file',result:{path:'new-file',content:'new facts'}}]});
+  assert.ok(s.get(task.id).lastMeaningfulProgressAt>before);
+});
+test('an owner answer resets stale no-progress cycles before the next wake',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Investigate'});
+  const held=s.update(task.id,{status:'WAITING_FOR_USER',noProgressCycles:6});
+  const resumed=s.answer(task.id,'Try a different source',held.revision,'answer-new-direction');
+  assert.equal(resumed.noProgressCycles,0);
+  assert.equal(resumed.status,'ACTIVE');
+});
+test('an owner task-chat answer also resets stale no-progress cycles',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Investigate'});
+  s.update(task.id,{status:'WAITING_FOR_USER',noProgressCycles:6});
+  const resumed=s.chatTurn(task.id,'Try the narrower proposal','chat-new-direction').task;
+  assert.equal(resumed.noProgressCycles,0);
+  assert.equal(resumed.status,'ACTIVE');
+});
+test('a repeated proposal review does not count as new verified progress',t=>{
+  const f=fixture(t),s=f.open(),task=s.create({goal:'Improve performance'});
+  s.update(task.id,{evidence:[{tool:'propose_code_work',result:{status:'REVISE',review:'Specify the metric'}}]});
+  assert.equal(s.get(task.id).lastMeaningfulProgressAt,null);
+});
 test('stored thinking preference migrates to the 30B always-on contract',t=>{
   const f=fixture(t),s=f.open();
   assert.equal(s.settings().thinking,true);
@@ -46,6 +81,20 @@ test('objective quotas bound storage and active scheduler work while preserving 
   assert.throws(()=>store.create({goal:'Third'}),/storage limit/i);
 });
 test('reopening preserves checkpoints and event order',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'Inspect sources'});s.update(a.id,{plan:['inspect'],evidence:['found source']});s.close();const r=f.open();assert.deepEqual(r.get(a.id).evidence,['found source']);assert.deepEqual(r.events(a.id).map(e=>e.kind),['CREATED','UPDATED']);});
+
+test('switching an objective model preserves its portable working state',t=>{
+  const f=fixture(t),s=f.open();
+  const task=s.create({goal:'Revise essay',model:'junction-qwen3-next:80b-q3km'});
+  assert.equal(task.model,'junction-qwen3-next:80b-q3km');
+  const saved=s.update(task.id,{plan:['Read draft'],contextCheckpoint:{activeHypothesis:'Tighten opening'},evidence:[{tool:'read_file',result:{content:'draft'}}]});
+  const changed=s.configure(task.id,{model:'qwen3:30b'},saved.revision,'switch-model');
+  assert.equal(changed.model,'qwen3:30b');
+  assert.deepEqual(changed.plan,['Read draft']);
+  assert.deepEqual(changed.contextCheckpoint,{activeHypothesis:'Tighten opening'});
+  assert.equal(changed.evidence.length,1);
+  assert.throws(()=>s.configure(task.id,{model:'unknown'},changed.revision,'bad-model'),/model/i);
+  assert.equal(s.create({goal:'Legacy default'}).model,'qwen3:30b');
+});
 test('reopening preserves the exact pending review as task working context',t=>{
   const f=fixture(t),s=f.open(),task=s.create({goal:'Improve prompt context'});
   const checkpoint={activeHypothesis:'Trim prompt assembly',lastReview:{verdict:'REVISE',feedback:'Measure serialization separately; keep prompt bytes identical.',proposal:'Trim prompt assembly',acceptance:'Pass the prompt parity tests',reviewedBy:'Codex'}};

@@ -1,9 +1,10 @@
 'use strict';
 // One context size for every qwen3:30b caller. Ollama reloads the model (about a minute)
 // whenever a request asks for a different num_ctx than the resident one, so chat, warm-up,
-// objectives and World must agree. Measured on this PC on 25 October 2026: 8,192 adds
-// 0.38 GiB over 4,096 and leaves GPU offload and 22 tok/s generation unchanged.
-const CONTEXT_TOKENS=8192;
+// objectives and World must agree. The 8,192 window blocked a live objective whose
+// protected prompt needed 6,918 input tokens. A live 16,384-token load on this
+// PC left over 1.5 GiB of VRAM free while preserving the existing output reserve.
+const CONTEXT_TOKENS=16384;
 // Conservative for this vocabulary: measured JSON tool schemas run near 6.9 chars/token
 // and prose near 4, so 3.5 overestimates and compaction starts early rather than late.
 const CHARS_PER_TOKEN=3.5;

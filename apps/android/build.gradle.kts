@@ -108,6 +108,7 @@ configure<ApplicationExtension> {
     defaultConfig {
         applicationId = "com.splinch.junction"
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         targetSdk = 36
 
         // GitHub workflow run numbers are monotonic until a workflow is recreated, but
@@ -261,6 +262,8 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.08.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     // android.jar stubs org.json for unit tests; a real implementation lets the

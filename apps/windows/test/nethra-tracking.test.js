@@ -116,7 +116,7 @@ test('the model is warmed shortly before a wake that needs inference, once, and 
 
 test('progress view separates host facts from narration and lists real outputs and needs',async t=>{
   const f=fixture(t),task=f.store.create({goal:'Write a draft report about trams'});
-  const runtime={withInference:fn=>fn(),chat:async(_m,messages)=>messages.length<3?toolCalls(['write_draft',{path:'report.md',content:'Tram report'}]):toolCalls(['request_input',{question:'Should I include costs?'}])};
+  const runtime={withInference:fn=>fn(),chat:async(_m,messages)=>messages.length<3?toolCalls(['write_draft',{path:'report.md',content:'Tram report'}]):toolCalls(['request_input',{question:'Should I include costs?',reason:'OWNER_PREFERENCE',blocking:true}])};
   await new NethraScheduler({store:f.store,now:f.now,execute:(item,options)=>new NethraRunner({store:f.store,runtime,now:f.now}).execute(item,options)}).tick();
   const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
   assert.equal(view.outputs.length,1);assert.equal(view.outputs[0].current,true);assert.match(view.outputs[0].path,/report\.md$/);

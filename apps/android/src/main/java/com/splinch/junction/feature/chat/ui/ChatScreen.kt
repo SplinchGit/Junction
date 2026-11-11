@@ -152,7 +152,9 @@ fun ChatScreen(
     onOpenNavigation: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     objectivesRequest: Int = 0,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    invitationSessionId: String? = null,
+    onInvitationConsumed: () -> Unit = {}
 ) {
     val messages by chatManager.messages.collectAsState()
     val streaming by chatManager.streamingAssistant.collectAsState()
@@ -243,12 +245,17 @@ fun ChatScreen(
         }
     }
 
+    var pendingInvitationVoiceSession by remember { mutableStateOf<String?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
+        val invitationTarget = pendingInvitationVoiceSession
+        pendingInvitationVoiceSession = null
         if (granted) {
             if (pendingSpeechEnable) {
-                scope.launch { chatManager.startVoiceCall() }
+                if (invitationTarget == null || invitationTarget == chatManager.sessionId.value) {
+                    scope.launch { chatManager.startVoiceCall() }
+                }
             } else {
                 chatManager.setMicEnabled(true)
             }
@@ -266,6 +273,25 @@ fun ChatScreen(
 
     com.splinch.junction.ui.component.AmbientBackdrop(appearance, modifier) {
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        if (invitationSessionId != null && invitationSessionId == currentSessionId) {
+            Text("Nethra invited you to discuss this task.", style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(enabled = !micEnabled, onClick = {
+                scope.launch {
+                    if (providerConfig.providerId != "local") chatManager.switchProvider("local")
+                    if (chatManager.sessionId.value != invitationSessionId) return@launch
+                    onInvitationConsumed()
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        chatManager.startVoiceCall()
+                    } else {
+                        pendingSpeechEnable = true
+                        pendingInvitationVoiceSession = invitationSessionId
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            }) {
+                Text(if (providerConfig.providerId == "local") "Start Nethra call" else "Switch to paired PC and start call")
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

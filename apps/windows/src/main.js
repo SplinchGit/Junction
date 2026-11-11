@@ -4,7 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const QRCode = require("qrcode");
-const { app, BrowserWindow, ipcMain, safeStorage, shell, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, safeStorage, shell, nativeTheme, dialog } = require("electron");
 const { DeviceIdentityStore } = require("./device-identity");
 const { nativeGoogleFirebaseSignIn, refreshFirebaseSession, anonymousFirebaseSignIn } = require("./firebase-auth");
 const { registerDevice } = require("./firebase-sync");
@@ -31,7 +31,7 @@ const { Foreman } = require("./foreman");
 const { ForemanExecutor } = require("./foreman-executor");
 const { ForemanApi } = require("./foreman-api");
 const { handleOwnerWorkInstruction: executeOwnerWork } = require("./owner-work-handler");
-const { workSnapshot, situationContext, sanitizeSession } = require("./assistant-environment");
+const { workSnapshot, situationContext, sanitizeSession, conversationFocus } = require("./assistant-environment");
 const { PresenceTracker } = require("./presence");
 const { progressView } = require("./nethra-progress");
 const { AppearanceStore } = require("./appearance-store");
@@ -39,6 +39,8 @@ const { NethraStore } = require("./nethra-store");
 const { NethraScheduler } = require("./nethra-scheduler");
 const { NethraRunner } = require("./nethra-runner");
 const { createCodeWorkProposer } = require("./nethra-code-work");
+const { createWorkStatus, reconcileCodeWork } = require("./nethra-work-status");
+const { createObjectiveAccess } = require("./nethra-objectives");
 const { NethraApi } = require("./nethra-api");
 const { correctTaskClaims } = require("./nethra-chat");
 const { handleOwnerWorkInstruction: routeOwnerWorkInstruction } = require("./owner-work-instruction");
@@ -49,7 +51,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { postMilestones, postOutcome, postProgress } = require("./nethra-conversation-report");
+const { queueProjectMilestoneNotifications, queueMilestoneNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
@@ -61,11 +63,10 @@ function hasPersistentObjectives(){return nethraStore?.list().some(task=>task.pe
 function situationFor({ surface, conversationId = null, session = null }) {
   try {
     const objectives = nethraStore.list(), liveTaskId = nethraStore.liveTaskId();
-    const mine = objectives.filter(task => conversationId && task.conversationId === conversationId);
-    const linkedTask = mine.find(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)) || mine[0] || null;
-    const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, allowCodeWork: linkedTask.allowCodeWork === true, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
+    const {task:linkedTask,candidates} = conversationFocus(objectives,conversationId);
+    const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, model: linkedTask.model, allowCodeWork: linkedTask.allowCodeWork === true, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
     const pendingApprovals = objectives.filter(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)).reduce((count, task) => count + nethraStore.approvals(task.id).filter(item => item.status === 'PENDING').length, 0);
-    return situationContext({ surface, objectives, linked, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
+    return situationContext({ surface, objectives, linked, candidates, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
   } catch (error) { recordStartupIssue('situation context', error); return ''; }
 }
 /** Startup warming honours the owner's setting: desktop launches, every launch, or never. */
@@ -73,7 +74,11 @@ function warmForLaunch(reason) {
   try {
     const mode = nethraStore?.settings().warmOnStartup || 'desktop';
     if (mode === 'never' || (mode === 'desktop' && reason !== 'desktop_open')) return;
-    setTimeout(() => { localAgent?.warmer.warm({ reason: `startup:${reason}`, priority: 'background' }).catch(() => {}); }, 2_000).unref?.();
+    setTimeout(() => {
+      const liveId=nethraStore?.liveTaskId?.();
+      if(liveId&&nethraStore.get(liveId).model!=='qwen3:30b')return;
+      localAgent?.warmer.warm({ reason: `startup:${reason}`, priority: 'background' }).catch(() => {});
+    }, 2_000).unref?.();
   } catch (error) { recordStartupIssue('model warm-up', error); }
 }
 /** Deferred outcome reports (quiet hours) are retried here; posting is idempotent. */
@@ -81,9 +86,17 @@ function deliverObjectiveUpdates() {
   if (!nethraStore || !localData) return;
   let changed = false;
   const settings = nethraStore.settings();
-  for (const task of nethraStore.list()) {
+  const tasks=nethraStore.list();
+  try {
+    const names=new Map(foreman.list().map(project=>[project.id,project.name]));
+    queueProjectMilestoneNotifications(nethraStore,deviceCommands,{tasks,projectName:id=>names.get(id)});
+  } catch (error) { recordStartupIssue('project milestone delivery',error); }
+  for (const task of tasks) {
     try {
+      queueOutcomeNotification(task,nethraStore,deviceCommands);
+      if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
       if (postMilestones(task, nethraStore, localData, { settings })) changed = true;
+      if (postQuestions(task, nethraStore, localData, { settings })) changed = true;
       if (task.reportPending && postOutcome(task, nethraStore, localData, { settings })) { nethraStore.clearReportPending?.(task.id); changed = true; }
       else if (task.reportPending && !['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED'].includes(task.status)) nethraStore.clearReportPending?.(task.id);
     } catch (error) { recordStartupIssue('objective update delivery', error); }
@@ -96,8 +109,8 @@ function taskForConversation(conversationId){
   if(!conversationId||!nethraStore)return null;
   return nethraStore.list().find(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status))||null;
 }
-async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop'){
-  return routeOwnerWorkInstruction({content,conversationId,requestId,source,api:nethraApi,store:nethraStore,
+async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop',history=null){
+  return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,api:nethraApi,store:nethraStore,
     ownerWork:request=>executeOwnerWork({foreman,roots:[app.getPath('documents')],content:request.content,conversationId:request.conversationId,requestId:request.requestId})});
 }
 function hydrateFirebaseEnvironment() {
@@ -200,7 +213,13 @@ async function createWindowImpl() {
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
   const foremanDirectory = path.join(app.getPath("userData"), "foreman");
   foreman = new Foreman(foremanDirectory, {executor:new ForemanExecutor(path.join(foremanDirectory,"projects")),audit:appendAudit});
-  foremanApi = new ForemanApi(foreman);
+  foremanApi = new ForemanApi(foreman, {
+    conversationExists: id => Boolean(localData.conversation(id)),
+    pickProjectDocument: async () => {
+      const result=await dialog.showOpenDialog({title:'Import a project document',properties:['openFile'],filters:[{name:'Project documents',extensions:['txt','md','csv','log','docx','pdf']}]});
+      return result.canceled?null:result.filePaths[0];
+    }
+  });
   auditPath = path.join(app.getPath("userData"), "audit", "pc-companion.jsonl");
   worldAuditStore = new WorldAuditStore(path.join(app.getPath("userData"), "junction-world"));
   worldControlStore = new WorldControlStore(path.join(app.getPath("userData"), "junction-world", "controls.json"));
@@ -232,18 +251,15 @@ async function createWindowImpl() {
   researchCoordinator = new ResearchCoordinator(path.join(app.getPath("userData"), "research"), researchClient);
   const junctionRepository = process.env.JUNCTION_REPOSITORY || (app.isPackaged ? path.join(app.getPath("documents"), "Junction") : path.resolve(__dirname, "../../.."));
   const createCodeDelegation = async (_instruction,owner={}) => {const result=await executeOwnerWork({foreman,roots:[app.getPath('documents')],content:owner.goal||'',conversationId:owner.conversationId,requestId:crypto.randomUUID()});if(!result?.id||result.status==='NEEDS_SCOPE')throw new Error('Name the local file, folder or repository in the owner coding request.');return result;};
-  const proposeCodeWork = createCodeWorkProposer({foreman,junctionRepository});
+  const proposeCodeWork = createCodeWorkProposer({foreman,junctionRepository,assertObjective:id=>nethraStore.get(id)});
   // Chat is Nethra's front door: it can start and inspect her durable objectives.
-  const objectives = {
-    create: async ({ goal, successCriteria, mode, conversationId, requestId, surface }) => (await nethraApi.dispatch('nethra.create', { goal, successCriteria, mode, conversationId, persistent: true }, requestId, String(surface || '').startsWith('android') ? 'android' : 'desktop')).task,
-    list: async () => (await nethraApi.dispatch('nethra.list', {}, crypto.randomUUID(), 'desktop')).objectives
-  };
+  const objectives = createObjectiveAccess({api:()=>nethraApi,store:()=>nethraStore});
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
   // Experiments on code changes only count samples from a Junction process started after the change.
   try { nethraStore.recordHostStart(); } catch (error) { recordStartupIssue('Nethra host start record', error); }
   const advisorLimits = new AdvisorLimits({ store: nethraStore });
-  const workStatus = id => { try { const project = foreman.get(id), promoted = project.tasks.flatMap(task => task.attempts || []).filter(attempt => attempt.status === 'COMPLETED' && attempt.promoted).map(attempt => attempt.finishedAt).filter(Number.isFinite); return { status: project.status, promotedAt: promoted.length ? Math.max(...promoted) : null }; } catch { return null; } };
+  const workStatus = createWorkStatus(foreman);
   const advisorStatus = async () => { const describe = async (provider, status) => ({ ...status, limits: status.ready ? await advisorLimits.check(provider).catch(error => ({ error: String(error.message).slice(0, 200) })) : null }); const [codex, claude] = await Promise.all([getCodexStatus(), getClaudeStatus()]); return { reservePercent: advisorLimits.reservePercent(), codex: await describe('codex', codex), claude: await describe('claude', claude) }; };
   // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.
   const modelProfile = path.join(app.getPath('userData'), 'nethra', 'model-profile.json');
@@ -257,10 +273,14 @@ async function createWindowImpl() {
   deviceCommands = new DeviceCommandStore(path.join(app.getPath('userData'),'nethra'),{signer:()=>{if(deviceSigner)return deviceSigner;const lan=identityStore.lanStore(),tls=lan.getTlsIdentity(),instanceId=lan.getInstanceMetadata?.()?.instanceId;if(!tls?.key||!instanceId)return null;return deviceSigner=tlsSigner(tls,instanceId);}});
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
-  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork,localData,workStatus,advisorLimits,performanceReport:taskId=>require('./nethra-performance').performanceReport({store:nethraStore,localData,taskId})});
-  const reportedOutcomes = new Set();
-  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task,reportedOutcomes),warmBefore:()=>localAgent.warmer.warm({reason:'objective_due',priority:'background'})});
-  nethraApi = new NethraApi({store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,advisors:advisorStatus,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
+  const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork,localData,workStatus,advisorLimits,projectById:id=>foreman.find(id),listProjectDocuments:id=>foreman.find(id)?foreman.listDocuments(id):[],readProjectDocument:(...args)=>foreman.getDocument(...args),performanceReport:taskId=>require('./nethra-performance').performanceReport({store:nethraStore,localData,taskId})});
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),reconcileWork:async()=>{await nethraApi?.reconcileDeletions();return reconcileCodeWork({store:nethraStore,projects:foreman.list()});},sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task),warmBefore:task=>task.model==='junction-qwen3-next:80b-q3km'?null:localAgent.warmer.warm({reason:'objective_due',priority:'background'})});
+  nethraApi = new NethraApi({listProjects:()=>foreman.list(),listProjectDocuments:id=>foreman.find(id)?foreman.listDocuments(id):[],readProjectDocument:(...args)=>foreman.getDocument(...args),onDeleteTask:async id=>{
+    for(const project of foreman.list().filter(item=>item.sourceObjectiveId===id&&!['STOPPED','COMPLETED'].includes(item.status))){
+      await foreman.control(project.id,'stop',project.revision,`deleted-${id}-${project.revision}`);
+    }
+    mainWindow?.webContents.send('junction:conversations-changed');
+  },store:nethraStore,scheduler:nethraScheduler,runtime:localAgent,localData,describeTask:task=>nethraRunner.contract(task),advisors:advisorStatus,deviceCommands,calendar:calendarSource,gmail:gmailSource,presence:()=>presence.snapshot(),onPhoneContact:()=>presence.seen('device_sync'),onSettings:async(settings,changed)=>{if('persistentStartup' in changed)await configureStartup({enabled:settings.persistentStartup,executable:process.execPath,appPath:app.isPackaged?null:app.getAppPath(),packaged:app.isPackaged,resourcesPath:process.resourcesPath});}});
   deliverObjectiveUpdates();
   outcomeSweep = setInterval(deliverObjectiveUpdates, 60_000); outcomeSweep.unref?.();
   nethraScheduler.start();
@@ -268,7 +288,7 @@ async function createWindowImpl() {
   if(app.isPackaged&&nethraStore.settings().persistentStartup)configureStartup({enabled:true,executable:process.execPath,packaged:true,resourcesPath:process.resourcesPath}).catch(error=>recordStartupIssue('Nethra startup registration',error));
   if (process.platform === "win32") {
     try {
-      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: {run:request=>localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId),situation:situationFor({surface:'android-lan',conversationId:request.conversationId,session:request.session})})}, getBootstrapState: localBrainBootstrapState,
+      const candidateLanServer = new LanRelayLifecycle({ identityStore: identityStore.lanStore(), localData, runtime: {run:request=>localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId,request.goal,request.history,nethraStore.list()),situation:situationFor({surface:'android-lan',conversationId:request.conversationId,session:request.session})})}, getBootstrapState: localBrainBootstrapState,
         onActivity: () => presence.seen('lan'),
         nethraApi,
         worldAuditStore, worldControlStore, worldChatStore, foremanApi,
@@ -305,7 +325,7 @@ async function createWindowImpl() {
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
-    runLocalAgent: async request => {presence.seen('relay','chat');const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android');return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId),situation:situationFor({surface:'android-relay',conversationId:request.conversationId,session:request.session})});},
+    runLocalAgent: async request => {presence.seen('relay','chat');const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android',request.history);return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId,request.goal,request.history,nethraStore.list()),situation:situationFor({surface:'android-relay',conversationId:request.conversationId,session:request.session})});},
     dispatchAgent: (type,payload,requestId)=>{presence.seen('relay',type);return nethraApi.dispatch(type,payload,requestId,'android');},
     syncConversations: payload => new PairedConversationSync(localData, () => {
       scheduleSharedSync(); mainWindow?.webContents.send("junction:conversations-changed");
@@ -405,17 +425,10 @@ async function syncSharedState(){
   sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};mainWindow?.webContents.send("junction:conversations-changed");return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
 }
 /** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
-function reportObjectiveOutcome(task, reported) {
-  if (!task.conversationId || !localData?.conversation(task.conversationId)) return;
-  const settings = nethraStore.settings();
-  if(postMilestones(task,nethraStore,localData,{settings})){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
-  if(postProgress(task,nethraStore,localData,{settings,liveTaskId:nethraStore.liveTaskId()})){scheduleSharedSync();mainWindow?.webContents.send('junction:conversations-changed');}
-  if(!['COMPLETED','WAITING_FOR_USER','BLOCKED','FAILED'].includes(task.status))return;
-  const key = `${task.id}:${task.status}:${task.summary || ''}`;
-  if (reported.has(key)) return;
-  reported.add(key);
-  // Quiet hours (or updates switched off) defer the post; the sweep delivers it later.
-  if (!postOutcome(task, nethraStore, localData, { settings })) { if (settings.proactiveUpdates !== 'OFF') nethraStore.markReportPending?.(task.id); return; }
+function reportObjectiveOutcome(task) {
+  queueOutcomeNotification(task,nethraStore,deviceCommands);
+  if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
+  if(!postTaskReports(task,nethraStore,localData))return;
   scheduleSharedSync();
   mainWindow?.webContents.send('junction:conversations-changed');
 }
@@ -495,7 +508,7 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
     if (intent && decisionAllowsDelegation(intent)) {
       reply = {content:"Name the local file, folder or repository for this work. Once the scope is clear, the instruction itself starts the persistent work.",model:config.model};
     } else reply=nativeToolsAvailable
-      ? await localAgent.run({ surface: "desktop", conversationId:conversation.id, thinking:nethraStore.settings().thinking, workSnapshot:workSnapshot(foreman.list(),conversation.id), goal: content, model: config.model || "qwen3:30b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research), situation: situationFor({ surface: "desktop", conversationId: conversation.id }), onProgress: progress => { if (_event.sender.isDestroyed()) return; if (progress.text !== undefined) _event.sender.send("junction:chat-stream", {runId,provider:"local",model:config.model || "qwen3:30b",text:progress.text}); else if (progress.phase) _event.sender.send("junction:chat-phase", {runId,phase:progress.phase,stage:progress.stage||"",coldStart:progress.coldStart===true}); } })
+      ? await localAgent.run({ surface: "desktop", conversationId:conversation.id, thinking:nethraStore.settings().thinking, workSnapshot:workSnapshot(foreman.list(),conversation.id,content,conversation.messages.slice(0,-1),nethraStore.list()), goal: content, model: config.model || "qwen3:30b", history: conversation.messages.slice(0, -1), memories: localData.memories(), context: request.context || null, signal: controller.signal, runId, forceSearch: Boolean(request.research), situation: situationFor({ surface: "desktop", conversationId: conversation.id }), onProgress: progress => { if (_event.sender.isDestroyed()) return; if (progress.text !== undefined) _event.sender.send("junction:chat-stream", {runId,provider:"local",model:config.model || "qwen3:30b",text:progress.text}); else if (progress.phase) _event.sender.send("junction:chat-phase", {runId,phase:progress.phase,stage:progress.stage||"",coldStart:progress.coldStart===true}); } })
       : config.id==="codex"
         ? await sendCodexChat({ model: config.model, messages: conversation.messages, memories: localData.memories(), context: request.context || null, research: researchInstructions, workingDirectory: app.getPath("userData") })
         : await sendChat({

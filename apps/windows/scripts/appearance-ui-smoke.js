@@ -51,7 +51,7 @@ app.on("browser-window-created", (_event, window) => {
       const chatDark = await shot("appearance-sakura-dark.png");
       // The chat header shows how long the chat is and how much of it Nethra reads.
       const tokenLine = await window.webContents.executeJavaScript(`(()=>{renderMessages(Array.from({length:20},(_,i)=>({id:'m'+i,role:i%2?'assistant':'user',content:'y'.repeat(900),provenance:i%2?'JUNCTION':'OWNER',createdAt:Date.now(),...(i===19?{telemetry:{inputTokens:2411}}:{})})));return document.getElementById('chat-tokens').textContent;})()`);
-      assert.match(tokenLine, /≈5\.2k tokens in this chat · Nethra reads the latest ≈1\.0k \(4 of 20 messages\) · last reply's prompt 2,411 of 8,192/);
+      assert.match(tokenLine, /≈5\.2k tokens in this chat · Nethra reads the latest ≈1\.0k \(4 of 20 messages\) · last reply's prompt 2,411 of 16,384/);
       const tokenShot = await shot("chat-token-line.png");
       // Reduced motion stops the petal layer; the artwork remains.
       const reduced = await window.webContents.executeJavaScript(`(async()=>{
@@ -74,10 +74,10 @@ app.on("browser-window-created", (_event, window) => {
         document.getElementById('objective-status').click();
         for(let i=0;i<100&&!document.querySelector('#view-tasks .tracking');i++)await new Promise(r=>setTimeout(r,30));
         const text=document.querySelector('#view-tasks .tracking')?.textContent||'';document.querySelector('#view-tasks .tracking')?.scrollIntoView({block:'center'});
-        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',metrics:document.querySelector('.task-performance')?.textContent||'',experiments:document.querySelector('.task-experiments')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
+        return {text,overview:document.querySelector('.task-progress-overview')?.textContent||'',cardProgress:document.querySelector('.task-card-progress')?.textContent||'',activity:document.querySelector('.task-activity')?.textContent||'',activityBox:getComputedStyle(document.querySelector('.task-activity li')).borderTopStyle,metrics:document.querySelector('.task-performance')?.textContent||'',experiments:document.querySelector('.task-experiments')?.textContent||'',redirect:!!document.querySelector('textarea[aria-label="Redirect objective"]'),checkNow:[...document.querySelectorAll('#view-tasks button')].some(b=>b.textContent==='Check now'),strip:document.getElementById('nethra-chat-strip').textContent};
       })()`);
       assert.match(tracking.text, /Routine daily monitoring/); assert.match(tracking.text, /Searched the web/);
-      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
+      assert.match(tracking.overview,/Next action/);assert.match(tracking.cardProgress,/1 of 1/);assert.match(tracking.activity,/Searched the web/);assert.equal(tracking.activityBox,'solid');assert.match(tracking.metrics,/No measured samples/);assert.match(tracking.experiments,/Earlier warm-up shortens replies.*Baseline recorded/);assert.doesNotMatch(tracking.experiments,/7000, 7100/);
       assert.equal(tracking.redirect, true); assert.equal(tracking.checkNow, true); assert.match(tracking.strip, /Next wake/);
       const drawer = await shot("appearance-task-tracking.png");
       const taskChat = await window.webContents.executeJavaScript(`(async()=>{

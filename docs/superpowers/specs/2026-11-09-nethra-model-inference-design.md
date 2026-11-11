@@ -1,0 +1,11 @@
+# Queued model inference for Nethra tasks
+
+The owner wants Nethra to direct local model inference and complete its existing 50-prompt benchmark. Latest chat and task evidence show that the task can reason through Ollama, but cannot submit independent measured prompts. Owner requests to involve Codex were swallowed by a broad `work on` continuation match. The owner separately requests collapsible action logs in chat, on Android and Windows.
+
+Use the existing local runtime/priority queue and SQLite task store. Add a generic `run_model` tool: prompt/system context, bounded output and 1–50 identical samples, or a saved job ID to continue. The target is a supported installed task model; it remains fixed for the job. Model workers get no tools and no parent chat history. Each call runs at most three samples and saves each completed sample before continuing. Queue time, wall time and Ollama token/duration measurements are distinct. Partial work survives preemption/restart; completed jobs replay without new inference. Results are immutable workspace drafts with existing receipts. The host task contract and saved cursor expose the capability and how to resume it.
+
+Alternatives considered: reusing delegate_task cannot produce fixed-context stateless timings; exposing arbitrary shell/HTTP adds unrelated access; a benchmark-only script would leave the model unable to direct subsequent inference. A generic bounded tool fits the existing model-independent harness. This is the implementer's choice under the owner's repeated instruction to implement and test without more design questions.
+
+Retain owner pauses, exact overwrite approvals, existing daily runtime limits, selected task state and Codex Start/review/Apply boundaries. Resolve only obsolete local-model ACCESS questions that refer to the supported selected model when this tool becomes available; record a host capability answer rather than inventing an owner grant. Ordinary substantive chat directions must reach task state.
+
+Collapse only the recorded action block inside task progress messages; retain summaries, questions, next action and ordinary chat content. Preserve complete copy/export text. UI implementation is independent of the inference adapter.

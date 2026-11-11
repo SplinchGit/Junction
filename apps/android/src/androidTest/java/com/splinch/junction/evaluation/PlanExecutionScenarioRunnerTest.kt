@@ -580,6 +580,8 @@ private class InMemoryPlanDao : PlanDao {
 }
 
 private class NoOpFeedDao : FeedDao {
+    override suspend fun insertNotificationOnce(item: FeedItemEntity): Long = 1L
+    override suspend fun markNotificationSeen(id: String, updatedAt: Long) = Unit
     override fun feedStream(): Flow<List<FeedItemEntity>> = flowOf(emptyList())
     override suspend fun insert(item: FeedItemEntity) = Unit
     override suspend fun insertAll(items: List<FeedItemEntity>) = Unit

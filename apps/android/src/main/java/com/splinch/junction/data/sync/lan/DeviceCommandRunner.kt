@@ -13,11 +13,12 @@ import com.splinch.junction.data.sync.firebase.LocalBrainPairingStore
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Executes READ-tier device commands. None of them changes state on the phone. */
+/** Executes signed diagnostics and host-generated task notifications; never privileged task actions. */
 class DeviceCommandRunner(context: Context, private val client: NethraClient) {
     private val context = context.applicationContext
 
     suspend fun execute(command: DeviceCommandVerifier.Command): JSONObject = when (command.kind) {
+        "NETHRA_NOTIFICATION" -> com.splinch.junction.feature.scheduler.NotificationHelper.showTaskOutcome(context, command.args, command.id, command.notificationActions, command.instanceId)
         "STATUS" -> status()
         "SMOKE_TEST" -> smokeTest()
         "COLLECT_LOGS" -> logs(command.args.optInt("lines", 200).coerceIn(1, 500))

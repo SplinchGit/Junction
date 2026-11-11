@@ -2,6 +2,8 @@
 const {draftReceiptIsCurrent}=require('./nethra-tools');
 const {verdictLine}=require('./nethra-experiments');
 const {dailyLimits}=require('./nethra-scheduler');
+const {openQuestions}=require('./nethra-task-contract');
+const {inferenceRequirement}=require('./nethra-model-inference');
 
 const short=(value,max=240)=>String(value??'').replace(/\s+/g,' ').trim().slice(0,max);
 const FINISHED=new Set(['COMPLETED','CANCELLED','FAILED']);
@@ -10,6 +12,7 @@ const FINISHED=new Set(['COMPLETED','CANCELLED','FAILED']);
 function evidenceLine(item){
   const result=item?.result||{};
   if(result.error)return `${item.tool} failed: ${short(result.error,160)}`;
+  if(item.tool==='run_model')return `Measured ${result.completed??'?'} of ${result.total??'?'} model samples${Number.isFinite(result.statistics?.tokensPerSecond)?` (${result.statistics.tokensPerSecond} output tokens/sec)`:''}; results saved to ${short(result.path,150)}`;
   if(item.tool==='web_search'){const sources=(result.evidence?.sources||[]).slice(0,3).map(source=>short(source.title||source.url,80)).filter(Boolean);return `Searched the web for “${short(result.evidence?.query,100)}”${sources.length?`: ${sources.join('; ')}`:''}`;}
   if(item.tool==='write_draft')return `Saved draft ${short(result.path,160)} (${result.bytes??'?'} bytes)`;
   if(item.tool==='read_file')return `Read ${short(result.path,160)}`;
@@ -48,8 +51,24 @@ function waitingFor(task,store,now=Date.now()){
   if(task.status==='WAITING_FOR_USER')return {kind:'input',detail:short(task.summary,500)||'Nethra needs a direction from you.'};
   if(task.status==='BLOCKED')return {kind:'blocked',detail:short(task.summary,500)||'An approval was rejected or expired.'};
   if(task.status==='PAUSED')return {kind:'owner_resume',detail:'Paused by you; resume to continue.'};
-  const deps=(task.dependencies||[]).filter(id=>{try{return store.get(id).status!=='COMPLETED';}catch{return true;}});
-  if(deps.length)return {kind:'dependency',detail:`Waiting for ${deps.length} other objective${deps.length===1?'':'s'} to complete.`};
+  const dependencies=[];
+  for(const id of new Set(task.dependencies||[])){
+    try {
+      const required=store.get(id);
+      if(required.status!=='COMPLETED')dependencies.push(required);
+    } catch {
+      dependencies.push({goal:'Unavailable task',status:'UNAVAILABLE'});
+    }
+  }
+  if(dependencies.length){
+    const stalled=dependencies.filter(item=>['FAILED','CANCELLED','BLOCKED','PAUSED','WAITING_FOR_USER','UNAVAILABLE'].includes(item.status));
+    const summarize=items=>items.slice(0,3).map(item=>`“${short(item.goal,60)}” (${short(item.status,24).toLowerCase().replaceAll('_',' ')})`).join(', ');
+    const remaining=items=>items.length>3?` and ${items.length-3} more`:'';
+    const detail=stalled.length
+      ? `Review prerequisite ${stalled.length===1?'task':'tasks'}: ${summarize(stalled)}${remaining(stalled)}.`
+      : `Waiting for ${summarize(dependencies)}${remaining(dependencies)} to complete.`;
+    return {kind:'dependency',detail};
+  }
   if(task.status==='SLEEPING'&&Number.isSafeInteger(task.nextWakeAt)){
     const reason=task.wakeReason;
     const usage=store.usage?.(task.id,now),settings=store.settings?.();
@@ -61,18 +80,19 @@ function waitingFor(task,store,now=Date.now()){
 }
 
 function activityLine(event){
+  const model=recordedModel(event.detail)||'qwen3:30b';
   if(event.kind==='CLAIMED')return {kind:'running',line:'Started a work pass',actor:'Junction',model:null};
   if(event.kind==='MODEL_STEP')return {kind:'running',line:event.detail?.scope==='child'?'Child researcher is working through the next action':'Thinking through the next action',actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
   if(event.kind==='NETHRA_UPDATE')return {kind:'update',line:short(event.detail?.text,300),actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
   if(event.kind==='TOOL_STARTED')return {kind:'running',line:toolStartedLine(event.detail?.tool),actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
   if(event.kind==='TOOL_FAILED')return {kind:'error',line:`${short(event.detail?.tool,40).replaceAll('_',' ')} failed: ${short(event.detail?.error,160)}`,actor:'Nethra',model:recordedModel(event.detail)||'qwen3:30b'};
-  if(event.kind==='nethra_plan_updated'){const total=event.detail?.plan?.length||0,left=event.detail?.pendingSteps?.length||0;return {kind:'verified',line:`Updated plan: ${total} steps, ${left} left`,actor:'Nethra',model:'qwen3:30b'};}
+  if(event.kind==='nethra_plan_updated'){const total=event.detail?.plan?.length||0,left=event.detail?.pendingSteps?.length||0;return {kind:'verified',line:`Updated plan: ${total} steps, ${left} left`,actor:'Nethra',model};}
   if(event.kind==='nethra_tool_result'){
     const item=event.detail?.evidence?.at(-1);
     if(!item)return null;
     if(item.tool==='consult_codex'&&!item.result?.error)return {kind:'advice',line:evidenceLine(item),actor:'Codex',model:recordedModel(item.result)};
     if(item.tool==='consult_claude'&&!item.result?.error)return {kind:'advice',line:evidenceLine(item),actor:'Claude',model:recordedModel(item.result)};
-    return {kind:item.result?.error?'error':'verified',line:evidenceLine(item),actor:'Nethra',model:'qwen3:30b'};
+    return {kind:item.result?.error?'error':'verified',line:evidenceLine(item),actor:'Nethra',model};
   }
   if(event.kind==='CODEX_ASSISTED_BRIDGE')return {kind:'advice',line:'Codex advice saved as a technical handoff; Nethra did not call it itself',actor:'Codex',model:recordedModel(event.detail?.evidence?.find(item=>item.tool==='consult_codex')?.result)};
   if(event.kind==='EXPERIMENT_CONCLUDED'&&event.detail?.result)return {kind:'verified',line:verdictLine(event.detail.result),actor:'Junction',model:null};
@@ -84,13 +104,13 @@ function activityLine(event){
     return {kind:'waiting',line:`Compacted ${parts.join(' and ')||'older context'} to fit the context window`,actor:'Junction',model:null};
   }
   if(event.kind==='BUDGET_WAIT')return {kind:'waiting',line:'Paused at the daily model-time limit',actor:'Junction',model:null};
-  if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`,actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence',actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action',actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step',actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision',actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='nethra_sleeping')return {kind:'waiting',line:'Scheduled a later check',actor:'Nethra',model:'qwen3:30b'};
-  if(event.kind==='nethra_budget_reached')return {kind:'waiting',line:'Saved this pass to continue later',actor:'Nethra',model:'qwen3:30b'};
+  if(event.kind==='MILESTONE_VERIFIED')return {kind:'verified',line:`Verified milestone: ${short(event.detail?.summary,180)}`,actor:'Nethra',model};
+  if(event.kind==='nethra_completed')return {kind:'verified',line:'Finished the task with verified evidence',actor:'Nethra',model};
+  if(event.kind==='nethra_approved_action')return {kind:'verified',line:'Completed an owner-approved action',actor:'Nethra',model};
+  if(event.kind==='CHILD_COMPLETED')return {kind:'verified',line:'Completed a bounded child research step',actor:'Nethra',model};
+  if(event.kind==='nethra_input_required')return {kind:'waiting',line:'Asked you for a decision',actor:'Nethra',model};
+  if(event.kind==='nethra_sleeping')return {kind:'waiting',line:'Scheduled a later check',actor:'Nethra',model};
+  if(event.kind==='nethra_budget_reached')return {kind:'waiting',line:'Saved this pass to continue later',actor:'Nethra',model};
   if(event.kind==='EXECUTED')return {kind:'pass',line:'Finished this work pass',actor:'Junction',model:null};
   return null;
 }
@@ -116,12 +136,26 @@ function progressView(task,store,{now=Date.now(),liveTaskId=null}={}){
   }catch{}
   const live=liveTaskId===task.id;
   const liveAction=live&&['MODEL_STEP','TOOL_STARTED','CLAIMED'].includes(activity[0]?.event)?activity[0].line:null;
-  const doing=live?(liveAction||`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`):FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';
-  const next=FINISHED.has(task.status)?null:task.pendingSteps?.[0]?short(task.pendingSteps[0],200):task.status==='SLEEPING'&&task.mode==='ONGOING'?'Check watched sources and report verified changes':(task.plan||[]).length?null:'Make a plan';
+  let doing=live?(liveAction||`Working now${task.pendingSteps?.[0]?`: ${short(task.pendingSteps[0],160)}`:''}`):FINISHED.has(task.status)?null:task.status==='SLEEPING'?'Sleeping until the next wake':task.status==='PAUSED'?'Paused':['WAITING_FOR_USER','BLOCKED'].includes(task.status)?'Waiting for you':'Queued to run';
+  let next=FINISHED.has(task.status)?null:task.pendingSteps?.[0]?short(task.pendingSteps[0],200):task.status==='SLEEPING'&&task.mode==='ONGOING'?'Check watched sources and report verified changes':(task.plan||[]).length?null:'Make a plan';
+  const required=inferenceRequirement(task);let modelSamples=null;
+  if(required){
+    const jobs=(store.modelJobs?.(task.id)||[]).filter(job=>job.model===required.model).reverse();
+    const job=jobs.find(item=>item.request.samples>=required.samples)||jobs[0];
+    if(job){
+      modelSamples={jobId:job.id,model:job.model,completed:job.samples.length,total:required.samples};
+      if(!FINISHED.has(task.status)){
+        const measured=`${modelSamples.completed}/${modelSamples.total} measured model samples saved`;
+        doing=live?`${measured}. ${liveAction||(modelSamples.completed>=modelSamples.total?'Preparing the benchmark report':'Running remaining samples')}`:`${doing}. ${measured}`;
+        if(modelSamples.completed>=modelSamples.total&&/\b(?:continue|execut\w*|run\w*|measur\w*)\b.{0,120}\b(?:samples?|prompts?|jobId)\b/i.test(task.pendingSteps?.[0]||''))next=task.status==='PAUSED'?'Finish the saved benchmark report after resuming':'Finish the report from the completed model measurements';
+      }
+    }
+  }
   return {
-    doing,next,lastAccomplished:last,
+    doing,next,lastAccomplished:last,modelSamples,
     wake:Number.isSafeInteger(task.nextWakeAt)&&!FINISHED.has(task.status)?{at:task.nextWakeAt,kind:task.wakeReason?.kind||'UNKNOWN',reason:task.wakeReason?.detail||'Next scheduled wake'}:null,
     waitingFor:waitingFor(task,store,now),
+    questions:openQuestions(task).map(item=>({id:item.id,question:short(item.question,500),reason:item.reason,blocking:item.blocking,step:short(item.step,200)||null})),
     outputs:outputs(task,store),activity,
     evidence,
     narration:short(task.summary,600)||null,

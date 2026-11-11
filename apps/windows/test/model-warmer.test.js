@@ -10,7 +10,7 @@ function ollama({resident=false,loadFails=false,loadGate=null,size=19*GiB}={}){
   const calls=[];let loaded=resident;
   const fetchImpl=async(url,options={})=>{
     const path=new URL(String(url)).pathname,body=options.body?JSON.parse(options.body):null;calls.push({path,body});
-    if(path==='/api/ps')return {ok:true,json:async()=>({models:loaded?[{name:'qwen3:30b',model:'qwen3:30b',context_length:8192,size,size_vram:10*GiB}]:[]})};
+    if(path==='/api/ps')return {ok:true,json:async()=>({models:loaded?[{name:'qwen3:30b',model:'qwen3:30b',context_length:16384,size,size_vram:10*GiB}]:[]})};
     if(path==='/api/tags')return {ok:true,json:async()=>({models:[{name:'qwen3:30b',size}]})};
     if(path==='/api/generate'){if(loadGate)await loadGate;if(loadFails)return {ok:false,status:500,json:async()=>({error:'cudaMalloc failed: out of memory'})};loaded=true;return {ok:true,json:async()=>({done:true,load_duration:48e9})};}
     if(path==='/api/chat')return {ok:true,json:async()=>({message:{role:'assistant',content:'Hi.'},eval_count:2,eval_duration:1e8})};
@@ -27,12 +27,28 @@ test('simultaneous warm requests from many clients share one load',async()=>{
   assert.equal(warmer.state().state,'ready');
 });
 
+test('phone prewarms the selected 80B model instead of the default 30B',async()=>{
+  const calls=[];
+  const fetchImpl=async(url,options={})=>{
+    const route=new URL(url).pathname,body=options.body?JSON.parse(options.body):null;
+    calls.push({route,body});
+    if(route==='/api/ps')return {ok:true,json:async()=>({models:[]})};
+    if(route==='/api/tags')return {ok:true,json:async()=>({models:[{name:'junction-qwen3-next:80b-q3km',size:39*GiB}]})};
+    if(route==='/api/generate')return {ok:true,json:async()=>({load_duration:10e9})};
+    throw Error(route);
+  };
+  const agent=new LocalAgentRuntime({fetchImpl,freeMemory:()=>40*GiB});
+  assert.equal(await agent.prewarm('junction-qwen3-next:80b-q3km',{reason:'chat_open',priority:'interactive'}),true);
+  assert.deepEqual(calls.filter(call=>call.route==='/api/generate').map(call=>call.body.model),['junction-qwen3-next:80b-q3km']);
+  assert.equal(agent.modelState('junction-qwen3-next:80b-q3km').state,'ready');
+});
+
 test('a load request generates nothing: no prompt, messages, tools or format',async()=>{
   const o=ollama();const warmer=new ModelWarmer({fetchImpl:o.fetchImpl,freeMemory:()=>32*GiB,retention:()=>'30m'});
   await warmer.warm({reason:'startup'});
   const [load]=o.generate();
   assert.deepEqual(Object.keys(load.body).sort(),['keep_alive','model','options']);
-  assert.equal(load.body.keep_alive,'30m');assert.equal(load.body.options.num_ctx,8192);
+  assert.equal(load.body.keep_alive,'30m');assert.equal(load.body.options.num_ctx,16384);
 });
 
 test('an already resident model is never reloaded',async()=>{

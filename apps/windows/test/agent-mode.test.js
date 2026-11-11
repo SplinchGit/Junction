@@ -35,6 +35,36 @@ test('chat can start durable work once per owner message and read objective stat
   await assert.rejects(registry.execute('start_objective',{goal:'short'},run),/Invalid tool argument/);
   await assert.rejects(registry.execute('start_objective',{goal:'A valid long goal here',extra:'x'},run),/Invalid tool argument fields/);
 });
+test('chat can inspect a saved objective with its real criteria and pending action',async()=>{
+  const registry=new LocalAgentToolRegistry({researchCoordinator:{},objectives:{
+    create:async()=>{throw Error('unexpected create');},list:async()=>[],
+    get:async reference=>({id:'task-1',goal:'Self Improvement',successCriteria:'Measure response times',status:'WAITING_FOR_USER',model:'qwen3:30b',pendingApprovals:[{tool:'write_draft'}],reference})
+  }});
+  assert.ok(registry.definitions().some(tool=>tool.function.name==='get_objective'));
+  const result=JSON.parse((await registry.execute('get_objective',{reference:'Self Improvement'},{goal:'What is it doing?',conversationId:'chat-1',audit:{}})).content);
+  assert.equal(result.objective.successCriteria,'Measure response times');
+  assert.equal(result.objective.pendingApprovals[0].tool,'write_draft');
+  await assert.rejects(registry.execute('get_objective',{reference:''},{goal:'x',audit:{}}),/Invalid tool argument/);
+});
+
+test('chat can send a durable direction to an existing task with the original owner turn identity',async()=>{
+  let received;
+  const registry=new LocalAgentToolRegistry({objectives:{create:async()=>{},list:async()=>[],get:async()=>({}),message:async input=>{received=input;return {task:{id:'task-1',status:'ACTIVE'},kind:'note'};}}});
+  const result=JSON.parse((await registry.execute('send_objective_message',{reference:'Workshop notes',message:'Use the title Aurora and keep working.'},{goal:'Tell the workshop task to use Aurora and continue',conversationId:'ordinary-chat',runId:'owner-turn-1',audit:{}})).content);
+  assert.equal(received.reference,'Workshop notes');
+  assert.equal(received.conversationId,'ordinary-chat');
+  assert.equal(received.requestId,'chat-objective-message-owner-turn-1');
+  assert.equal(result.objectiveId,'task-1');
+});
+
+test('chat task creation accepts explicit 80B and continuous selection while retaining the existing default',async()=>{
+  const {created,adapter}=objectivesFake();
+  const registry=new LocalAgentToolRegistry({objectives:adapter});
+  await registry.execute('start_objective',{goal:'Keep preparing the workshop notes',model:'junction-qwen3-next:80b-q3km',continuous:true},{goal:'Use 80B for continuous workshop notes',conversationId:'chat',runId:'create-80b',audit:{}});
+  assert.equal(created[0].model,'junction-qwen3-next:80b-q3km');assert.equal(created[0].continuous,true);
+  await registry.execute('start_objective',{goal:'Research another workshop topic'},{goal:'Research the workshop topic',conversationId:'chat',runId:'create-default',audit:{}});
+  assert.equal(created[1].model,undefined);
+});
 
 test('without an objective store the tools are not offered',()=>{
   const registry=new LocalAgentToolRegistry({researchCoordinator:{}});
@@ -52,8 +82,9 @@ test('a chat turn where the model starts an objective executes the tool and answ
     return {ok:true,json:async()=>({message,eval_count:5,eval_duration:1e8,prompt_eval_count:10})};
   };
   const runtime=new LocalAgentRuntime({toolRegistry:new LocalAgentToolRegistry({researchCoordinator:{run:async()=>({sources:[]})},objectives:adapter}),fetchImpl});
-  const result=await runtime.run({goal:'Please keep researching Scotland Housing First for Falkirk and update me',model:'qwen3:30b',history:[],surface:'android-relay',conversationId:'conv-9',runId:'run-9'});
+  const result=await runtime.run({goal:'Please keep researching Scotland Housing First for Falkirk and update me',model:'qwen3:30b',history:[],surface:'android-relay',conversationId:'conv-9',runId:'run-9',workSnapshot:[{id:'housing-project',name:'Housing First'}]});
   assert.equal(created.length,1);assert.equal(created[0].conversationId,'conv-9');
+  assert.equal(created[0].projectId,'housing-project');
   assert.equal(created[0].mode,'ONGOING');
   assert.match(result.content,/report back/);
 });

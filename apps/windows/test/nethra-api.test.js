@@ -6,11 +6,76 @@ const {NethraApi}=require('../src/nethra-api');
 const {LocalDataStore}=require('../src/local-data');
 function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-api-'));const store=new NethraStore(dir);t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});return {store,api:new NethraApi({store,runtime:{modelCapabilities:async()=>({known:true,thinking:true})}})};}
 
+test('Android selects its notification phone and shared policy through the public API',async t=>{
+  const {store,api}=fixture(t);
+  const payload={notificationDeviceId:'phone-1',proactiveUpdates:'IMPORTANT',quietHours:{enabled:true,start:'21:30',end:'08:00'}};
+  const first=await api.dispatch('nethra.settings',payload,'phone-settings','android');
+  assert.equal(first.settings.notificationDeviceId,'phone-1');
+  const cutoff=first.settings.notificationDeviceSince;
+  assert.ok(cutoff>0);
+  const retry=await api.dispatch('nethra.settings',payload,'phone-settings','android');
+  assert.equal(retry.settings.notificationDeviceSince,cutoff);
+  const list=await api.dispatch('nethra.list',{},'settings-read','android');
+  assert.equal(list.settings.proactiveUpdates,'IMPORTANT');assert.deepEqual(list.settings.quietHours,payload.quietHours);
+  await assert.rejects(api.dispatch('nethra.settings',{notificationDeviceSince:0},'forged-cutoff','android'),/Unknown/);
+  await assert.rejects(api.dispatch('nethra.settings',{notificationDeviceId:'*'},'wildcard','android'),/notification device/);
+  await api.dispatch('nethra.settings',{notificationDeviceId:null},'disable','android');
+  assert.equal(store.settings().notificationDeviceId,null);
+});
+
+test('failed settings side effects restore notification selection and its original cutoff',async t=>{
+  const {store,api}=fixture(t);
+  store.setSettings({notificationDeviceId:'original-phone'});
+  const before=store.settings();
+  api.onSettings=async()=>{throw new Error('Startup registration failed');};
+  await assert.rejects(api.dispatch('nethra.settings',{notificationDeviceId:'new-phone',persistentStartup:false},'failed-settings','desktop'),/Startup registration failed/);
+  assert.deepEqual(store.settings(),before);
+});
+
+test('failed desktop settings cannot roll back a concurrent acknowledged Android preference',async t=>{
+  const {store,api}=fixture(t);
+  let failStartup;
+  api.onSettings=async(_settings,patch)=>{if('persistentStartup' in patch)await new Promise((_resolve,reject)=>{failStartup=reject;});};
+  const desktop=api.dispatch('nethra.settings',{persistentStartup:false},'desktop-startup','desktop');
+  const failed=assert.rejects(desktop,/Registration failed/);
+  while(!failStartup)await new Promise(resolve=>setImmediate(resolve));
+  const phone=api.dispatch('nethra.settings',{notificationDeviceId:'phone-1',proactiveUpdates:'IMPORTANT'},'phone-preference','android');
+  await new Promise(resolve=>setImmediate(resolve));
+  failStartup(new Error('Registration failed'));
+  await failed;await phone;
+  assert.equal(store.settings().persistentStartup,true);
+  assert.equal(store.settings().notificationDeviceId,'phone-1');
+  assert.equal(store.settings().proactiveUpdates,'IMPORTANT');
+});
+
 test('desktop status starts model prewarming without waiting for loading',async t=>{
   const {api}=fixture(t);let warmed=0;
   api.runtime.prewarm=()=>{warmed++;return new Promise(()=>{});};
   const result=await api.dispatch('nethra.status',{},'warm-desktop','desktop');
   assert.equal(result.model,'qwen3:30b');assert.equal(warmed,1);
+});
+test('phone warm request selects its chat model',async t=>{
+  const {api}=fixture(t),calls=[];
+  api.runtime.prewarm=(model,options)=>{calls.push({model,options});return Promise.resolve(true);};
+  api.runtime.modelState=model=>({state:'loading',model});
+  const result=await api.dispatch('nethra.warm',{reason:'chat_open',model:'junction-qwen3-next:80b-q3km'},'warm-80b','android');
+  assert.equal(result.model.model,'junction-qwen3-next:80b-q3km');
+  assert.equal(calls[0].model,'junction-qwen3-next:80b-q3km');
+  await assert.rejects(api.dispatch('nethra.warm',{model:'untrusted:model'},'bad-model','android'),/model/i);
+});
+test('phone warm-up cannot evict a different model while an objective is running',async t=>{
+  const {store,api}=fixture(t);const task=store.create({goal:'Measure response time',model:'qwen3:30b'});
+  assert.equal(store.claim('warm-test',60_000).task.id,task.id);
+  let warmed=0;api.runtime.warmerFor=()=>({warm:()=>{warmed++;return Promise.resolve();}});
+  api.runtime.modelState=model=>({state:'cold',model});
+  const result=await api.dispatch('nethra.warm',{reason:'chat_open',model:'junction-qwen3-next:80b-q3km'},'warm-other','android');
+  assert.equal(warmed,0);assert.equal(result.model.state,'deferred');assert.match(result.model.reason,/objective/i);
+});
+test('status checks do not prewarm 30B over a running 80B objective',async t=>{
+  const {store,api}=fixture(t);store.create({goal:'Measure response time',model:'junction-qwen3-next:80b-q3km'});store.claim('warm-test',60_000);
+  let warmed=0;api.runtime.prewarm=()=>{warmed++;return Promise.resolve();};
+  await api.dispatch('nethra.status',{},'status-other','desktop');
+  assert.equal(warmed,0);
 });
 test('opening an objective chat creates one durable association and retries reuse it',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-link-'));
@@ -49,6 +114,18 @@ test('opening after an interrupted JSON-first link reuses the orphan chat',async
   assert.equal(localData.conversations().length,1);
 });
 test('paired phone creates durable objectives but cannot grant itself PC read roots',async t=>{const {api,store}=fixture(t);await assert.rejects(api.dispatch('nethra.create',{goal:'Research housing',readRoots:['C:/Users']},'bad','android'),/Windows/);const {task}=await api.dispatch('nethra.create',{goal:'Research housing'},'create','android');assert.equal(store.get(task.id).goal,'Research housing');assert.deepEqual(store.get(task.id).readRoots,[]);});
+
+test('desktop can select and switch an objective model without changing its work',async t=>{
+  const {api,store}=fixture(t);
+  const {task}=await api.dispatch('nethra.create',{goal:'Revise draft',model:'junction-qwen3-next:80b-q3km'},'model-create');
+  assert.equal(task.model,'junction-qwen3-next:80b-q3km');
+  store.update(task.id,{plan:['Read draft'],contextCheckpoint:{note:'Opening needs focus'}});
+  const before=store.get(task.id);
+  const {task:switched}=await api.dispatch('nethra.configure',{id:task.id,revision:before.revision,model:'qwen3:30b'},'model-switch');
+  assert.equal(switched.model,'qwen3:30b');
+  assert.deepEqual(switched.plan,['Read draft']);
+  assert.deepEqual(switched.contextCheckpoint,{note:'Opening needs focus'});
+});
 test('replayed creates preserve a single objective and reject changed goals',async t=>{const {api,store}=fixture(t);const a=await api.dispatch('nethra.create',{goal:'Research housing'},'create');const b=await api.dispatch('nethra.create',{goal:'Research housing'},'create');assert.equal(a.task.id,b.task.id);assert.equal(store.list().length,1);await assert.rejects(api.dispatch('nethra.create',{goal:'Different goal'},'create'));});
 test('thinking preference is persisted and startup remains a Windows setting',async t=>{const {api,store}=fixture(t);await api.dispatch('nethra.settings',{thinking:true},'think','android');assert.equal(store.settings().thinking,true);await assert.rejects(api.dispatch('nethra.settings',{persistentStartup:true},'start','android'),/Windows/);await assert.rejects(api.dispatch('nethra.settings',{thinking:'yes'}),/thinking/);});
 test('30B thinking-only mode is reported honestly and cannot be disabled',async t=>{
@@ -88,9 +165,14 @@ test('reunion audit is grounded in durable events and never invokes the model',a
 test('large unicode objective lists fit the encrypted transport without losing task IDs',async()=>{
   const tasks=Array.from({length:100},(_,i)=>({id:`task-${i}`,goal:'界'.repeat(500),summary:'界'.repeat(500),status:'ACTIVE',revision:1,persistent:true}));
   const api=new NethraApi({store:{list:()=>tasks,settings:()=>({thinking:true})}});
-  const result=await api.dispatch('nethra.list',{},'list','android');
-  assert.ok(Buffer.byteLength(JSON.stringify(result))<50000);
-  assert.deepEqual(result.objectives.map(t=>t.id),tasks.map(t=>t.id));
+  const found=[];let offset=0;
+  do {
+    const result=await api.dispatch('nethra.list',{offset},`list-${offset}`,'android');
+    assert.ok(Buffer.byteLength(JSON.stringify(result))<=50000);
+    assert.ok(result.objectives.every(task=>task.goal.length>0));
+    found.push(...result.objectives.map(task=>task.id));offset=result.nextOffset;
+  } while(offset!==null);
+  assert.deepEqual(found,tasks.map(task=>task.id));
 });
 
 test('paired answer retries return the durable response before live state checks',async t=>{

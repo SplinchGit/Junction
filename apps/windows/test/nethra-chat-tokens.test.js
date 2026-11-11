@@ -15,7 +15,7 @@ test('the token line counts what Nethra actually reads, exactly as chat history 
 
 test('the line shows the measured prompt of the last reply when it was recorded',()=>{
   const messages=[{role:'user',content:'hello'},{role:'assistant',content:'hi there',telemetry:{inputTokens:2411}}];
-  assert.equal(chatTokenLine(messages),"≈5 tokens in this chat · Nethra reads all of it · last reply's prompt 2,411 of 8,192");
+  assert.equal(chatTokenLine(messages),"≈5 tokens in this chat · Nethra reads all of it · last reply's prompt 2,411 of 16,384");
   assert.match(chatTokenLine(Array.from({length:20},(_,i)=>({role:i%2?'assistant':'user',content:'y'.repeat(900)}))),/Nethra reads the latest ≈1\.0k \(4 of 20 messages\)/);
   assert.equal(chatTokenLine([]),'');
 });

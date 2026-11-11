@@ -1,0 +1,33 @@
+'use strict';
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {NethraStore}=require('../src/nethra-store');
+const {LocalDataStore}=require('../src/local-data');
+const {postProgress,postTaskReports}=require('../src/nethra-conversation-report');
+test('routine tool results and completed steps stay in Tasks',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-report-')),store=new NethraStore(dir),local=new LocalDataStore(path.join(dir,'local'));
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});local.ensureConversation('chat');
+ const task=store.create({goal:'Research funding',conversationId:'chat',continuous:true});
+ const evidence=[{tool:'performance_report',result:{objective:{sampleCount:2}}}];
+ store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,evidence},'nethra_tool_result');
+ assert.equal(postProgress(store.get(task.id),store,local),false);
+ store.update(task.id,{completedSteps:['Compare funding criteria'],evidence:[...evidence,{tool:'web_search',result:{title:'Verified funding criteria'}}]},'nethra_tool_result');
+ assert.equal(postProgress(store.get(task.id),store,local),false);
+ assert.equal(local.conversation('chat').messages.length,0);
+ store.update(task.id,{evidence:[...evidence,{tool:'read_file',result:{content:'more context'}}]},'nethra_tool_result');
+ assert.equal(postProgress(store.get(task.id),store,local),false);
+});
+test('the host reporting hook posts a second completed episode after owner continuation',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-episodes-')),store=new NethraStore(dir),local=new LocalDataStore(path.join(dir,'local'));
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});local.ensureConversation('chat');
+ store.setSettings({quietHours:{enabled:false,start:'22:00',end:'07:00'}});
+ let task=store.create({goal:'Check funding',conversationId:'chat'});
+ task=store.save({...task,status:'COMPLETED',summary:'Checked the official sources.'},'EXECUTED',{status:'COMPLETED'});
+ assert.equal(postTaskReports(task,store,local),true);
+ assert.equal(postTaskReports(task,store,local),false);
+ task=store.edit(task.id,{},task.revision,'continue',{execution:'continue',instruction:'Check again'});
+ task=store.save({...task,status:'COMPLETED',summary:'Checked the official sources.'},'EXECUTED',{status:'COMPLETED'});
+ assert.equal(postTaskReports(task,store,local),true);
+ assert.equal(local.conversation('chat').messages.length,2);
+ assert.equal(store.get(task.id).reportPending,undefined);
+});

@@ -188,10 +188,10 @@ test("a progress post never presents the owner's own message as Nethra's note",a
   f.store.answer(task.id,"That's fine. Show token counts for chats.",f.store.get(task.id).revision,'ans-1');
   assert.equal(f.store.get(task.id).summary,'','the answer is an owner input, not the summary');
   claim=f.store.claim('a');
-  f.store.update(task.id,{evidence:[{tool:'performance_report',result:{objective:{sampleCount:9}}}]},'nethra_tool_result',claim.token);
+  f.store.update(task.id,{completedSteps:['Measure current runtime'],evidence:[{tool:'performance_report',result:{objective:{sampleCount:9}}}]},'nethra_tool_result',claim.token);
   f.store.release(task.id,claim.token);
   // Older records may still hold the owner's words as the summary.
   f.store.update(task.id,{status:'SLEEPING',lastCycleProgressed:true,summary:"That's fine. Show token counts for chats.",nextWakeAt:f.now()+20_000,wakeReason:{kind:'CONTINUE',detail:'Continuous work',at:f.now()+20_000}},'EXECUTED');
-  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),true);
-  assert.doesNotMatch(f.localData.conversation(f.store.get(task.id).conversationId).messages.at(-1).content,/My note/);
+  assert.equal(postProgress(f.store.get(task.id),f.store,f.localData,{settings}),false);
+  assert.equal(f.localData.conversation(f.store.get(task.id).conversationId).messages.length,0);
 });

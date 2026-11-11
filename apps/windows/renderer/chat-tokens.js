@@ -3,7 +3,7 @@
 // reply's prompt size, when recorded, is Ollama's own measured count.
 (function (root) {
   // Mirrors canonicalHistory in src/assistant-context.js; a test keeps the two identical.
-  const HISTORY_CHARS = 3500, HISTORY_MESSAGES = 12, MESSAGE_CHARS = 2000, CONTEXT_TOKENS = 8192;
+  const HISTORY_CHARS = 3500, HISTORY_MESSAGES = 12, MESSAGE_CHARS = 2000, CONTEXT_TOKENS = 16384;
   const estimate = text => Math.ceil(String(text || "").length / 3.5);
 
   function chatTokenSummary(messages) {

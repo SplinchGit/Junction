@@ -1,7 +1,7 @@
 "use strict";
 
 const providers = [
-  {id:"local",name:"Qwen on this PC",group:"Local",source:"Qwen · local",credentialId:null,tag:"This PC",detail:"Qwen3 30B runs on your paired PC with native tools and always-on thinking.",defaultModel:"qwen3:30b",models:[{id:"qwen3:30b",name:"Qwen3 30B",tier:"Local agent"}]},
+  {id:"local",name:"Qwen on this PC",group:"Local",source:"Qwen · local",credentialId:null,tag:"This PC",detail:"Choose an Ollama model on your paired PC. Nethra tasks can use either installed model.",defaultModel:"qwen3:30b",models:[{id:"qwen3:30b",name:"Qwen3 30B",tier:"Local agent"},{id:"junction-qwen3-next:80b-q3km",name:"Qwen3-Next 80B A3B · Q3_K_M",tier:"Local agent",thinking:false,detail:"3-bit Instruct quant on your paired PC. Uses a corrected local chat template and substantial system RAM."}]},
   {id:"codex",name:"Codex on this PC",group:"Local",source:"OpenAI · ChatGPT subscription",credentialId:null,tag:"ChatGPT subscription",detail:"Uses the local Codex CLI signed into ChatGPT. No API key is stored.",defaultModel:"gpt-5.6-luna",models:[{id:"gpt-5.6-luna",name:"GPT-5.6 Luna",tier:"Fast"},{id:"gpt-5.6-terra",name:"GPT-5.6 Terra",tier:"Balanced"},{id:"gpt-5.6-sol",name:"GPT-5.6 Sol",tier:"Most capable"}]},
   {id:"anthropic",name:"Anthropic",group:"First Party",source:"Anthropic · first party",credentialId:"anthropic",tag:"API key",detail:"Direct Anthropic API using the key encrypted on this device.",defaultModel:"claude-sonnet-5",models:[{id:"claude-haiku-4-5",name:"Claude Haiku 4.5",tier:"$ Cheap",input:1,output:5},{id:"claude-sonnet-5",name:"Claude Sonnet 5",tier:"$$ Balanced",input:3,output:15},{id:"claude-opus-4-8",name:"Claude Opus 4.8",tier:"$$$ Most capable",input:5,output:25}]},
   {id:"openai",name:"OpenAI",group:"First Party",source:"OpenAI · first party",credentialId:"openai",tag:"API key",detail:"Direct OpenAI API using the key encrypted on this device.",defaultModel:"gpt-5.6-luna",models:[{id:"gpt-5.6-luna",name:"GPT-5.6 Luna",tier:"$ Efficient",input:1,output:6},{id:"gpt-5.6-terra",name:"GPT-5.6 Terra",tier:"$$ Balanced",input:2.5,output:15},{id:"gpt-5.6-sol",name:"GPT-5.6 Sol",tier:"$$$ Frontier",input:5,output:30}]},
@@ -12,7 +12,7 @@ const providers = [
 
 function estimate(providerId,modelId,inputTokens=0,outputTokens=0){const model=providers.find(p=>p.id===providerId)?.models.find(m=>m.id===modelId);const input=model?.input??1,output=model?.output??3;return inputTokens*input/1e6+outputTokens*output/1e6}
 function providerById(providerId){return providers.find(provider=>provider.id===providerId)}
-function normalizeModel(providerId,modelId){const provider=providerById(providerId);if(!provider||providerId==="custom")return String(modelId||"");return provider.models.some(model=>model.id===modelId)?modelId:provider.defaultModel}
+function normalizeModel(providerId,modelId){const provider=providerById(providerId);if(!provider||providerId==="custom")return String(modelId||"");if(providerId==="local"&&modelId==="hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M")return "junction-qwen3-next:80b-q3km";return provider.models.some(model=>model.id===modelId)?modelId:provider.defaultModel}
 function credentialProviderId(providerId){return providerById(providerId)?.credentialId??null}
 function isSupportedLocalModel(model){return providerById("local").models.some(item=>item.id===model)}
 function normalizeLocalModel(model){return normalizeModel("local",model)}
