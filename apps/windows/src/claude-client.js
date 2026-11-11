@@ -42,6 +42,9 @@ function claudeWindows(info) {
     if (!Number.isFinite(value?.utilization) || !Number.isFinite(value?.resetsAt)) continue;
     windows.push({ name: name.slice(0, 30), usedPercent: Math.round(Math.min(1, Math.max(0, value.utilization)) * 1000) / 10, resetsAt: value.resetsAt * 1000 });
   }
+  if (!windows.length && typeof info?.rateLimitType === "string" && Number.isFinite(info.utilization) && Number.isFinite(info.resetsAt)) {
+    windows.push({name:info.rateLimitType.slice(0,30),usedPercent:Math.round(Math.min(1,Math.max(0,info.utilization))*1000)/10,resetsAt:info.resetsAt*1000});
+  }
   return { windows, limitReached: info?.status === "rejected", limitResetsAt: Number.isFinite(info?.resetsAt) ? info.resetsAt * 1000 : null };
 }
 
@@ -62,11 +65,13 @@ function parseClaudeStream(output) {
 const ADVISOR_SYSTEM = "You are a technical advisor to Nethra, a local agent working on an owner-approved objective inside the Junction app. You have no tools and cannot see files, run code or browse. Give concise, concrete, verifiable advice in at most 250 words. Say what should be measured to confirm it. Never claim to have done anything.";
 
 /** One tool-less, settings-less, non-persisted Claude turn. The prompt travels on stdin, never a shell. */
-function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", signal, onRateLimit = () => {}, launch = spawn, executable = resolveClaudeExecutable() }) {
+function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", systemPrompt = ADVISOR_SYSTEM, subscriptionOnly = false, signal, onRateLimit = () => {}, launch = spawn, executable = resolveClaudeExecutable() }) {
   signal?.throwIfAborted();
-  const args = ["-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--model", model, "--system-prompt", ADVISOR_SYSTEM];
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--model", model, "--system-prompt", systemPrompt];
   return new Promise((resolve, reject) => {
-    const child = launch(executable, args, { cwd: workingDirectory || os.tmpdir(), windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    const env = subscriptionOnly ? Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_(OAUTH_TOKEN|USE_BEDROCK|USE_VERTEX|USE_FOUNDRY))$/i.test(key))) : process.env;
+    const child = launch(executable, args, { cwd: workingDirectory || os.tmpdir(), windowsHide: true, shell: false, env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "", stderr = "", settled = false;
     const finish = (error, value) => { if (settled) return; settled = true; clearTimeout(timeout); signal?.removeEventListener("abort", abort); error ? reject(error) : resolve(value); };
     const abort = () => { child.kill(); finish(new Error("Claude consultation was interrupted.")); };

@@ -182,11 +182,30 @@ function queueProjectMilestoneNotifications(store,queue,{date=new Date(),tasks=s
   });
 }
 
-function notificationDeliveryPolicy(command,store,{date=new Date()}={}){
+function codeWorkEvent(task,project){
+  const ready=project.status==='COMPLETED'&&project.verifiedSha&&!project.appliedAt;
+  const blocked=project.status==='BLOCKED';
+  if(project.sourceObjectiveId!==task.id||!project.autoHandoff||(!ready&&!blocked))return null;
+  const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts.at(-1);
+  const version=ready?project.verifiedSha:attempt?.id;
+  if(!version)return null;
+  return {id:`nethra-code-work-${task.id}-${project.id}-${version}`,body:ready?'A verified code candidate is ready for review in Work Activity.':'Coding work needs your attention. Open Work Activity to see what stopped it.'};
+}
+function queueCodeWorkNotification(task,project,store,queue,{date=new Date()}={}){
+  const settings=store.settings(),policy=deliveryPolicy(settings,date),event=codeWorkEvent(task,project);
+  if(!event||!policy.outcomes||!settings.notificationDeviceId||!projectAllowsNotification(settings,task)||project.updatedAt<(settings.notificationDeviceSince||0))return null;
+  return queue.enqueueNotification({requestId:event.id,taskId:task.id,deviceId:settings.notificationDeviceId,
+    args:{eventId:event.id,taskId:task.id,title:'Nethra — development work',body:event.body}});
+}
+function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>[]}={}){
   const settings=store.settings(),policy=deliveryPolicy(settings,date);
   if(!policy.outcomes||settings.notificationDeviceId!==command.deviceId||store.deletion(command.taskId))return 'cancel';
   const task=store.get(command.taskId);
   const eventId=command.notificationSourceEventId||command.args.eventId;
+  if(eventId.startsWith(`nethra-code-work-${task.id}-`)){
+    if(!projectAllowsNotification(settings,task)||!projects().some(project=>project.updatedAt>=(settings.notificationDeviceSince||0)&&codeWorkEvent(task,project)?.id===eventId))return 'cancel';
+    return policy.quiet?'hold':'deliver';
+  }
   if(command.args.voiceInvite){
     const question=invitationQuestion(task,store,settings);
     if(command.expiresAt<=store.now()||!projectAllowsNotification(settings,task)||!question||question.id!==command.args.questionId||eventId!==invitationEventId(task.id,question.id))return 'cancel';
@@ -220,4 +239,4 @@ function notificationDeliveryPolicy(command,store,{date=new Date()}={}){
   return policy.quiet?'hold':'deliver';
 }
 
-module.exports={invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,deliveryPolicy,outcomeText};
+module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,deliveryPolicy,outcomeText};

@@ -68,7 +68,7 @@ class CodexAppServer {
     return this.request("account/rateLimits/read");
   }
 
-  async run({ threadId, cwd, prompt, model, onProgress = () => {}, onTurnStarted = () => {}, signal }) {
+  async run({ threadId, cwd, prompt, model, onProgress = () => {}, onTurnStarted = () => {}, handoffAtCapacity, signal }) {
     if (signal?.aborted) throw new Error("Paused");
     await this.start();
     if (signal?.aborted) throw new Error("Paused");
@@ -78,7 +78,13 @@ class CodexAppServer {
     if (threadId) await this.request("thread/resume", { threadId });
     else threadId = (await this.request("thread/start", { cwd, ...(model ? {model} : {}), approvalPolicy: "never", sandbox: "workspace-write" })).thread.id;
     onTurnStarted({ threadId, dispatchPending: true });
-    let turnId = null, finalText = "";
+    let turnId = null, finalText = "", handoffRetryAt = null;
+    const requestHandoff = () => {
+      if (!turnId || !handoffRetryAt || handoffSent) return;
+      handoffSent = true;
+      this.request("turn/steer", {threadId, expectedTurnId:turnId, input:[{type:"text",text:"Capacity is low. Stop implementation at the next safe boundary. Leave the candidate in this worktree and report changes, checks, unresolved risks, and the next concrete step for the incoming engineer."}]}).catch(()=>{});
+    };
+    let handoffSent = false;
     let off, abort, timer;
     const completed = new Promise((resolve, reject) => {
       abort = () => { if(turnId)this.request("turn/interrupt",{threadId,turnId}).catch(()=>{}); reject(new Error("Paused")); };
@@ -86,6 +92,11 @@ class CodexAppServer {
       timer=setTimeout(()=>{ abort(); },30*60*1000);
       off = this.onEvent(message => {
         if(message.method === "transport/closed") { reject(message.error); return; }
+        if(message.method === "account/rateLimits/updated" && handoffAtCapacity) {
+          handoffRetryAt ||= handoffAtCapacity(message.params);
+          requestHandoff();
+          return;
+        }
         if(message.params?.threadId !== threadId) return;
         if(turnId && message.params?.turnId && message.params.turnId !== turnId) return;
         const item = message.params?.item;
@@ -95,7 +106,7 @@ class CodexAppServer {
         if (message.method === "turn/completed" && (!turnId || message.params?.turn?.id === turnId)) {
           off();
           const turn = message.params?.turn;
-          turn?.status === "completed" ? resolve({ threadId, turnId: turn.id, text: finalText }) : reject(Object.assign(new Error(turn?.error?.message || `Codex turn ${turn?.status || "failed"}.`), {data:turn?.error}));
+          turn?.status === "completed" ? resolve({ threadId, turnId: turn.id, text: finalText, handoffRetryAt }) : reject(Object.assign(new Error(turn?.error?.message || `Codex turn ${turn?.status || "failed"}.`), {data:turn?.error}));
         }
       });
     });
@@ -107,6 +118,7 @@ class CodexAppServer {
       approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }, ...(model ? {model} : {})
     });
     turnId = started.turn.id;
+    requestHandoff();
     onTurnStarted({ threadId, turnId, dispatchPending: false });
     if(signal?.aborted) abort();
     return await completed;

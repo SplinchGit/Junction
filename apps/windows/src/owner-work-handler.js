@@ -15,7 +15,7 @@ async function handleOwnerWorkInstruction({foreman,roots=[],content,conversation
  }
  if(instruction.action==="submit")return report(await foreman.submit({projectId:instruction.projectId,repoPath:instruction.scopePath,name:instruction.name,task:instruction.task,objective:instruction.task,conversationId}));
  const project=foreman.get(instruction.projectId);
- if(instruction.action==="resume"&&["RUNNING","WAITING_CODEX","VERIFYING","COMPLETED"].includes(project.status))return report(project);
+ if(instruction.action==="resume"&&["RUNNING","WAITING_CODEX", "WAITING_CAPACITY","VERIFYING","COMPLETED"].includes(project.status))return report(project);
  return report(await foreman.control(project.id,instruction.action,project.revision,crypto.randomUUID()));
 }
 module.exports = {handleOwnerWorkInstruction};

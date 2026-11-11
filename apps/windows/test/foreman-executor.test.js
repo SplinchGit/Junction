@@ -74,3 +74,45 @@ test('a reviewed candidate from a scoped folder is applied only by the owner act
  assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'after\n');
  assert.match(execFileSync('git',['diff','--cached','--name-only'],{cwd:root,encoding:'utf8'}),/answer\.js/);
 });
+
+test('95 percent requests a handoff and Claude verifies the same isolated candidate',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-handoff-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const repo=path.join(root,'source');
+ fs.mkdirSync(repo);
+ fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');
+ const future=Math.floor(Date.now()/1000)+1800;
+ let codexCalls=0,claudeCalls=0;
+ const server={
+  readRateLimits:async()=>({rateLimits:{primary:{usedPercent:94,resetsAt:future}}}),
+  request:async()=>({account:{type:'chatgpt'}}),
+  run:async({cwd,handoffAtCapacity})=>{
+   codexCalls++;
+   assert.equal(handoffAtCapacity({rateLimits:{primary:{usedPercent:94,resetsAt:future}}}),null);
+   fs.writeFileSync(path.join(cwd,'answer.js'),'module.exports = 2;\n');
+   return {text:'Implementation started; fix the expected result next',handoffRetryAt:handoffAtCapacity({rateLimits:{primary:{usedPercent:95,resetsAt:future}}})};
+  },stop:async()=>{}
+ };
+ const limits={snapshot:async()=>({checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:20,resetsAt:future*1000}]}),recordClaude(){}};
+ const executor=new ForemanExecutor(path.join(root,'state'),{server,advisorLimits:limits,claudeStatus:async()=>({subscription:true}),runClaude:async({prompt,subscriptionOnly})=>{
+   claudeCalls++;
+   assert.equal(subscriptionOnly,true);
+   assert.match(prompt,/fix the expected result next/);
+   assert.match(prompt,/module.exports = 2/);
+   return {content:'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 2;\n+module.exports = 3;\n'};
+ }});
+ executor.command=async(cwd)=>{assert.equal(fs.readFileSync(path.join(cwd,'answer.js'),'utf8'),'module.exports = 3;\n');return {exitCode:0,stdout:'ok',stderr:''};};
+ const p={id:'p',objective:'Set answer',autoHandoff:true,...await executor.inspect({repoPath:repo,verification:[{cwd:'.',command:['node','--test']}]})};
+ const task={id:'task',kind:'codex',title:'Set answer',acceptance:'Answer is three',files:[],attempts:[{}]};
+ const options={signal:new AbortController().signal,checkpoint:fields=>Object.assign(task.attempts.at(-1),fields)};
+ await assert.rejects(executor.run(p,task,options),/handoff is ready/i);
+ assert.equal(task.attempts[0].provider,'codex');
+ assert.ok(task.attempts[0].engineeringHandoff.sourceHash);
+ task.attempts.push({});
+ const result=await executor.run(p,task,options);
+ assert.equal(task.attempts[1].provider,'claude');
+ assert.deepEqual([codexCalls,claudeCalls],[1,1]);
+ assert.equal(result.tests[0].exitCode,0);
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
+ await assert.rejects(executor.applyClaudePatch(result.worktree,'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 3;\n+module.exports = 4;\n',{}),/file scope/);
+});

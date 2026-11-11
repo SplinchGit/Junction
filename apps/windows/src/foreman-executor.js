@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {execFile}=require('node:child_process');const {promisify}=require('node:util');
 const {CodexAppServer}=require('./codex-app-server');
+const {getClaudeStatus,sendClaudeConsult}=require('./claude-client');
 const exec=promisify(execFile);
 const forbidden=/(^|[\\/])(\.git|\.codex|\.env(?:\..*)?|credentials?|secrets?)([\\/]|$)/i;
 function relative(value){return typeof value==='string'&&value.length<500&&!path.isAbsolute(value)&&!value.split(/[\\/]/).includes('..')&&!value.includes(':');}
@@ -18,20 +19,25 @@ function detectedVerification(root){
 }
 function retryDeadline(value,now=Date.now()){
  const groups=value?.rateLimitsByLimitId?Object.values(value.rateLimitsByLimitId):value?.rateLimits?[value.rateLimits]:[];
- if(!groups.length)return now+300000;
+ if(!groups.some(g=>g.primary||g.secondary||g.rateLimitReachedType))return now+300000;
  let unknown=false;const deadlines=[];
- for(const g of groups){let reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean))if(Number(w.usedPercent)>=95||reached){reached=true;if(Number.isFinite(w.resetsAt)&&w.resetsAt*1000>now)deadlines.push(w.resetsAt*1000+60000);else unknown=true;}if(reached&&!g.primary&&!g.secondary)unknown=true;}
+ for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean))if(Number(w.usedPercent)>=95||reached){if(Number.isFinite(w.resetsAt)&&w.resetsAt*1000>now)deadlines.push(w.resetsAt*1000+60000);else unknown=true;}if(reached&&!g.primary&&!g.secondary)unknown=true;}
  return deadlines.length?Math.max(...deadlines,unknown?now+300000:0):unknown?now+300000:null;
 }
-function engineeringPacket(p,t){return [
+function protectedVerification(p,cwd,checks){
+ const verificationPaths=checks.flatMap(check=>check.command.filter(arg=>!arg.startsWith('-')).map(arg=>path.relative(cwd,path.resolve(cwd,check.cwd,arg.replace(/^res:\/\//,''))).replaceAll('\\','/')));
+ const declared=p.verificationProtected||[];const explicitlyProtected=f=>declared.some(item=>f===item||f.startsWith(`${item}/`));
+ return f=>explicitlyProtected(f)||verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f);
+}
+function engineeringPacket(p,t,{patchOnly=false}={}){return [
  `Objective (owner approved): ${p.objective}\nJames has explicitly started this scoped implementation task and approved ordinary reversible implementation and testing. Execute it now. Do not ask for another design/process confirmation or stop at a plan; report only genuinely missing product decisions or external authority.`, `Architecture: ${p.handoff||'Inspect only the registered project. Preserve working systems.'}\nDecisions: ${JSON.stringify(p.decisions||[])}`,
  `Exact task: ${t.title}`,`Relevant files: ${JSON.stringify(t.files||[])}; work only within the supplied checkout. Baseline: ${p.verifiedSha||p.baseSha}`,
  'Constraints: small reversible changes; no network, credentials, system changes, other repositories, push, merge, or weakened tests. Never change .git, .codex, hooks, or security controls. Do not run dependency install scripts. Do not commit: the foreman verifies and commits. If authority or a product decision is missing, finish with JUNCTION_DECISION_REQUIRED: followed by the question.',
  `Previous attempts: ${JSON.stringify(t.attempts.slice(-3)).slice(-10000)}`,`Build/test failures: ${t.attempts.filter(a=>a.error).map(a=>a.error).slice(-3).join('\n')||'None recorded'}`,
- `Acceptance criteria: ${t.acceptance}`,`Requested output: implement this one task, then a concise summary of changes and remaining risks. Verification commands are fixed by the owner: ${JSON.stringify(p.verification)}`
+ `Acceptance criteria: ${t.acceptance}`,patchOnly?'Requested output: return the raw unified Git diff, starting with diff --git. Foreman runs verification.':`Requested output: implement this one task, then a concise summary of changes and remaining risks. Verification commands are fixed by the owner: ${JSON.stringify(p.verification)}`
  ].join('\n\n');}
 class ForemanExecutor{
- constructor(directory,{server,runGit}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});this.runGit=runGit;}
+ constructor(directory,{server,runGit,advisorLimits,runClaude=sendClaudeConsult,claudeStatus=getClaudeStatus}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});Object.assign(this,{runGit,advisorLimits,runClaude,claudeStatus});}
  async git(cwd,args){if(this.runGit)return this.runGit(cwd,args);const r=await exec('git',['-c','core.hooksPath=NUL','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','protocol.file.allow=never','-C',cwd,...args],{windowsHide:true,shell:false,timeout:30000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}});return r.stdout;}
  async inspect(input){
   let requested=fs.realpathSync(input.repoPath),scopeFile=null;if(fs.statSync(requested).isFile()){scopeFile=path.basename(requested);requested=path.dirname(requested);}if(!fs.statSync(requested).isDirectory())throw new Error('Work scope must be a file or folder');
@@ -90,18 +96,83 @@ class ForemanExecutor{
   if(!hasBaseline){
    if(p.sourceHash&&await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sourceHash)throw new Error('Project changed since this work was requested; send the instruction again to use its current state');
    // Fresh independent repository: source hooks/config and its working index are never copied.
-   fs.mkdirSync(workspace,{recursive:true});await this.git(workspace,['init','-b','junction/verified']);
+   fs.mkdirSync(workspace,{recursive:true});await this.git(workspace,['init','--initial-branch=main']);
    const names=await this.names(p.repoPath,p.scopeKind);
    let size=0;
    for(const name of new Set(names)){if(signal.aborted)throw new Error('Paused');if(!relative(name)||forbidden.test(name))continue;const source=path.join(p.repoPath,name);if(!fs.existsSync(source))continue;const stat=fs.lstatSync(source);if(stat.isSymbolicLink()||!stat.isFile())throw new Error('Project contains unsupported symlink or special file');const real=fs.realpathSync(source);if(!real.startsWith(fs.realpathSync(p.repoPath)+path.sep))throw new Error('Project path escapes repository');size+=stat.size;if(stat.size>32*1024*1024||size>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');const target=path.join(workspace,name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target);}
-   await this.git(workspace,['add','--all']);await this.git(workspace,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','--allow-empty','-m','Owner project working-state checkpoint']);
+   await this.git(workspace,['add','--all']);
+   const tree=(await this.git(workspace,['write-tree'])).trim();
+   const baseline=(await this.git(workspace,['-c','user.name=Junction','-c','user.email=junction@localhost','commit-tree',tree,'-m','Owner project working-state checkpoint'])).trim();
+   await this.git(workspace,['update-ref','refs/tags/junction/verified',baseline]);
+   await this.git(workspace,['switch','--detach',baseline]);
   }
-  const branch=`junction/task-${task.id}`;
-  const branches=await this.git(workspace,['branch','--list',branch]);
-  if(!branches.trim())await this.git(workspace,['switch','-c',branch]);
-  else await this.git(workspace,['switch',branch]);
-  checkpoint({worktree:workspace,branch,baselineSha:(await this.git(workspace,['rev-parse','HEAD'])).trim(),summary:'Isolated project checkpoint ready'});
+  const activeBranch=(await this.git(workspace,['branch','--show-current'])).trim();
+  if(activeBranch)await this.git(workspace,['switch','--detach']);
+  checkpoint({worktree:workspace,branch:null,baselineSha:(await this.git(workspace,['rev-parse','HEAD'])).trim(),summary:'Isolated project checkpoint ready'});
   return workspace;
+ }
+ async handoff(cwd,p,t,summary){
+  const base=p.verifiedSha||'junction/verified';
+  const changed=(await this.git(cwd,['diff','--name-only',base])).trim().split(/\r?\n/).filter(Boolean);
+  const untracked=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).trim().split(/\r?\n/).filter(Boolean);
+  if([...changed,...untracked].some(file=>!relative(file)||forbidden.test(file)))throw new Error('Handoff contains a protected path');
+  return {base,head:(await this.git(cwd,['rev-parse','HEAD'])).trim(),sourceHash:await this.sourceHash(cwd,true),
+    changed,untracked,summary:String(summary).slice(0,2000),verification:'Pending on the candidate'};
+ }
+ async claudeSources(cwd,t,handoff,protectedPath){
+  const files=[...new Set([...(t.files||[]),...handoff.changed,...handoff.untracked])];
+  const sources=Object.create(null);let bytes=0;
+  for(const name of files){
+   if(!relative(name)||forbidden.test(name)||protectedPath(name)||/(^|\/)(tests?|__tests__|\.github)\/|(^|\/)(package\.json|[^/]*lock[^/]*|[^/]*config[^/]*|AGENTS\.md)$/i.test(name))continue;
+   const file=path.join(cwd,name);
+   if(!fs.existsSync(file))continue;
+   const stat=fs.lstatSync(file);
+   if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(file).startsWith(cwd+path.sep)||stat.size>48000||bytes+stat.size>96000)continue;
+   const buffer=fs.readFileSync(file);if(buffer.includes(0))continue;
+   sources[name]=buffer.toString('utf8');bytes+=stat.size;
+  }
+  return sources;
+ }
+ async applyClaudePatch(cwd,patch,sources,signal){
+  const output=patch.trim();
+  const fenced=/^```(?:diff|patch)?\r?\n([\s\S]*?)\r?\n```$/i.exec(output);
+  const clean=(fenced?.[1]||output).trimEnd()+'\n';
+  if(!clean.startsWith('diff --git ')||Buffer.byteLength(clean)>96000||/^(?:old mode|new mode|new file mode|deleted file mode|rename |copy |GIT binary patch)/m.test(clean))throw new Error('Claude did not return a scoped textual patch');
+  const directory=fs.mkdtempSync(path.join(this.directory,'claude-patch-'));
+  const file=path.join(directory,'candidate.diff');
+  try{
+   fs.writeFileSync(file,clean,{flag:'wx'});
+   const stats=(await this.git(cwd,['apply','--numstat','-z','--',file])).split('\0').filter(Boolean);
+   if(!stats.length||stats.some(line=>{const match=/^\d+\t\d+\t([^\r\n\t]+)$/.exec(line);return !match||!Object.hasOwn(sources,match[1]);}))throw new Error('Claude patch exceeds the handoff file scope');
+   await this.git(cwd,['apply','--check','--',file]);
+   signal?.throwIfAborted();
+   await this.git(cwd,['apply','--',file]);
+  }finally{fs.unlinkSync(file);fs.rmdirSync(directory);}
+ }
+ async claudeCapacity({probe=false,signal}={}){
+  const snap=await this.advisorLimits?.snapshot('claude');
+  const now=Date.now();
+  const windows=(snap?.windows||[]).filter(window=>window.resetsAt>now);
+  const blocking=windows.filter(window=>window.usedPercent>=95);
+  if(snap?.limitReached&&snap.limitResetsAt>now)blocking.push({resetsAt:snap.limitResetsAt});
+  if(blocking.length)return {ready:false,retryAt:Math.max(...blocking.map(window=>window.resetsAt))+60000};
+  const ready=Boolean(snap&&!snap.limitReached&&now-snap.checkedAt<=300000&&windows.some(window=>/five.hour|5h|300_minutes/i.test(window.name)));
+  if(ready||!probe||!this.advisorLimits)return {ready};
+  const nextProbe=(this.lastClaudeProbeAt||0)+3600000;
+  if(nextProbe>now)return {ready:false,retryAt:nextProbe};
+  this.lastClaudeProbeAt=now;
+  signal?.throwIfAborted();
+  if(!(await this.claudeStatus()).subscription)return {ready:false,retryAt:now+3600000};
+  signal?.throwIfAborted();
+  try{
+   await this.runClaude({prompt:'Reply with READY only.',subscriptionOnly:true,signal,
+     onRateLimit:snapshot=>this.advisorLimits.recordClaude(snapshot)});
+  }catch(error){
+   signal?.throwIfAborted();
+   if(!error.rateLimit)return {ready:false,retryAt:now+3600000};
+  }
+  const confirmed=await this.claudeCapacity();
+  return confirmed.ready?confirmed:{ready:false,retryAt:confirmed.retryAt||now+3600000};
  }
  async run(p,t,{signal,checkpoint}){
   let stopping;const interrupt=()=>{stopping=this.server.stop();};signal.addEventListener('abort',interrupt,{once:true});
@@ -113,23 +184,73 @@ class ForemanExecutor{
   if(signal.aborted)throw new Error('Paused');
   try{
    if(t.kind!=='verify'){
-    let capacity;try{capacity=retryDeadline(await this.server.readRateLimits());}catch{capacity=Date.now()+300000;}
+    let capacity,codexSnapshot;
+    try{codexSnapshot=await this.server.readRateLimits();capacity=retryDeadline(codexSnapshot);}catch{capacity=Date.now()+300000;}
+    if(p.autoHandoff){
+     const groups=codexSnapshot?.rateLimitsByLimitId?Object.values(codexSnapshot.rateLimitsByLimitId):[codexSnapshot?.rateLimits];
+     const windows=groups.flatMap(group=>[group?.primary,group?.secondary]).filter(w=>Number.isFinite(w?.usedPercent)&&Number.isFinite(w?.resetsAt)).slice(0,4).map(w=>({usedPercent:w.usedPercent,resetsAt:w.resetsAt*1000,minutes:w.windowDurationMins}));
+     const claude=await this.advisorLimits?.snapshot('claude');
+     checkpoint({capacity:{codex:{checkedAt:codexSnapshot?Date.now():null,windows},claude:{checkedAt:claude?.checkedAt||null,windows:(claude?.windows||[]).slice(0,4)}}});
+    }
     if(signal.aborted)throw new Error('Paused');
-    if(capacity)throw Object.assign(new Error('Waiting for confirmed Codex capacity'),{retryAt:capacity});
+    const previousHandoff=t.attempts.slice(0,-1).reverse().find(a=>a.engineeringHandoff?.codexRetryAt)?.engineeringHandoff;
+    if(p.autoHandoff&&previousHandoff?.codexRetryAt>Date.now())capacity=Math.max(capacity||0,previousHandoff.codexRetryAt);
+    if(capacity&&!p.autoHandoff)throw Object.assign(new Error('Waiting for confirmed Codex capacity'),{retryAt:capacity});
     const previous=t.attempts.slice(0,-1).reverse().find(a=>a.threadId);
     if(previous?.threadId){const state=await this.server.request('thread/read',{threadId:previous.threadId,includeTurns:true});const active=state.thread?.turns?.some(x=>x.status==='inProgress');if(active)throw new Error('Previous Codex turn is still active; reconcile before resuming');}
-    const result=await this.server.run({cwd,prompt:engineeringPacket(p,t),signal,onTurnStarted:ids=>checkpoint(ids)});
-    checkpoint({summary:result.text.slice(-2000)});
-    if(result.text.includes('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.text.slice(result.text.indexOf('JUNCTION_DECISION_REQUIRED:')).slice(0,2000));
+    if(capacity){
+     const handoff=await this.handoff(cwd,p,t,previousHandoff?.summary||'Codex is waiting for capacity');
+     if(previousHandoff&&previousHandoff.sourceHash!==handoff.sourceHash)throw new Error('Candidate differs from the saved Codex handoff; inspect before resuming');
+     const protectedPath=protectedVerification(p,cwd,checks);
+     if([...handoff.changed,...handoff.untracked].some(protectedPath))throw new Error('Owner review required: handoff changed a verification or dependency definition');
+     const sources=await this.claudeSources(cwd,p.scopeFile?{files:[p.scopeFile]}:t,p.scopeFile?{changed:[],untracked:[]}:handoff,protectedPath);
+     const claude=await this.claudeCapacity({probe:Object.keys(sources).length>0,signal});
+     if(!claude.ready||!Object.keys(sources).length){
+      const retryAt=Math.min(capacity,claude.retryAt||Date.now()+300000);
+      const detail=!Object.keys(sources).length?'Waiting for Codex to establish the handoff file scope':'Waiting for confirmed provider capacity';
+      throw Object.assign(new Error(detail),{retryAt,capacityDetail:detail});
+     }
+     if(!(await this.claudeStatus()).subscription)throw Object.assign(new Error('Claude subscription sign-in is unavailable'),{retryAt:Math.min(capacity,Date.now()+300000),capacityDetail:'Waiting for Claude subscription sign-in or Codex capacity'});
+     signal.throwIfAborted();
+     checkpoint({provider:'claude',engineeringHandoff:handoff,summary:'Claude continuing the scoped candidate'});
+     const result=await this.runClaude({prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
+       subscriptionOnly:true,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
+       onRateLimit:snapshot=>this.advisorLimits?.recordClaude(snapshot)});
+     signal.throwIfAborted();
+     if(result.content.startsWith('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.content.slice(0,2000));
+     if((await this.sourceHash(cwd,true))!==handoff.sourceHash)throw new Error('Worktree changed during Claude handoff; reconcile before applying the candidate');
+     await this.applyClaudePatch(cwd,result.content,sources,signal);
+    }else{
+     if(p.autoHandoff&&(await this.server.request('account/read',{refreshToken:false})).account?.type!=='chatgpt')throw Object.assign(new Error('Codex subscription sign-in is unavailable'),{retryAt:Date.now()+300000,capacityDetail:'Waiting for Codex subscription sign-in'});
+     signal.throwIfAborted();
+     checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
+     try{
+      const result=await this.server.run({cwd,prompt:engineeringPacket(p,t),signal,onTurnStarted:ids=>checkpoint(ids),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
+      if(result.handoffRetryAt){
+       const handoff=await this.handoff(cwd,p,t,result.text);
+       checkpoint({engineeringHandoff:{...handoff,codexRetryAt:result.handoffRetryAt},summary:'Codex handoff saved'});
+       throw Object.assign(new Error('Codex handoff is ready'),{retryAt:Date.now()+1000});
+      }
+      checkpoint({summary:result.text.slice(-2000)});
+      if(result.text.includes('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.text.slice(result.text.indexOf('JUNCTION_DECISION_REQUIRED:')).slice(0,2000));
+     }catch(error){
+      if(p.autoHandoff&&!error.retryAt&&!signal.aborted&&/rate.?limit|quota|usage.?limit|capacity/i.test(error.message)){
+       const handoff=await this.handoff(cwd,p,t,error.message);
+       checkpoint({engineeringHandoff:{...handoff,codexRetryAt:Date.now()+300000},summary:'Codex stopped; worktree checkpoint saved'});
+       error.retryAt=Date.now()+1000;
+      }
+      throw error;
+     }
+    }
    }
    const changed=(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
    const added=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
+   if(p.scopeFile&&[...changed,...added].some(f=>f!==p.scopeFile))throw new Error('Candidate changed files outside the owner-named file scope');
    if([...changed,...added].some(f=>forbidden.test(f)))throw new Error('Candidate touched a protected path');
    for(const name of [...changed,...added]){const file=path.join(cwd,name);if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw new Error('Candidate contains a symlink');}
-   const verificationPaths=checks.flatMap(check=>check.command.filter(arg=>!arg.startsWith('-')).map(arg=>path.relative(cwd,path.resolve(cwd,check.cwd,arg.replace(/^res:\/\//,''))).replaceAll('\\','/')));
-   const declared=p.verificationProtected||[];const explicitlyProtected=f=>declared.some(item=>f===item||f.startsWith(`${item}/`));
-   const protectedChecks=changed.filter(f=>explicitlyProtected(f)||verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f));
+   const protectedChecks=[...changed,...added].filter(protectedVerification(p,cwd,checks));
    if(protectedChecks.length)throw new Error(`Owner review required: candidate changed verification or dependency definitions: ${protectedChecks.join(', ')}`);
+   checkpoint({phase:'verifying',summary:'Verifying candidate'});
    const beforeTests=await this.sourceHash(cwd,true);
    const tests=[];
    for(const profile of checks){if(signal.aborted)throw new Error('Paused');const target=fs.realpathSync(path.join(cwd,profile.cwd));if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');const r=await this.command(target,profile.command,signal,profile.timeoutMs);const evidence={command:profile.command,exitCode:r.exitCode,output:(r.stdout+'\n'+r.stderr).slice(-12000)};tests.push(evidence);checkpoint({tests,summary:`Verification ${tests.length}/${checks.length}: exit ${r.exitCode}`});if(r.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);}
@@ -141,10 +262,11 @@ class ForemanExecutor{
    if((await this.git(cwd,['diff','--cached','--name-only'])).trim())await this.git(cwd,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','-m',`Verified task ${t.id}: ${t.title}`]);
    const headSha=(await this.git(cwd,['rev-parse','HEAD'])).trim();
    checkpoint({headSha,tests,summary:'Candidate committed after verification'});
-   return {headSha,tests,summary:`${t.title}: ${checks.length} verification commands passed. Commit ${headSha.slice(0,12)}.`,worktree:cwd,branch:`junction/task-${t.id}`};
+   return {headSha,tests,summary:`${t.title}: ${checks.length} verification commands passed. Commit ${headSha.slice(0,12)}.`,worktree:cwd,branch:null};
   }catch(error){
    if(signal.aborted)throw error;
    if(error.retryAt)throw error;
+   if(error.rateLimit){const gate=await this.claudeCapacity();error.retryAt=Math.min(gate.retryAt||Infinity,Date.now()+300000);error.capacityDetail='Waiting for confirmed provider capacity';throw error;}
    if(/rate.?limit|quota|usage.?limit|capacity/i.test(error.message)){let at;try{at=retryDeadline(await this.server.readRateLimits());}catch{}error.retryAt=at||Date.now()+300000;}
    else if(/timed out|connection|transport|502|503|504/i.test(error.message))error.retryAt=Date.now()+Math.min(1800000,30000*2**Math.min(t.attempts.length-1,6))*(1+Math.random()*.2);
    throw error;

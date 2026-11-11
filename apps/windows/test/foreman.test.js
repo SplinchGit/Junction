@@ -91,3 +91,24 @@ test('an owner chat instruction starts new work immediately and later instructio
  await f.control(p.id,'stop',f.get(p.id).revision,'stop-chat');finish({headSha:'late',tests:[{exitCode:0}],summary:'late'});await f.idle();
  assert.equal(f.get(p.id).status,'STOPPED');f.close();
 });
+
+test('dual-provider approval is desktop-only, durable, and retains owner apply',async t=>{
+ const dir=fixture();
+ let promoted=false;
+ const f=new Foreman(dir,{executor:{...executor,promoteVerified:async()=>{promoted=true;}}});
+ t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const api=new (require('../src/foreman-api').ForemanApi)(f);
+ const draft=await f.create(input);
+ const approval={id:draft.id,revision:draft.revision,action:'start',autoHandoff:true};
+ await assert.rejects(api.dispatch('task.control',approval,'mobile-start','android'),/on Windows/);
+ assert.equal(f.get(draft.id).status,'DRAFT');
+ await api.dispatch('task.control',approval,'owner-start','desktop');
+ await f.idle();
+ await api.dispatch('task.control',approval,'owner-start','desktop');
+ const result=f.get(draft.id);
+ assert.equal(result.autoHandoff,true);
+ assert.equal(result.status,'COMPLETED');
+ assert.equal(result.tasks[0].attempts.length,1);
+ assert.equal(promoted,false);
+ assert.match(result.nextAction,/review.*apply/i);
+});

@@ -132,3 +132,19 @@ test('project notification rules are shared by enqueue and delivery and preserve
  store.setSettings({proactiveUpdates:'OFF'});
  assert.equal(notificationDeliveryPolicy(queued,store),'cancel');
 });
+
+test('a verified code candidate notifies once and is withdrawn after apply',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-code-notify-'));
+ const store=new NethraStore(dir),queue=new DeviceCommandStore(dir);
+ t.after(()=>{store.close();queue.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const {queueCodeWorkNotification}=require('../src/nethra-conversation-report');
+ store.setSettings({notificationDeviceId:'phone',quietHours:{enabled:false,start:'22:00',end:'07:00'}});
+ const task=store.create({goal:'Measure context fitting'});
+ const project={id:'work',autoHandoff:true,sourceObjectiveId:task.id,status:'COMPLETED',verifiedSha:'abc',updatedAt:store.now()};
+ const first=queueCodeWorkNotification(task,project,store,queue);
+ assert.equal(queueCodeWorkNotification(task,project,store,queue).id,first.id);
+ const policy={projects:()=>[project]};
+ assert.equal(notificationDeliveryPolicy(first,store,policy),'deliver');
+ project.appliedAt=store.now();
+ assert.equal(notificationDeliveryPolicy(first,store,policy),'cancel');
+});

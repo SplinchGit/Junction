@@ -2,14 +2,14 @@
 const crypto=require('node:crypto');
 const {projectContext}=require('./foreman');
 function documentFields(payload,allowed){if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Invalid document fields');}
-function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
+function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,autoHandoff:p.autoHandoff===true,phase:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.phase||null:null,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),engineeringHandoff:undefined,tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman,{conversationExists=()=>false,pickProjectDocument=null}={}){
   this.foreman=foreman;this.conversationExists=conversationExists;this.pickProjectDocument=pickProjectDocument;this.imports=new Map();
  }
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){
   const f=this.foreman;if(!f)throw new Error('Project runtime is unavailable');
-  if(type==='project.list')return {projects:f.list().map(p=>({id:p.id,name:p.name,status:p.status,revision:p.revision,objective:p.objective.slice(0,500),nextAction:p.nextAction}))};
+  if(type==='project.list')return {projects:f.list().map(p=>({id:p.id,name:p.name,status:p.status,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,objective:p.objective.slice(0,500),nextAction:p.nextAction}))};
   if(type==='project.get'){
    const saved=f.get(payload.id),p=summary(saved);const events=f.events(p.id,Number.isSafeInteger(payload.after)?payload.after:0).map(e=>({...e,detail:e.detail.slice(0,500)}));
    // LAN frames stay bounded; detailed execution evidence remains in durable storage.
@@ -56,13 +56,15 @@ class ForemanApi{
   }
   if(type==='project.register') {if(source!=='desktop')throw new Error('Register project paths on Windows');return {project:summary(await f.create(payload))};}
   if(type==='task.control'){
-   if(Object.keys(payload).some(k=>!['id','action','revision'].includes(k)))throw new Error('Invalid control fields');
-   const p=await f.control(payload.id,payload.action,payload.revision,requestId);return {id:p.id,status:p.status,revision:p.revision};
+   if(Object.keys(payload).some(k=>!['id','action','revision','autoHandoff'].includes(k)))throw new Error('Invalid control fields');
+   if(Object.hasOwn(payload,'autoHandoff')&&(source!=='desktop'||typeof payload.autoHandoff!=='boolean'||!['start','resume'].includes(payload.action)))throw new Error('Approve provider handoff when starting or resuming on Windows');
+   const p=await f.control(payload.id,payload.action,payload.revision,requestId,{autoHandoff:payload.autoHandoff});return {id:p.id,status:p.status,revision:p.revision};
   }
   if(type==='task.enqueue'){
    const binding=JSON.stringify([type,payload]);const prior=f.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);if(prior){if(prior.binding!==binding)throw new Error('Request ID reused');return {id:payload.id};}
    const p=f.get(payload.id);if(p.revision!==payload.revision)throw new Error('Stale task revision');if(f.enabled.has(p.id)||f.jobs.has(p.id)||f.operations.has(p.id))throw new Error('Pause before changing the queue; wait for review/apply to finish');
    if(p.sourceObjectiveId)throw new Error('Nethra code work needs a new Codex reviewed draft for a different task');
+   if(p.autoHandoff)throw new Error('Create a separate approved draft for a new coding scope');
    if(p.tasks.length>=50||typeof payload.title!=='string'||!payload.title.trim()||payload.title.length>240||typeof payload.acceptance!=='string'||!payload.acceptance.trim()||payload.acceptance.length>4000)throw new Error('Invalid task');
    p.tasks.push({id:crypto.randomUUID(),title:payload.title.trim(),acceptance:payload.acceptance.trim(),kind:payload.kind==='verify'?'verify':'codex',files:[],status:'QUEUED',attempts:[]});p.roadmap.push(payload.title);p.status='PAUSED';p.nextAction='Resume explicitly';f.save(p,'TASK_ADDED',payload.title,{id:requestId,binding});return {id:p.id,status:p.status,revision:p.revision};
   }

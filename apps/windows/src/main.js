@@ -51,7 +51,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { queueProjectMilestoneNotifications, queueMilestoneNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
+const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
@@ -88,7 +88,9 @@ function deliverObjectiveUpdates() {
   const settings = nethraStore.settings();
   const tasks=nethraStore.list();
   try {
-    const names=new Map(foreman.list().map(project=>[project.id,project.name]));
+    const projects=foreman.list();
+    const names=new Map(projects.map(project=>[project.id,project.name]));
+    for(const project of projects){const task=tasks.find(item=>item.id===project.sourceObjectiveId);if(task)queueCodeWorkNotification(task,project,nethraStore,deviceCommands);}
     queueProjectMilestoneNotifications(nethraStore,deviceCommands,{tasks,projectName:id=>names.get(id)});
   } catch (error) { recordStartupIssue('project milestone delivery',error); }
   for (const task of tasks) {
@@ -212,7 +214,8 @@ async function createWindowImpl() {
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
   const foremanDirectory = path.join(app.getPath("userData"), "foreman");
-  foreman = new Foreman(foremanDirectory, {executor:new ForemanExecutor(path.join(foremanDirectory,"projects")),audit:appendAudit});
+  const foremanExecutor=new ForemanExecutor(path.join(foremanDirectory,"projects"));
+  foreman = new Foreman(foremanDirectory, {executor:foremanExecutor,audit:appendAudit});
   foremanApi = new ForemanApi(foreman, {
     conversationExists: id => Boolean(localData.conversation(id)),
     pickProjectDocument: async () => {
@@ -259,6 +262,7 @@ async function createWindowImpl() {
   // Experiments on code changes only count samples from a Junction process started after the change.
   try { nethraStore.recordHostStart(); } catch (error) { recordStartupIssue('Nethra host start record', error); }
   const advisorLimits = new AdvisorLimits({ store: nethraStore });
+  foremanExecutor.advisorLimits=advisorLimits;
   const workStatus = createWorkStatus(foreman);
   const advisorStatus = async () => { const describe = async (provider, status) => ({ ...status, limits: status.ready ? await advisorLimits.check(provider).catch(error => ({ error: String(error.message).slice(0, 200) })) : null }); const [codex, claude] = await Promise.all([getCodexStatus(), getClaudeStatus()]); return { reservePercent: advisorLimits.reservePercent(), codex: await describe('codex', codex), claude: await describe('claude', claude) }; };
   // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.

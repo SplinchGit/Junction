@@ -62,22 +62,33 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
             val id = p["id"].toString()
             val revision = (p["revision"] as? Number)?.toLong() ?: -1L
             val status = p["status"].toString()
-            val active = status in setOf("RUNNING", "WAITING_CODEX", "VERIFYING")
+            val active = status in setOf("RUNNING", "WAITING_CODEX", "WAITING_CAPACITY", "VERIFYING")
             item {
                 Text(p["name"].toString(), style = MaterialTheme.typography.titleLarge)
                 Text(p["repoPath"]?.toString().orEmpty())
                 Text(p["objective"].toString())
-                Text("$status · ${p["nextAction"]}")
+                val activity = when {
+                    status == "WAITING_CAPACITY" -> "Waiting for provider capacity"
+                    p["phase"] == "verifying" && active -> "Verifying candidate"
+                    p["provider"] == "claude" && active -> "Claude working"
+                    p["provider"] == "codex" && active -> "Codex working"
+                    else -> status
+                }
+                Text("$activity · ${p["nextAction"]}")
                 (p["retryAt"] as? Number)?.let { Text("Scheduled retry: ${DateFormat.getDateTimeInstance().format(Date(it.toLong()))}") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val actions = if (active) listOf("stop") else emptyList()
+                    val actions = when {
+                        active -> listOf("pause", "stop")
+                        status in setOf("PAUSED", "STOPPED", "BLOCKED") -> listOf("resume")
+                        else -> emptyList()
+                    }
                     actions.forEach { action -> Button(enabled = connected && !busy, onClick = { perform("task.control", mapOf("id" to id, "revision" to revision, "action" to action)) }) { Text(action.replaceFirstChar { it.uppercase() }) } }
                 }
             }
             (p["tasks"] as? List<*>)?.mapNotNull { it as? Map<*, *> }?.forEach { task -> item {
                 Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
                     Text(task["title"].toString(), style = MaterialTheme.typography.titleMedium)
-                    Text("${if (task["kind"] == "verify") "Junction" else "Codex"} · ${task["status"]}")
+                    Text(task["status"].toString())
                     Text(task["acceptance"].toString())
                     val attempt = task["lastAttempt"] as? Map<*, *>
                     attempt?.get("error")?.let { Text(it.toString(), color = MaterialTheme.colorScheme.error) }

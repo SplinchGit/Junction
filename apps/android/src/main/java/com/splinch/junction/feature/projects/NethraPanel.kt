@@ -444,6 +444,18 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     )
                 }
                 TaskTracking(detail?.get("progress") as? Map<*, *>, null, task["mode"]?.toString())
+                maps(detail?.get("codeWork")).forEach { work ->
+                    val activity = when {
+                        work["status"] == "COMPLETED" -> "Coding candidate verified"
+                        work["status"] in setOf("WAITING_CAPACITY", "WAITING_CODEX") -> "Waiting for coding capacity"
+                        work["status"] == "RUNNING" && work["phase"] == "verifying" -> "Verifying candidate"
+                        work["status"] == "RUNNING" && work["provider"] == "claude" -> "Claude working"
+                        work["status"] == "RUNNING" && work["provider"] == "codex" -> "Codex working"
+                        else -> "Development work"
+                    }
+                    Text(activity, style = MaterialTheme.typography.titleSmall)
+                    work["nextAction"]?.toString()?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
                 if (task["parentId"] == null) {
                     var showAgents by rememberSaveable(id) { mutableStateOf(false) }
                     var agentAssignment by rememberSaveable(id) { mutableStateOf("") }

@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const {measurableAcceptance}=require('./nethra-code-work');
 const {readApprovedDocument}=require('./foreman-documents');
 const { DatabaseSync } = require('node:sqlite');
-const ACTIVE = new Set(['RUNNING', 'WAITING_CODEX', 'VERIFYING']);
+const ACTIVE = new Set(['RUNNING', 'WAITING_CODEX', 'WAITING_CAPACITY', 'VERIFYING']);
 const text = (value, max, label) => { if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`Invalid ${label}`); return value.trim(); };
 const CONTEXT_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const CONTEXT_LIMIT = 16;
@@ -190,6 +190,7 @@ class Foreman {
     if(input.projectId){
       const p=this.get(input.projectId);const title=text(input.task,240,'task'),acceptance=text(input.acceptance||'Complete the owner request and pass the detected project checks',4000,'acceptance criteria');
       if(p.sourceObjectiveId)throw new Error('Nethra code work needs a new Codex reviewed draft for a different task');
+      if(p.autoHandoff)throw new Error('Create a separate approved draft for a new coding scope');
       if(p.tasks.length>=50)throw new Error('Work queue limit reached');
       const queued={id:crypto.randomUUID(),title,kind:'codex',acceptance,status:'QUEUED',attempts:[],files:[]};
       if(p.status==='DRAFT'&&p.tasks.every(task=>!task.attempts.length)){p.tasks=[queued];p.roadmap=[title];p.objective=input.objective||title;p.conversationId=input.conversationId||p.conversationId;}else{p.tasks.push(queued);p.roadmap.push(title);}p.nextAction='Execute the next owner-requested task';
@@ -199,22 +200,25 @@ class Foreman {
     const created=await this.create({...input,objective:input.objective||input.task,tasks:[{title:input.task,kind:'codex',acceptance:input.acceptance||'Complete the owner request and pass the detected project checks'}]});
     return this.control(created.id,'start',created.revision,`owner-${crypto.randomUUID()}`);
   }
-  async control(id,action,revision,requestId) {
+  async control(id,action,revision,requestId,{autoHandoff}={}) {
     if(this.operations.has(id))throw new Error('Project review/apply is finishing; retry after it completes');
     text(requestId,160,'request ID');
-    const binding=JSON.stringify([id,action,revision]);
+    const binding=JSON.stringify([id,action,revision,...(autoHandoff===undefined?[]:[autoHandoff])]);
     const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
     if(previous){if(previous.binding!==binding)throw new Error('Request ID reused');return this.get(id);}
     const p=this.get(id);
     if(!Number.isSafeInteger(revision)||p.revision!==revision)throw new Error('Stale task revision; refresh first');
     if(!['start','resume','pause','stop'].includes(action))throw new Error('Invalid task control');
     if(action==='start'||action==='resume') {
+      if(autoHandoff!==undefined&&typeof autoHandoff!=='boolean')throw new Error('Invalid provider handoff approval');
       if(this.closed)throw new Error('Junction is quitting');
         if(p.sourceObjectiveId&&p.codeReviewVerdict!=='READY')throw new Error('A Codex READY verdict for this exact Nethra proposal is required before implementation');
         if(p.sourceObjectiveId&&p.tasks.some(task=>!measurableAcceptance(task.acceptance)))throw new Error('Provide measurable acceptance criteria before starting Nethra code work');
       if(ACTIVE.has(p.status)||p.status==='COMPLETED'||this.jobs.has(id))throw new Error('Task is already active or finishing');
       if(action==='start'&&p.status!=='DRAFT')throw new Error('Use Resume for existing work');
       if(this.enabled.size)throw new Error('Pause the active project before starting another');
+      if(autoHandoff===false&&p.autoHandoff)throw new Error('Create a new draft to change an approved provider handoff scope');
+      if(autoHandoff===true)p.autoHandoff=true;
       p.status='RUNNING';p.nextAction='Reconcile and execute next approved task';
       this.save(p,'RESUMED',`Owner selected ${action}`,{id:requestId,binding});this.enabled.add(id);this.kick(id);
     }else{
@@ -234,26 +238,26 @@ class Foreman {
     let p=this.get(id);
     if(p.retryAt>this.now()){this.schedule(id,p.retryAt);return;}
     const task=p.tasks.find(t=>t.status!=='COMPLETED');
-    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sourceObjectiveId?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
+    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
     p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
     const attempt={id:crypto.randomUUID(),startedAt:this.now(),status:'RUNNING'};task.attempts.push(attempt);
     this.save(p,'ATTEMPT',`${task.kind}: ${task.title}`);
-    const checkpoint=fields=>{if(signal.aborted||!this.enabled.has(id))return;const current=this.get(id),t=current.tasks.find(t=>t.id===task.id);Object.assign(t.attempts.at(-1),fields);if(fields.worktree)current.worktree=fields.worktree;if(fields.branch)current.branch=fields.branch;this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');};
+    const checkpoint=fields=>{if(signal.aborted||!this.enabled.has(id))return;const current=this.get(id),t=current.tasks.find(t=>t.id===task.id);Object.assign(t.attempts.at(-1),fields);if(fields.worktree)current.worktree=fields.worktree;if(Object.hasOwn(fields,'branch'))current.branch=fields.branch;this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');};
     try {
       const result=await this.executor.run(p,task,{signal,checkpoint});
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);
       if(!Array.isArray(result.tests)||!result.tests.length||result.tests.some(t=>t.exitCode!==0))throw new Error('Verification failed; candidate retained for inspection');
-      // Nethra-originated work has a second owner gate: a verified candidate stays
+      // Nethra-originated and dual-provider work have a second owner gate: a verified candidate stays
       // in the isolated checkout until the owner reviews and applies that exact patch.
-      const promoted=p.sourceObjectiveId?null:await this.executor.promoteVerified?.(p,result);
+      const promoted=p.sourceObjectiveId||p.autoHandoff?null:await this.executor.promoteVerified?.(p,result);
       t.status='COMPLETED';Object.assign(t.attempts.at(-1),result,{status:'COMPLETED',finishedAt:this.now(),promoted});
-      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sourceObjectiveId?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
+      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
     }catch(error){
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});
       const retry=Number.isFinite(error.retryAt)?error.retryAt:null;
-      if(retry){p.status='WAITING_CODEX';p.retryAt=Math.max(this.now()+1000,retry);p.nextAction='Wait for legitimate Codex availability';this.save(p,'WAITING',error.message);this.schedule(id,p.retryAt);}
+      if(retry){p.status=p.autoHandoff?'WAITING_CAPACITY':'WAITING_CODEX';p.retryAt=Math.max(this.now()+1000,retry);p.nextAction=error.capacityDetail||'Wait for legitimate Codex availability';this.save(p,'WAITING',error.message);this.schedule(id,p.retryAt);}
       else{p.status='BLOCKED';p.nextAction='Review failure and Resume when resolved';p.handoff=`${task.title}: ${error.message}`;this.enabled.delete(id);this.save(p,'BLOCKED',p.handoff);}
     }
   }
