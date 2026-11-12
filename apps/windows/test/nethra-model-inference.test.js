@@ -70,7 +70,7 @@ test('owner pause prevents an in-flight model sample from being committed',async
 test('model inference rejects unbounded requests, unsupported targets and foreign jobs',async t=>{
   const f=fixture(t),clock={value:Date.now(),accounted:0};let calls=0;
   const runtime={withInference:fn=>fn(),chat:async()=>{calls++;throw Error('must not run');}};
-  for(const args of [{prompt:'x',samples:51},{prompt:'x',samples:1.5},{prompt:'x',maxTokens:513},{prompt:'x',model:'remote:other'},{prompt:'x'.repeat(4001)},{jobId:'missing'},{jobId:'missing',prompt:'x'}])await assert.rejects(runModelJob({...f.options(runtime,clock),args}));
+  for(const args of [{prompt:'x',samples:51},{prompt:'x',samples:1.5},{prompt:'x',maxTokens:4097},{prompt:'x',model:'remote:other'},{prompt:'x'.repeat(4001)},{jobId:'missing'},{jobId:'missing',prompt:'x'}])await assert.rejects(runModelJob({...f.options(runtime,clock),args}));
   assert.equal(calls,0);
 });
 test('a model reply without measured token metrics cannot become a successful benchmark sample',async t=>{
