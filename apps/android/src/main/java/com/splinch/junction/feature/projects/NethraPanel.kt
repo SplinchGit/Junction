@@ -42,7 +42,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var criteria by rememberSaveable { mutableStateOf("") }
     var persistent by rememberSaveable { mutableStateOf(true) }
     var taskModel by rememberSaveable { mutableStateOf("qwen3:30b") }
-    val taskModels = listOf("qwen3:30b" to "Qwen3 30B · faster", "junction-qwen3-next:80b-q3km" to "Qwen3-Next 80B · deeper, slower")
+    val taskModels = listOf("qwen3:30b" to "Qwen3 30B · thinking", "junction-qwen3-next:80b-q3km" to "Qwen3-Next 80B · instruct", "junction-qwen3-next-thinking:80b-q3km" to "Qwen3-Next 80B · thinking")
     var mode by rememberSaveable { mutableStateOf("FINITE") }
     var autonomy by rememberSaveable { mutableStateOf("BALANCED") }
     var priority by rememberSaveable { mutableIntStateOf(3) }
