@@ -168,7 +168,11 @@ tokens for a Thinking task step (versus 1,536 for older models) with no forced
 1,100-token thought cutoff; this can be substantially slower. Ollama may time
 out or run out of memory on the current 32 GB RAM PC, even with the RTX 2060.
 A successful model download is not proof that the Thinking model can actually
-finish a tool call on this host. Test a small research-and-draft task first.
+finish a tool call on this host. First run `node scripts/ollama-tool-smoke.js
+junction-qwen3-next-thinking:80b-q3km` from `apps/windows`: it checks a real
+structured tool call and a follow-up answer against a deterministic fake tool
+result, and exits nonzero if either fails. Then test a small research-and-draft
+Nethra task. This smoke requires the model weights and Ollama running locally.
 
 Keep Junction and Ollama running on the paired PC. Android uses the authenticated
 LAN connection or the separately selected encrypted relay mode; weights stay on
