@@ -5,6 +5,7 @@ const { ROUTING_SCHEMA, normalizeDecision, decisionAllowsDelegation, routingProm
 const { citationAudit, mergeResearch, renderCitations } = require("./research-coordinator");
 const { LocalAgentToolRegistry, compactResearchContext, isOngoingRequest } = require("./local-agent-tools");
 const { providers, isSupportedLocalModel } = require("./model-catalog");
+const { NEXT_80B_THINKING_MODEL } = require("./nethra-models");
 const { environmentContext } = require("./assistant-environment");
 const { ModelWarmer } = require("./model-warmer");
 const { isSelfCapabilityQuestion, capabilityResult } = require('./self-capabilities');
@@ -221,7 +222,7 @@ class LocalAgentRuntime {
     // The installed Qwen3 30B tag is the 2507 thinking-only variant. With
     // think:false it emits private reasoning in content instead of the
     // separate thinking field, so never send that combination.
-    const thinkingOnly = model === "qwen3:30b";
+    const thinkingOnly = model === "qwen3:30b" || model === NEXT_80B_THINKING_MODEL;
     const requestedThinking = thinkingOnly || (typeof options.thinking === "boolean" ? options.thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
     const thinking = thinkingOnly || (requestedThinking && (await this.modelCapabilities(model, signal)).thinking);
     // Measurements require the host's original final token metrics. Do not stop
@@ -229,7 +230,7 @@ class LocalAgentRuntime {
     const rawMeasurement = options.rawMeasurement === true;
     const streaming = !rawMeasurement && Boolean(onText || options.onThinking || options.stream || (Number.isFinite(options.thinkingBudget) && options.thinkingBudget > 0));
     const streamStarted = Date.now(), timeout = AbortSignal.timeout(OLLAMA_CALL_TIMEOUT_MS), budgetStop = new AbortController(), combined = AbortSignal.any([...(signal ? [signal] : []), timeout, budgetStop.signal]);
-    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, ...(tools?.length ? {tools} : {}), ...(format ? {format} : {}), stream: streaming, think: thinking, keep_alive: this.warmer.keepAlive(), options: { temperature: Number.isFinite(options.temperature)?Math.max(0,Math.min(2,options.temperature)):0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: Number.isFinite(options.num_predict) ? Math.max(thinkingOnly&&!rawMeasurement ? 1024 : 1,Math.min(3072,Math.floor(options.num_predict))) : thinkingOnly ? 1536 : format ? 160 : 350 } }) });
+    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, ...(tools?.length ? {tools} : {}), ...(format ? {format} : {}), stream: streaming, think: thinking, keep_alive: this.warmer.keepAlive(), options: { temperature: Number.isFinite(options.temperature)?Math.max(0,Math.min(2,options.temperature)):0.2, num_ctx: DEFAULT_CONTEXT_TOKENS, num_predict: Number.isFinite(options.num_predict) ? Math.max(thinkingOnly&&!rawMeasurement ? 1024 : 1,Math.min(model === NEXT_80B_THINKING_MODEL ? 8192 : 3072,Math.floor(options.num_predict))) : model === NEXT_80B_THINKING_MODEL ? 4096 : thinkingOnly ? 1536 : format ? 160 : 350 } }) });
     if (response.ok && streaming && response.body) {
       const decoder = new TextDecoder(); let buffer = "", content = "", thinking = "", final = null, thinkingEvents = 0; const calls = new Map();
       const budget = Number.isFinite(options.thinkingBudget) && options.thinkingBudget > 0 ? options.thinkingBudget : Infinity;
@@ -376,7 +377,7 @@ class LocalAgentRuntime {
     // total would make the owner's metrics line contradict itself.
     const started = Date.now();
     const modelEntry = providers.find(provider => provider.id === "local")?.models.find(item => item.id === model);
-    const thinkingEnabled = model === "qwen3:30b" || (modelEntry?.thinking === false ? false : typeof thinking === "boolean" ? thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
+    const thinkingEnabled = model === "qwen3:30b" || model === NEXT_80B_THINKING_MODEL || (modelEntry?.thinking === false ? false : typeof thinking === "boolean" ? thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
     const latency = { queueMs: Number(timing.queueMs) || 0, coldStart: Boolean(timing.coldStart), firstTokenMs: null, firstContentMs: null };
     const onPhase = async event => {
       if (event.phase === "thinking" && latency.firstTokenMs === null) latency.firstTokenMs = Date.now() - started;
@@ -397,7 +398,7 @@ class LocalAgentRuntime {
     const timings = newTimings();
     if (nativeToolUse && shouldRunRouting(ownerGoal, context) && !hostSearchRequired) {
       try {
-        const routed = await this.chat(model, [{ role: "system", content: routingPrompt(capabilities) }, ...recentHistory, { role: "user", content: ownerGoal.slice(0, 2000) }], [], runSignal, null, ROUTING_SCHEMA,{...chatOptions,thinkingBudget:THINKING_BUDGET.routing});
+        const routed = await this.chat(model, [{ role: "system", content: routingPrompt(capabilities) }, ...recentHistory, { role: "user", content: ownerGoal.slice(0, 2000) }], [], runSignal, null, ROUTING_SCHEMA,{...chatOptions,...(model === NEXT_80B_THINKING_MODEL ? {} : {thinkingBudget:THINKING_BUDGET.routing})});
         decision = normalizeDecision(routed.message?.content);
         routingInputTokens = Number(routed.prompt_eval_count || 0); routingOutputTokens = Number(routed.eval_count || 0);
         addTimings(timings, routed);
@@ -468,7 +469,7 @@ class LocalAgentRuntime {
       const audit = { runId, model, mode: "agent", iteration };
       this.tools.audit("agent_iteration", "local_model", "success", `iteration ${iteration}; model ${model}`, audit);
       await onProgress?.({ stage: iteration === 1 ? `Running ${model} on your PC` : "Checking evidence on your PC" });
-      const payload = await this.chat(model, messages, toolCalls < this.limits.toolCalls ? definitions : [], runSignal, onProgress && iteration === 1 ? text => onProgress({ stage: "Streaming from your PC", text }) : null,null,{...chatOptions,thinkingBudget:ordinaryGreeting && toolCalls === 0 ? THINKING_BUDGET.greeting : simpleTurn && toolCalls === 0 ? THINKING_BUDGET.simple : THINKING_BUDGET.safety});
+      const payload = await this.chat(model, messages, toolCalls < this.limits.toolCalls ? definitions : [], runSignal, onProgress && iteration === 1 ? text => onProgress({ stage: "Streaming from your PC", text }) : null,null,{...chatOptions,...(model === NEXT_80B_THINKING_MODEL ? {} : {thinkingBudget:ordinaryGreeting && toolCalls === 0 ? THINKING_BUDGET.greeting : simpleTurn && toolCalls === 0 ? THINKING_BUDGET.simple : THINKING_BUDGET.safety})});
       if (runSignal.aborted || await isCancelled?.()) throw abortError();
       inputTokens += Number(payload.prompt_eval_count || 0); outputTokens += Number(payload.eval_count || 0);
       addTimings(timings, payload);
@@ -539,7 +540,7 @@ class LocalAgentRuntime {
         content: "Synthesize the best answer now from the evidence already returned. Do not call tools. Be concise, state uncertainty if needed, and cite only the exact passage IDs present in the evidence."
       });
       for (let attempt = 0; attempt < FINAL_SYNTHESIS_ITERATIONS; attempt++) {
-        const payload = await this.chat(model, synthesisMessages, [], runSignal, null,null,{...chatOptions,thinkingBudget:THINKING_BUDGET.safety});
+        const payload = await this.chat(model, synthesisMessages, [], runSignal, null,null,{...chatOptions,...(model === NEXT_80B_THINKING_MODEL ? {} : {thinkingBudget:THINKING_BUDGET.safety})});
         inputTokens += Number(payload.prompt_eval_count || 0); outputTokens += Number(payload.eval_count || 0);
         addTimings(timings, payload);
         const answer = String(payload.message?.content || "").trim();
