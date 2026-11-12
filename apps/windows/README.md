@@ -138,15 +138,37 @@ expose usable UI Automation metadata. No broad automation is implemented.
 
 Choose **Local LLM** in either app. **Qwen3 30B** (`qwen3:30b`) remains the default
 for chat and Nethra tasks. **Qwen3-Next 80B A3B Instruct · Q3_K_M** can be selected
-for chat or individual Nethra tasks. Either model resumes the task's saved plan,
-evidence and checkpoint. The 80B option uses the local Ollama alias
+for chat or individual Nethra tasks. A separate **80B Thinking · Q3_K_M** option
+is now available for longer reasoning. All three models use the same Nethra task,
+plan, evidence, permissions and checkpoint; switching does not erase progress.
+The existing 80B Instruct option uses the local Ollama alias
 `junction-qwen3-next:80b-q3km`. To prepare another paired PC, run
 `ollama pull hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M`, then
 `ollama create junction-qwen3-next:80b-q3km -f models/qwen3-next-80b-q3km.Modelfile`
 from `apps/windows`. The alias shares the downloaded weights and fixes an upstream
 chat template that otherwise returns empty replies. Existing selections of the
 upstream tag migrate to the alias. Older unsupported local selections resolve to
-30B. The installed 30B variant always uses native thinking; this 80B alias does not.
+30B. The installed 30B variant always uses native thinking; the existing 80B
+Instruct alias does not.
+
+To install the **separate Thinking weights** on the paired PC (from `apps/windows`):
+
+```powershell
+ollama pull hf.co/unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF:Q3_K_M
+ollama create junction-qwen3-next-thinking:80b-q3km -f models/qwen3-next-80b-thinking-q3km.Modelfile
+ollama run junction-qwen3-next-thinking:80b-q3km "What is 17 times 23?"
+```
+
+This is an **opt-in 38.3 GB download**; Junction does not pull it automatically.
+The corrected Thinking template pre-fills `<think>` so Ollama separates the
+reasoning channel from content/tool calls. Check with `ollama show
+junction-qwen3-next-thinking:80b-q3km`; select the Thinking model in Tasks
+or the Local LLM picker after installing it. Nethra reserves up to 6,144 output
+tokens for a Thinking task step (versus 1,536 for older models) with no forced
+1,100-token thought cutoff; this can be substantially slower. Ollama may time
+out or run out of memory on the current 32 GB RAM PC, even with the RTX 2060.
+A successful model download is not proof that the Thinking model can actually
+finish a tool call on this host. Test a small research-and-draft task first.
 
 Keep Junction and Ollama running on the paired PC. Android uses the authenticated
 LAN connection or the separately selected encrypted relay mode; weights stay on
