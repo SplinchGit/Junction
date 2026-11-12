@@ -23,8 +23,8 @@ function retentionValue(value) { return Object.hasOwn(RETENTION, value) ? RETENT
  * interactive work. Concurrent requests share one load; a resident copy is never reloaded.
  */
 class ModelWarmer {
-  constructor({ fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", model = "qwen3:30b", contextTokens = CONTEXT_TOKENS, retention = () => DEFAULT_RETENTION, freeMemory = () => os.freemem(), now = Date.now, loadTimeoutMs = 180_000, profile = null } = {}) {
-    Object.assign(this, { fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), model, contextTokens, retention, freeMemory, now, loadTimeoutMs });
+  constructor({ fetchImpl = fetch, ollamaUrl = "http://127.0.0.1:11434", model = "qwen3:30b", contextTokens = CONTEXT_TOKENS, loadOptions = {}, retention = () => DEFAULT_RETENTION, freeMemory = () => os.freemem(), now = Date.now, loadTimeoutMs = 180_000, profile = null } = {}) {
+    Object.assign(this, { fetch: fetchImpl, ollamaUrl: ollamaUrl.replace(/\/$/, ""), model, contextTokens, loadOptions, retention, freeMemory, now, loadTimeoutMs });
     // profile: optional {load(), save(value)} persisting the last observed GPU share across restarts.
     this.profile = profile;
     this.inflight = null; this.residencyCheck = null; this.listeners = new Set();
@@ -117,7 +117,7 @@ class ModelWarmer {
       this.set({ state: "loading", reason: null, lastError: null });
       try {
         // An empty prompt is Ollama's documented load request: no tokens are generated.
-        const response = await this.fetch(`${this.ollamaUrl}/api/generate`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(this.loadTimeoutMs), body: JSON.stringify({ model: this.model, keep_alive: this.keepAlive(), options: { num_ctx: this.contextTokens } }) });
+        const response = await this.fetch(`${this.ollamaUrl}/api/generate`, { method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(this.loadTimeoutMs), body: JSON.stringify({ model: this.model, keep_alive: this.keepAlive(), options: { ...this.loadOptions, num_ctx: this.contextTokens } }) });
         const payload = await response.json().catch(() => null);
         if (!response.ok) throw new Error(payload?.error || `Ollama load HTTP ${response.status}`);
         const loadMs = Number.isFinite(payload?.load_duration) ? Math.round(payload.load_duration / 1e6) : null;

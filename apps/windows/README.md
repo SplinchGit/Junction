@@ -183,10 +183,14 @@ ollama cp hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M junction-qwen3-next
 ```
 
 Select **Qwen3-Next 80B Thinking · Q4_K_M** in Local LLM or **Thinking Q4** in
-Tasks. The alias shares the official blob. This profile uses an 8,192-token
-context and up to 2,048 output tokens. On the 32 GiB RAM / 12 GiB VRAM PC,
-both automatic offload and CPU-only cold-load tests timed out. Keep 30B for
-routine work until Q4 completes a live inference test on the paired host.
+Tasks. The alias shares the official blob. Nethra sends native thinking on with
+Qwen's recommended temperature `0.6`, top-p `0.95`, top-k `20` and min-p `0`.
+Benchmarks retain their explicit temperature override. This profile uses an
+8,192-token context and up to 2,048 output tokens. Chat and manual warm-up
+request memory mapping (`use_mmap: true`) so Ollama can map CPU-side weights
+from disk. The normal automatic and CPU-only cold loads timed out on the
+32 GiB RAM / 12 GiB VRAM PC. Memory mapping started inference there, but
+generation can still be slow. The Q4 model loads on demand, with 30B as the default.
 
 Keep Junction and Ollama running on the paired PC. Android uses the authenticated
 LAN connection or the separately selected encrypted relay mode; weights stay on

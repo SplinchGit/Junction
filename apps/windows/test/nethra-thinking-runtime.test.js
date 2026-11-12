@@ -20,6 +20,11 @@ test("official Q4 Thinking is selectable and uses its own context budget", async
   assert.equal(payload.think, true);
   assert.equal(payload.options.num_ctx, 8192);
   assert.equal(payload.options.num_predict, 2048);
+  assert.equal(payload.options.temperature, 0.6);
+  assert.equal(payload.options.top_p, 0.95);
+  assert.equal(payload.options.top_k, 20);
+  assert.equal(payload.options.min_p, 0);
+  assert.equal(payload.options.use_mmap, true);
 });
 
 test("80B Thinking remains a separate, opt-in model profile", () => {

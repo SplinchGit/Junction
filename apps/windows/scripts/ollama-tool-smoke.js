@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { NEXT_80B_THINKING_MODEL } = require("../src/nethra-models");
+const { NEXT_80B_THINKING_Q4_MODEL, Q4_CONTEXT_TOKENS, Q4_OUTPUT_TOKENS, Q4_SAMPLING, Q4_LOAD_OPTIONS, isNextThinkingModel } = require("../src/nethra-models");
 
 const models = process.argv.slice(2);
 const selectedModels = models.length
@@ -32,7 +32,7 @@ async function post(route, body) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(body.model === NEXT_80B_THINKING_MODEL ? 12 * 60_000 : 180_000),
+    signal: AbortSignal.timeout(isNextThinkingModel(body.model) ? 12 * 60_000 : 180_000),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
@@ -60,12 +60,16 @@ async function unload(model) {
 
 async function testModel(model) {
   const messages = [{ role: "user", content: "What is the weather in London right now?" }];
+  const q4 = model === NEXT_80B_THINKING_Q4_MODEL;
+  const thinking = isNextThinkingModel(model);
   const common = {
     model,
     stream: false,
-    think: model === NEXT_80B_THINKING_MODEL,
+    think: thinking,
     tools: [weatherTool],
-    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: model === NEXT_80B_THINKING_MODEL ? 6144 : 256, temperature: model === NEXT_80B_THINKING_MODEL ? 0.6 : 0 },
+    options: q4
+      ? { ...Q4_SAMPLING, ...Q4_LOAD_OPTIONS, num_ctx: Q4_CONTEXT_TOKENS, num_predict: Q4_OUTPUT_TOKENS }
+      : { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: thinking ? 6144 : 256, temperature: thinking ? 0.6 : 0 },
     keep_alive: "5m",
   };
   const result = { model, success: false };

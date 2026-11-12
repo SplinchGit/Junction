@@ -5,7 +5,7 @@ const { ROUTING_SCHEMA, normalizeDecision, decisionAllowsDelegation, routingProm
 const { citationAudit, mergeResearch, renderCitations } = require("./research-coordinator");
 const { LocalAgentToolRegistry, compactResearchContext, isOngoingRequest } = require("./local-agent-tools");
 const { providers, isSupportedLocalModel } = require("./model-catalog");
-const { NEXT_80B_THINKING_Q4_MODEL, Q4_CONTEXT_TOKENS, Q4_OUTPUT_TOKENS, isNextThinkingModel } = require("./nethra-models");
+const { NEXT_80B_THINKING_Q4_MODEL, Q4_CONTEXT_TOKENS, Q4_OUTPUT_TOKENS, Q4_SAMPLING, Q4_LOAD_OPTIONS, isNextThinkingModel } = require("./nethra-models");
 const { environmentContext } = require("./assistant-environment");
 const { ModelWarmer } = require("./model-warmer");
 const { isSelfCapabilityQuestion, capabilityResult } = require('./self-capabilities');
@@ -177,6 +177,7 @@ class LocalAgentRuntime {
     if (!this.modelWarmers.has(model)) this.modelWarmers.set(model, new ModelWarmer({
       fetchImpl: this.fetch, ollamaUrl: this.ollamaUrl, model,
       contextTokens: model === NEXT_80B_THINKING_Q4_MODEL ? Q4_CONTEXT_TOKENS : DEFAULT_CONTEXT_TOKENS,
+      loadOptions: model === NEXT_80B_THINKING_Q4_MODEL ? Q4_LOAD_OPTIONS : {},
       retention: () => this.warmer.keepAlive(),
       freeMemory: this.warmer.freeMemory
     }));
@@ -236,7 +237,26 @@ class LocalAgentRuntime {
     const rawMeasurement = options.rawMeasurement === true;
     const streaming = !rawMeasurement && Boolean(onText || options.onThinking || options.stream || (Number.isFinite(options.thinkingBudget) && options.thinkingBudget > 0));
     const streamStarted = Date.now(), timeout = AbortSignal.timeout(isNextThinkingModel(model) ? 12 * 60_000 : OLLAMA_CALL_TIMEOUT_MS), budgetStop = new AbortController(), combined = AbortSignal.any([...(signal ? [signal] : []), timeout, budgetStop.signal]);
-    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, { method: "POST", headers: { "content-type": "application/json" }, signal: combined, body: JSON.stringify({ model, messages, ...(tools?.length ? {tools} : {}), ...(format ? {format} : {}), stream: streaming, think: thinking, keep_alive: this.warmer.keepAlive(), options: { temperature: Number.isFinite(options.temperature)?Math.max(0,Math.min(2,options.temperature)):isNextThinkingModel(model) ? 0.6 : 0.2, num_ctx: q4 ? Q4_CONTEXT_TOKENS : DEFAULT_CONTEXT_TOKENS, num_predict: Number.isFinite(options.num_predict) ? Math.max(thinkingOnly&&!rawMeasurement ? 1024 : 1,Math.min(q4 ? Q4_OUTPUT_TOKENS : isNextThinkingModel(model) ? 8192 : 3072,Math.floor(options.num_predict))) : q4 ? Q4_OUTPUT_TOKENS : isNextThinkingModel(model) ? 4096 : thinkingOnly ? 1536 : format ? 160 : 350 } }) });
+    const extendedThinking = isNextThinkingModel(model);
+    const maxOutput = q4 ? Q4_OUTPUT_TOKENS : extendedThinking ? 8192 : 3072;
+    const defaultOutput = q4 ? Q4_OUTPUT_TOKENS : extendedThinking ? 4096 : thinkingOnly ? 1536 : format ? 160 : 350;
+    const temperature = Number.isFinite(options.temperature)
+      ? Math.max(0, Math.min(2, options.temperature))
+      : extendedThinking ? Q4_SAMPLING.temperature : 0.2;
+    const response = await this.fetch(`${this.ollamaUrl}/api/chat`, {
+      method: "POST", headers: { "content-type": "application/json" }, signal: combined,
+      body: JSON.stringify({
+        model, messages, ...(tools?.length ? {tools} : {}), ...(format ? {format} : {}),
+        stream: streaming, think: thinking, keep_alive: this.warmer.keepAlive(),
+        options: {
+          ...(q4 ? {...Q4_SAMPLING, ...Q4_LOAD_OPTIONS} : {}), temperature,
+          num_ctx: q4 ? Q4_CONTEXT_TOKENS : DEFAULT_CONTEXT_TOKENS,
+          num_predict: Number.isFinite(options.num_predict)
+            ? Math.max(thinkingOnly && !rawMeasurement ? 1024 : 1, Math.min(maxOutput, Math.floor(options.num_predict)))
+            : defaultOutput
+        }
+      })
+    });
     if (response.ok && streaming && response.body) {
       const decoder = new TextDecoder(); let buffer = "", content = "", thinking = "", final = null, thinkingEvents = 0; const calls = new Map();
       const budget = Number.isFinite(options.thinkingBudget) && options.thinkingBudget > 0 ? options.thinkingBudget : Infinity;
