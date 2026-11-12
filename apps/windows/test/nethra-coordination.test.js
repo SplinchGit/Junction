@@ -65,10 +65,43 @@ test('the owner chooses an actual advisor proposal and both advisors receive the
  assert.equal(questions.length,2);assert.equal(questions[0],questions[1]);
  assert.match(questions[0],/Make voice interruption reliable/);
  assert.match(task.summary,/different proposals/i);
- store.answer(task.id,'approve claude pilot',task.revision,'choose',task.coordination.questionId);
+ store.chatTurn(task.id,"Approve the Claude pilot. Generally we'll prefer Claude's work. Thanks Nethra",'choose',{conversationId:task.conversationId,questionId:task.coordination.questionId});
  await run();
  assert.deepEqual(proposed,{task:'Show call state.',acceptance:'Verify the call state becomes idle after call teardown.'});
  assert.equal(store.get(task.id).coordination.workId,'voice-work');
+ assert.equal(questions.length,2,'an approval must reuse the saved consultations');
+});
+
+test('pilot approval accepts a simple typo and rejects a conditional or negative instruction',()=>{
+ const {pilotChoice}=require('../src/nethra-coordination');
+ assert.equal(pilotChoice('Aprove codex pilot'),'codex');
+ assert.equal(pilotChoice('Approve the Claude pilot, please.'),'claude');
+ assert.equal(pilotChoice('Approve codex pilot only if it changes the scope.'),null);
+ assert.equal(pilotChoice('Approve codex pilot. Wait for me before drafting.'),null);
+ assert.equal(pilotChoice('Do not approve codex pilot.'),null);
+ assert.equal(pilotChoice('Approve codex pilot?'),null);
+});
+
+test('a review requesting revision cannot loop through the same approved draft',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-coordination-'));
+ const store=new NethraStore(dir);
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'self-improvement'});
+ store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ let reviews=0;
+ const tools={async execute(name){
+  if(name==='propose_code_work'){reviews++;return {review:'VERDICT: REVISE Specify which receipt proves success.'};}
+  return {advice:'Friction: Unclear status.\nImprovement: Show the active engineer.\nTest: Confirm the active engineer matches the current Foreman attempt.'};
+ }};
+ const run=async()=>{const claim=store.claim('test');try{await runCoordination(claim.task,{store,tools,token:claim.token});}finally{store.release(claim.task.id,claim.token);}};
+ await run();task=store.get(task.id);
+ store.answer(task.id,'approve pilot',task.revision,'approve',task.coordination.questionId);
+ await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'revision_needed');
+ assert.doesNotMatch(task.summary,/approve pilot/i);
+ store.answer(task.id,'approve pilot',task.revision,'retry',task.coordination.questionId);
+ await run();
+ assert.equal(reviews,1);
 });
 
 test('an uncertain advisor call asks before retrying',async t=>{

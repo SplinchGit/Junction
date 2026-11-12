@@ -79,7 +79,8 @@
  const visible=task=>!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
  const needsOwner=kind=>['approval','input','blocked','owner_resume'].includes(kind);
  const updateObjectiveStatus=objectives=>{const active=objectives.filter(visible).length;objectiveStatus.textContent=active?`${active} active`:'Tasks';objectiveStatus.classList.toggle('has-active',active>0);};
- const updateStrip=()=>{const linked=lastObjectives.filter(row=>row.conversationId&&row.conversationId===activeConversationId);strip.hidden=!linked.length;if(!linked.length)return;const row=linked[0],wake='',needs=needsOwner(row.tracking?.waitingFor?.kind)?' · needs you':'',progress=row.progress?.total?` · Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}${row.step?`: ${row.step}`:''}`:'';strip.textContent=`${linked.length>1?`${linked.length} tasks · `:''}${row.goal} · ${row.live?'Working now':row.status.replaceAll('_',' ')}${needs}${wake}${progress} · ${row.nextWakeAt?`Next wake ${time(row.nextWakeAt)}`:'No wake scheduled'}`;};
+ const taskEngine=row=>row.coordinateSelfImprovement?'Codex + Claude coordination':`Task model: ${taskModels.find(([id])=>id===row.model)?.[1]||'Qwen3 30B'}`;
+ const updateStrip=()=>{const linked=lastObjectives.filter(row=>row.conversationId&&row.conversationId===activeConversationId);strip.hidden=!linked.length;if(!linked.length)return;const row=linked[0],wake=` · ${taskEngine(row)}`,needs=needsOwner(row.tracking?.waitingFor?.kind)?' · needs you':'',progress=row.progress?.total?` · Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}${row.step?`: ${row.step}`:''}`:'';strip.textContent=`${linked.length>1?`${linked.length} tasks · `:''}${row.goal} · ${row.live?'Working now':row.status.replaceAll('_',' ')}${needs}${wake}${progress} · ${row.nextWakeAt?`Next wake ${time(row.nextWakeAt)}`:'No wake scheduled'}`;};
  const refreshBadge=async()=>{try{lastObjectives=(await api('nethra.list')).objectives;updateObjectiveStatus(lastObjectives);updateStrip();}catch{objectiveStatus.textContent='Tasks';}};
  window.addEventListener('junction:chat-opened',refreshBadge);
  strip.onclick=()=>{const row=lastObjectives.find(item=>item.conversationId===activeConversationId);if(row)selectedId=row.id;setDrawerOpen(true);};
@@ -135,7 +136,7 @@
      const topActions=el('div');topActions.className='task-actions';
      const topDelete=button('Delete',async()=>{if(window.confirm('Delete this task and its drafts? Its ordinary conversation is kept. This cannot be undone.'))await deleteTask(row.id);});topDelete.className='danger';
      const editButton=el('button','Edit');editButton.type='button';editButton.onclick=()=>{const editor=detailCard.querySelector('.task-editor');if(editor){editor.hidden=!editor.hidden;if(!editor.hidden)editor.scrollIntoView({block:'nearest'});}};
-     topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',taskModels.find(([id])=>id===row.model)?.[1]||'Qwen3 30B'),{className:'task-detail-model'}));
+     topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',taskEngine(row)),{className:'task-detail-model'}));
      const {task,codeWork=[],approvals,events,attention,progress,performance,experiments,projects=[],children=[],agents=[],projectDocuments=[],approvedDocumentStatus=[]}=await api('nethra.get',{id:row.id});
      if(deletedIds.has(row.id)||selectedId!==row.id)continue;
      for(const document of approvedDocumentStatus){
@@ -290,7 +291,7 @@
        const redirect=el('details');redirect.append(el('summary','Change direction'));const redirectRow=el('div');redirectRow.className='redirect-row';const direction=el('textarea');direction.placeholder='Tell Nethra the new direction (keeps verified evidence)';direction.setAttribute('aria-label','Redirect objective');direction.maxLength=10000;
        redirectRow.append(direction,button('Redirect',()=>api('nethra.redirect',{id:task.id,revision:task.revision,instruction:direction.value})));redirect.append(redirectRow);detailCard.append(redirect);
        const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
-       const taskModel=select('Task model ',taskModels,task.model||'qwen3:30b');
+       const taskModel=select('Local task model ',taskModels,task.model||'qwen3:30b');
        const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
        const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
        const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');

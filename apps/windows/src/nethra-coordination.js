@@ -7,7 +7,24 @@ const BRIEF='Nethra is a persistent local companion with Tasks, Android pairing,
 
 const selfImprovementTask=task=>/^self[ -]improvement[.!]?$/i.test(String(task.goal||'').trim())&&!task.parentId;
 const summarizeAdvice=advice=>String(advice||'').replace(/\s+/g,' ').trim().slice(0,320);
-const ownerBrief=task=>[...(task.ownerInputs||[])].reverse().find(i=>!/^\s*(?:approve (?:(?:codex|claude) )?pilot|retry consultation|continue coordination)[.!]?\s*$/i.test(i.text||''))?.text.replace(/^\s*GPT brief:\s*/i,'').trim().slice(0,700)||'';
+function pilotChoice(text){
+  const value=String(text||'').trim();
+  const match=/^(?:please\s+)?(?:approve|aprove)\s+(?:the\s+)?(?:(codex|claude)(?:'s)?\s+)?pilot(?:,?\s+please)?(?:[.!]+\s*|$)([\s\S]*)$/i.exec(value);
+  if(!match)return null;
+  const trailing=match[2].split(/[.!]+/).map(part=>part.trim()).filter(Boolean);
+  if(trailing.some(part=>!(/^(?:thanks|thank you)(?:,?\s+nethra)?$/i.test(part)||/^generally\s+(?:we['’]ll|we will|i)\s+prefer\s+(?:codex|claude)['’]s\s+work$/i.test(part))))return null;
+  return match[1]?.toLowerCase()||'shared';
+}
+function ownerBrief(task){
+  const answered=new Set((task.questions||[]).map(question=>question.answerRequestId).filter(Boolean));
+  for(const input of [...(task.ownerInputs||[])].reverse()){
+    const text=String(input.text||'').trim();
+    if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
+    if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||/^(?:retry consultation|continue coordination)[.!]?$/i.test(text))continue;
+    if(text)return text.slice(0,700);
+  }
+  return '';
+}
 function allowsCoordinationWork(task,project){
   if(!task.coordination)return true;
   return task.coordinateSelfImprovement&&task.allowCodeWork&&!task.privateProjectWork&&!['PAUSED','CANCELLED','FAILED','COMPLETED'].includes(task.status)&&
@@ -65,6 +82,9 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
   if(!task.allowCodeWork||task.privateProjectWork){
     return sleep(now()+HALF_HOUR,task.privateProjectWork?'Coordination needs a task approved for external advisors.':'Enable Codex and Claude development work in the Windows task settings.');
   }
+  if(state.stage==='revision_needed'){
+    return ask(`The approved pilot needs a clearer scope or test before I can save a draft. ${state.draftReview} Reply “GPT brief: …” with the change you want reviewed.`, 'revision_needed');
+  }
   if(state.stage==='interrupted'){
     if(!/^retry consultation[.!]?$/i.test(answer()?.trim()||''))return ask('An advisor request was interrupted before its result was saved. Reply “retry consultation” to try that advisor again.', 'interrupted');
     const advisors={...state.advisors};delete advisors[state.interruptedProvider];
@@ -103,10 +123,10 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
       state={...state,stage:'consulting',advisors,questionId:null};
       return persist({status:'SLEEPING',nextWakeAt:now()+1000,summary:'Retrying only incomplete advisor proposals.'},'COORDINATION_RETRY');
     }
-    const {proposals,question}=decision(state),choice=/^approve (?:(codex|claude) )?pilot[.!]?$/i.exec(answer()?.trim()||'');
-    const provider=choice?.[1]?.toLowerCase()||(!choice?.[1]&&choice&&JSON.stringify(proposals.codex)===JSON.stringify(proposals.claude)?'codex':null);
+    const {proposals,question}=decision(state),choice=pilotChoice(answer());
+    const provider=choice==='shared'?(JSON.stringify(proposals.codex)===JSON.stringify(proposals.claude)?'codex':null):choice;
     const selected=provider&&proposals[provider];
-    if(!selected)return ask(question,'decision');
+    if(!selected)return ask(`I kept the saved proposals. I need a clear pilot choice before drafting.\n${question}`,'decision');
     state={...state,stage:'drafting',selected,approvedAt:now()};
     await persist({summary:'Pilot approved. Preparing the reviewed Work Activity draft.'},'COORDINATION_PILOT_APPROVED');
   }
@@ -121,7 +141,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
     }
     if(!result.workId){
       state={...state,draftReview:summarizeAdvice(result.review)};
-      return ask(`The draft needs revision. No implementation started. ${state.draftReview}\n${decision(state).question}`,'decision');
+      return ask(`The approved pilot needs a clearer scope or test before I can save a draft. ${state.draftReview} Reply “GPT brief: …” with the change you want reviewed.`, 'revision_needed');
     }
     state={...state,stage:'tracking',workId:result.workId};
     await persist({summary:'Draft saved. Start it in Work Activity to authorize engineering.'},'COORDINATION_DRAFT_READY');
@@ -131,4 +151,4 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
     work.status==='DRAFT'?'Draft saved. Start it in Work Activity to authorize engineering.':work.nextAction||`Work Activity: ${work.status}.`);
 }
-module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork};
+module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice};
