@@ -68,7 +68,7 @@ class CodexAppServer {
     return this.request("account/rateLimits/read");
   }
 
-  async run({ threadId, cwd, prompt, model, onProgress = () => {}, onTurnStarted = () => {}, handoffAtCapacity, signal }) {
+  async run({ threadId, cwd, prompt, model, readOnly = false, onProgress = () => {}, onTurnStarted = () => {}, handoffAtCapacity, signal }) {
     if (signal?.aborted) throw new Error("Paused");
     await this.start();
     if (signal?.aborted) throw new Error("Paused");
@@ -76,9 +76,9 @@ class CodexAppServer {
     // app's user configuration. Choose its supported default, never a quota fallback.
     if (!model) { const catalog=await this.request("model/list",{}); model=catalog?.data?.find(item=>item.isDefault)?.model; }
     if (threadId) await this.request("thread/resume", { threadId });
-    else threadId = (await this.request("thread/start", { cwd, ...(model ? {model} : {}), approvalPolicy: "never", sandbox: "workspace-write" })).thread.id;
+    else threadId = (await this.request("thread/start", { cwd, ...(model ? {model} : {}), approvalPolicy: "never", sandbox: readOnly ? "read-only" : "workspace-write" })).thread.id;
     onTurnStarted({ threadId, dispatchPending: true });
-    let turnId = null, finalText = "", handoffRetryAt = null;
+    let turnId = null, finalText = "", finalAnswer = null, handoffRetryAt = null;
     const requestHandoff = () => {
       if (!turnId || !handoffRetryAt || handoffSent) return;
       handoffSent = true;
@@ -100,13 +100,14 @@ class CodexAppServer {
         if(message.params?.threadId !== threadId) return;
         if(turnId && message.params?.turnId && message.params.turnId !== turnId) return;
         const item = message.params?.item;
+        if(message.method==='item/completed'&&item?.type==='agentMessage'&&item.phase==='final_answer'&&typeof item.text==='string')finalAnswer=item.text.slice(-96000);
         if (message.method === "item/agentMessage/delta") {
           const delta = message.params?.delta || ""; finalText = (finalText + delta).slice(-64000); onProgress(delta); return;
         }
         if (message.method === "turn/completed" && (!turnId || message.params?.turn?.id === turnId)) {
           off();
           const turn = message.params?.turn;
-          turn?.status === "completed" ? resolve({ threadId, turnId: turn.id, text: finalText, handoffRetryAt }) : reject(Object.assign(new Error(turn?.error?.message || `Codex turn ${turn?.status || "failed"}.`), {data:turn?.error}));
+          turn?.status === "completed" ? resolve({ threadId, turnId: turn.id, text: finalAnswer??finalText, handoffRetryAt }) : reject(Object.assign(new Error(turn?.error?.message || `Codex turn ${turn?.status || "failed"}.`), {data:turn?.error}));
         }
       });
     });
@@ -115,7 +116,7 @@ class CodexAppServer {
     if(signal?.aborted) throw new Error("Paused");
     const started = await this.request("turn/start", {
       threadId, input: [{ type: "text", text: prompt }], cwd,
-      approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }, ...(model ? {model} : {})
+      approvalPolicy: "never", sandboxPolicy: readOnly ? { type: "readOnly" } : { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false }, ...(model ? {model} : {})
     });
     turnId = started.turn.id;
     requestHandoff();

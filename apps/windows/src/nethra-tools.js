@@ -176,7 +176,7 @@ class NethraTools {
       if(!gate.available){
         // Point at the other advisor when it can answer now, rather than sleeping until this one resets.
         const other=provider==='codex'?'claude':'codex',otherReady=await (other==='codex'?this.codexStatus():this.claudeStatus()).then(s=>s.ready&&this.advisorLimits.check(other).then(g=>g.available)).catch(()=>false);
-        throw Error(`${label} is resting: ${gate.detail} ${otherReady?`${ADVISORS[other]} is available now through consult_${other}.`:'Schedule a wake for then, or continue without this advice.'}`);
+        throw Object.assign(Error(`${label} is resting: ${gate.detail} ${otherReady?`${ADVISORS[other]} is available now through consult_${other}.`:'Schedule a wake for then, or continue without this advice.'}`),{retryAt:gate.nextAvailableAt});
       }
       this.store.recordConsult?.(task.id,provider,token);
       const request=`${advisorContext(task)}\nObjective: ${String(task.goal||'').slice(0,500)}\nSuccess criteria: ${String(task.successCriteria||'').slice(0,500)}\nQuestion from Nethra: ${args.question}\nAnswer in at most 250 words.`;
@@ -186,7 +186,7 @@ class NethraTools {
           ?await this.codexConsult({messages:[{role:'user',content:request}],memories:[],context:null,research:null,workingDirectory:task.workspace,model:'gpt-5.6-luna',isolated:true,signal})
           :await this.claudeConsult({prompt:request,workingDirectory:task.workspace,model:'sonnet',signal,onRateLimit:snapshot=>this.advisorLimits.recordClaude(snapshot)});
       }catch(error){
-        if(error.rateLimit){const after=await this.advisorLimits.check(provider);throw Error(`${label} usage limit reached. ${after.detail}`);}
+        if(error.rateLimit){const after=await this.advisorLimits.check(provider);throw Object.assign(Error(`${label} usage limit reached. ${after.detail}`),{retryAt:after.nextAvailableAt});}
         throw error;
       }finally{this.advisorLimits.invalidate(provider);}
       signal?.throwIfAborted();

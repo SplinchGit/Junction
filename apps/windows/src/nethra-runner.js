@@ -117,12 +117,15 @@ function systemPrompt(tools){
 }
 // Streaming lets the runtime cap each step's reasoning so one step cannot spend a whole wake thinking.
 const OBJECTIVE_THINKING_BUDGET=1100;
+const {runCoordination}=require('./nethra-coordination');
+
 class NethraRunner {
   constructor({store,runtime,researchCoordinator,deviceCommands=null,calendar=null,gmail=null,proposeCodeWork=null,performanceReport=null,localData=null,workStatus=null,advisorLimits=null,projectById=()=>null,readProjectDocument=null,listProjectDocuments=null,now=()=>Date.now()}={}){
     if(!store||!runtime)throw Error('Nethra requires a store and local runtime');
     Object.assign(this,{store,runtime,now,localData,projectById,listProjectDocuments});this.tools=new NethraTools({store,researchCoordinator,deviceCommands,calendar,gmail,proposeCodeWork,performanceReport,localData,workStatus,advisorLimits,readProjectDocument,modelInference:true});
   }
   async execute(task,{signal,token,checkpoint,inference=callback=>callback()}={}){
+    if(task.coordinateSelfImprovement===true)return runCoordination(task,{tools:this.tools,store:this.store,checkpoint,signal,token,now:this.now});
     if(typeof this.runtime.withInference!=='function')throw Error('Shared inference lock is required');
     task={...task,model:task.model||DEFAULT_MODEL};
     profileFor(task.model);

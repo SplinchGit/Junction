@@ -2,10 +2,74 @@ const {test}=require('node:test');const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const {ForemanExecutor,retryDeadline,engineeringPacket,validateVerification}=require('../src/foreman-executor');
+test('shared checkout keeps both providers on main and verifies a separate snapshot without committing source',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-shared-')),repo=path.join(root,'repo');fs.mkdirSync(repo);
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ git('init','-b','main');fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');fs.writeFileSync(path.join(repo,'owner.txt'),'original\n');git('add','.');git('-c','user.name=Test','-c','user.email=test@localhost','commit','-m','baseline');
+ const head=git('rev-parse','HEAD');fs.writeFileSync(path.join(repo,'owner.txt'),'owner edit\n');
+ const future=Math.floor(Date.now()/1000)+1800;let started=false;
+ const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:started?95:0,resetsAt:future}}}),request:async()=>({account:{type:'chatgpt'}}),stop:async()=>{},run:async({cwd,readOnly})=>{
+  assert.equal(cwd,repo);assert.equal(readOnly,true);started=true;return {text:'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 1;\n+module.exports = 2;\n',handoffRetryAt:future*1000};
+ }};
+ const executor=new ForemanExecutor(path.join(root,'state'),{server,advisorLimits:{snapshot:async()=>({checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:1,resetsAt:future*1000}]})},claudeStatus:async()=>({subscription:true}),runClaude:async({workingDirectory})=>{
+  assert.equal(workingDirectory,repo);return {content:'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 2;\n+module.exports = 3;\n'};
+ }});
+ executor.command=async cwd=>{assert.notEqual(cwd,repo);assert.equal(fs.readFileSync(path.join(cwd,'answer.js'),'utf8'),'module.exports = 3;\n');return {exitCode:0,stdout:'pass',stderr:''};};
+ const p={id:'shared',sharedCheckout:true,autoHandoff:true,objective:'Fix answer',...await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]})};
+ const task={id:'t',kind:'codex',title:'Set answer',acceptance:'Answer is three',files:['answer.js'],attempts:[{}]};
+ const options={signal:new AbortController().signal,checkpoint:fields=>{Object.assign(task.attempts.at(-1),fields);if(fields.worktree)p.worktree=fields.worktree;}};
+ await assert.rejects(executor.run(p,task,options),/handoff is ready/i);task.attempts.push({});
+ const result=await executor.run(p,task,options);
+ assert.equal(git('rev-parse','HEAD'),head);assert.equal(git('branch','--show-current'),'main');
+ assert.equal(fs.readFileSync(path.join(repo,'owner.txt'),'utf8'),'owner edit\n');
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 3;\n');
+ assert.equal(result.sharedSourceHash,await executor.sourceHash(repo,false,p.scopeKind));
+ // A failed verifier may have left an untracked file in its checkpoint. The next
+ // verification must reflect the current canonical manifest, not that leftover.
+ fs.writeFileSync(path.join(result.worktree,'stale.js'),'stale\n');
+ const verified=await executor.run(p,{...task,kind:'verify',attempts:[{}]},options);
+ assert.equal(fs.existsSync(path.join(verified.worktree,'stale.js')),false);
+});
 test('capacity respects latest applicable reset; unknown reached capacity is not available',()=>{
  assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:100,resetsAt:200},secondary:{usedPercent:100,resetsAt:300}}},100000),360000);
  assert.equal(retryDeadline({rateLimits:{rateLimitReachedType:'quota'}},100000),400000);
  assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:10,resetsAt:300}}},100000),null);
+ assert.equal(retryDeadline({rateLimits:{primary:{resetsAt:300}}},100000),400000);
+});
+
+test('shared writer lock excludes another provider and never removes its lock',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-lock-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ execFileSync('git',['init','-b','main'],{cwd:root});
+ const e=new ForemanExecutor(path.join(root,'state'),{server:{}}),p={id:'one',repoPath:root};
+ const release=await e.acquireWriter(p);
+ await assert.rejects(e.acquireWriter({...p,id:'two'}),/writer lock/);
+ release();const second=await e.acquireWriter({...p,id:'two'});second();
+});
+
+test('shared patches reject protected files and source changes before any write',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-protected-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));execFileSync('git',['init','-b','main'],{cwd:root});
+ fs.writeFileSync(path.join(root,'answer.test.js'),'before\n');
+ const e=new ForemanExecutor(path.join(root,'state'),{server:{}}),p={repoPath:root};
+ const before=await e.sourceHash(root,true);
+ const patch='diff --git a/answer.test.js b/answer.test.js\n--- a/answer.test.js\n+++ b/answer.test.js\n@@ -1 +1 @@\n-before\n+weakened\n';
+ await assert.rejects(e.applySharedPatch(p,root,patch,[],before),/protected verification/);
+ assert.equal(fs.readFileSync(path.join(root,'answer.test.js'),'utf8'),'before\n');
+ fs.writeFileSync(path.join(root,'answer.test.js'),'owner changed\n');
+ await assert.rejects(e.applySharedPatch(p,root,patch,[],before),/source changed/);
+ assert.equal(fs.readFileSync(path.join(root,'answer.test.js'),'utf8'),'owner changed\n');
+});
+
+test('Claude LF diff applies to a CRLF scoped file in a canonical subfolder',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-crlf-')),folder=path.join(root,'app');
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ fs.mkdirSync(folder);execFileSync('git',['init','-b','main'],{cwd:root});
+ fs.writeFileSync(path.join(folder,'answer.js'),'const answer = 1;\r\n');
+ const e=new ForemanExecutor(path.join(root,'state'),{server:{}});
+ await e.applyClaudePatch(folder,'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-const answer = 1;\n+const answer = 2;\n',{'answer.js':'const answer = 1;\r\n'});
+ assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'const answer = 2;\r\n');
 });
 test('verification only accepts explicit bounded argv; packet has owner scope and all evidence',()=>{
  assert.throws(()=>validateVerification([]),/verification/i);
@@ -84,7 +148,7 @@ test('95 percent requests a handoff and Claude verifies the same isolated candid
  const future=Math.floor(Date.now()/1000)+1800;
  let codexCalls=0,claudeCalls=0;
  const server={
-  readRateLimits:async()=>({rateLimits:{primary:{usedPercent:94,resetsAt:future}}}),
+  readRateLimits:async()=>({rateLimits:{primary:{usedPercent:codexCalls?95:94,resetsAt:future}}}),
   request:async()=>({account:{type:'chatgpt'}}),
   run:async({cwd,handoffAtCapacity})=>{
    codexCalls++;
@@ -115,4 +179,81 @@ test('95 percent requests a handoff and Claude verifies the same isolated candid
  assert.equal(result.tests[0].exitCode,0);
  assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
  await assert.rejects(executor.applyClaudePatch(result.worktree,'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 3;\n+module.exports = 4;\n',{}),/file scope/);
+});
+
+test('a crashed host lock is reclaimed only after its recorded process has exited',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-stale-lock-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ execFileSync('git',['init','-b','main'],{cwd:root});
+ const lock=path.join(root,'.git','nethra-writer.lock'),alive=new Set([4242]);
+ const e=new ForemanExecutor(path.join(root,'state'),{server:{},processAlive:pid=>alive.has(pid)}),p={id:'one',repoPath:root};
+ const write=value=>fs.writeFileSync(lock,JSON.stringify(value));
+ // A running host, this process, and a lock without a host process (an engineer's manual lock) all keep ownership.
+ for(const holder of [{pid:4242,nonce:'live'},{pid:process.pid,nonce:'self'},{pid:null,provider:'claude',nonce:'manual'},{pid:777}]){
+  write(holder);await assert.rejects(e.acquireWriter(p),/writer lock/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(lock,'utf8')),holder);
+ }
+ fs.writeFileSync(lock,'not json');await assert.rejects(e.acquireWriter(p),/writer lock/);
+ // An interrupted reclamation is never raced; it stays for a person to reconcile.
+ write({pid:777,nonce:'crashed'});fs.writeFileSync(lock+'.reclaim','{}');
+ await assert.rejects(e.acquireWriter(p),/writer lock/);fs.unlinkSync(lock+'.reclaim');
+ const release=await e.acquireWriter(p);
+ assert.equal(JSON.parse(fs.readFileSync(lock,'utf8')).pid,process.pid);assert.equal(fs.existsSync(lock+'.reclaim'),false);
+ await assert.rejects(e.acquireWriter({...p,id:'two'}),/writer lock/);
+ release();assert.equal(fs.existsSync(lock),false);
+});
+
+test('write ownership is held only during a provider turn and released by handoff and Pause without a late patch',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-owner-')),repo=path.join(root,'repo');fs.mkdirSync(repo);
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ git('init','-b','main');fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');git('add','.');git('-c','user.name=Test','-c','user.email=test@localhost','commit','-m','baseline');
+ const lock=path.join(repo,'.git','nethra-writer.lock'),future=Math.floor(Date.now()/1000)+1800,owners=[];
+ const patch=(from,to)=>`diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = ${from};\n+module.exports = ${to};\n`;
+ let started=false,pause=null;
+ const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:started?95:0,resetsAt:future}}}),request:async()=>({account:{type:'chatgpt'}}),stop:async()=>{},run:async()=>{
+  owners.push(['codex',fs.existsSync(lock)]);started=true;return {text:patch(1,2),handoffRetryAt:future*1000};
+ }};
+ const executor=new ForemanExecutor(path.join(root,'state'),{server,advisorLimits:{snapshot:async()=>({checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:1,resetsAt:future*1000}]})},claudeStatus:async()=>({subscription:true}),runClaude:async()=>{
+  owners.push(['claude',fs.existsSync(lock)]);pause?.abort();return {content:patch(2,3)};
+ }});
+ executor.command=async()=>({exitCode:0,stdout:'pass',stderr:''});
+ const p={id:'shared',sharedCheckout:true,autoHandoff:true,objective:'Fix answer',...await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]})};
+ const task={id:'t',kind:'codex',title:'Set answer',acceptance:'Answer is three',files:['answer.js'],attempts:[{}]};
+ const run=signal=>executor.run(p,task,{signal,checkpoint:fields=>{Object.assign(task.attempts.at(-1),fields);if(fields.worktree)p.worktree=fields.worktree;}});
+ await assert.rejects(run(new AbortController().signal),/handoff is ready/i);
+ // The outgoing provider's checkpoint is saved and the lock is gone before the next provider is dispatched.
+ assert.equal(fs.existsSync(lock),false);
+ assert.equal(task.attempts[0].engineeringHandoff.changed[0],'answer.js');assert.ok(task.attempts[0].engineeringHandoff.codexRetryAt>Date.now());
+ task.attempts.push({});pause=new AbortController();
+ await assert.rejects(run(pause.signal));
+ assert.deepEqual(owners,[['codex',true],['claude',true]]);
+ assert.equal(fs.existsSync(lock),false);
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 2;\n');
+ // Resume continues the same saved work with the same provider handoff.
+ task.attempts.push({});pause=null;
+ const result=await run(new AbortController().signal);
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 3;\n');
+ assert.equal(result.tests[0].exitCode,0);assert.equal(fs.existsSync(lock),false);
+});
+
+test('with neither provider available the wait ends at a confirmed reset or a recheck, never an assumed availability',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-neither-')),repo=path.join(root,'repo');fs.mkdirSync(repo);
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ git('init','-b','main');fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');git('add','.');git('-c','user.name=Test','-c','user.email=test@localhost','commit','-m','baseline');
+ const codexReset=Math.floor(Date.now()/1000)+7200,claudeReset=Date.now()+3600000;let dispatched=0,claude;
+ const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:97,resetsAt:codexReset}}}),request:async()=>({account:{type:'chatgpt'}}),stop:async()=>{},run:async()=>{dispatched++;}};
+ const executor=new ForemanExecutor(path.join(root,'state'),{server,advisorLimits:{snapshot:async()=>claude,recordClaude(){}},claudeStatus:async()=>({subscription:false}),runClaude:async()=>{dispatched++;}});
+ const p={id:'shared',sharedCheckout:true,autoHandoff:true,objective:'Fix answer',...await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]})};
+ const task={id:'t',kind:'codex',title:'Set answer',acceptance:'Answer is three',files:['answer.js'],attempts:[{}]};
+ const run=()=>executor.run(p,task,{signal:new AbortController().signal,checkpoint:fields=>{if(fields.worktree)p.worktree=fields.worktree;}}).then(()=>assert.fail('dispatched'),error=>error);
+ claude={checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:99,resetsAt:claudeReset}]};
+ let wait=await run();
+ assert.equal(wait.retryAt,claudeReset+60000);assert.match(wait.capacityDetail,/confirmed provider capacity/);
+ // No usable Claude reading: recheck soon, but never later than Codex's confirmed reset and never a dispatch.
+ claude=null;wait=await run();
+ assert.ok(wait.retryAt>Date.now()&&wait.retryAt<=codexReset*1000+60000);
+ assert.equal(dispatched,0);assert.equal(fs.existsSync(path.join(repo,'.git','nethra-writer.lock')),false);
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
 });

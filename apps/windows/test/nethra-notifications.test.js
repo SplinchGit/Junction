@@ -148,3 +148,41 @@ test('a verified code candidate notifies once and is withdrawn after apply',t=>{
  project.appliedAt=store.now();
  assert.equal(notificationDeliveryPolicy(first,store,policy),'cancel');
 });
+
+test('75 minutes of active development sends one check-in only with saved evidence; waits and pauses do not count',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-code-checkin-'));
+ const minute=60_000,start=Date.UTC(2026,10,12,12,0,0);let now=start;
+ const store=new NethraStore(dir,{now:()=>now}),queue=new DeviceCommandStore(dir);
+ t.after(()=>{store.close();queue.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const {queueCodeWorkNotification}=require('../src/nethra-conversation-report');
+ store.setSettings({notificationDeviceId:'phone',quietHours:{enabled:true,start:'22:00',end:'07:00'}});
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'self-improvement'});
+ task=store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ const attempt={status:'RUNNING',activeAt:start,provider:'codex'};
+ const project={id:'work',autoHandoff:true,sourceObjectiveId:task.id,status:'RUNNING',tasks:[{attempts:[attempt]}],updatedAt:start};
+ const send=()=>queueCodeWorkNotification(task,project,store,queue,{date:new Date(now)});
+ now=start+74*minute;attempt.lastEvidenceAt=start+70*minute;
+ assert.equal(send(),null,'below 75 active minutes');
+ now=start+80*minute;delete attempt.lastEvidenceAt;
+ assert.equal(send(),null,'no saved checkpoint or verification result');
+ attempt.lastEvidenceAt=start+70*minute;
+ const first=send();
+ assert.match(first.args.eventId,/progress-1$/);assert.match(first.args.body,/checkpoint or verification/);
+ now=start+100*minute;assert.equal(send().id,first.id,'one update per interval');
+ // A capacity wait of three hours adds no active time, so no second update is due.
+ Object.assign(attempt,{status:'FAILED',finishedAt:start+100*minute});project.status='WAITING_CAPACITY';now=start+280*minute;
+ assert.equal(send().id,first.id);
+ // The second interval needs new evidence inside it, and a paused task sends nothing.
+ const next={status:'RUNNING',activeAt:now,provider:'claude'};project.tasks[0].attempts.push(next);project.status='RUNNING';
+ now+=60*minute;assert.equal(send(),null,'a second update needs new evidence inside its interval');
+ next.lastEvidenceAt=now-5*minute;
+ const paused={...task,status:'PAUSED'};
+ assert.equal(queueCodeWorkNotification(paused,project,store,queue,{date:new Date(now)}),null);
+ const second=send();assert.match(second.args.eventId,/progress-2$/);assert.notEqual(second.id,first.id);
+ // Delivery honours quiet hours and withdraws the update once the owner limits proactive updates.
+ const policy={projects:()=>[project]};
+ assert.equal(notificationDeliveryPolicy(second,store,{...policy,date:new Date(2026,10,12,13,0,0)}),'deliver');
+ assert.equal(notificationDeliveryPolicy(second,store,{...policy,date:new Date(2026,10,12,23,30,0)}),'hold');
+ store.setSettings({proactiveUpdates:'IMPORTANT'});
+ assert.equal(notificationDeliveryPolicy(second,store,{...policy,date:new Date(2026,10,12,13,0,0)}),'cancel');
+});

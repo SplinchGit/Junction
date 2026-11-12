@@ -192,7 +192,7 @@ class NethraStore {
     if(!requestId)throw new Error('A request ID is required');
     const binding=canonical({kind:'configure',id,patch,revision}),old=this.db.prepare('SELECT * FROM requests WHERE id=?').get(requestId);
     if(old){if(old.binding!==binding)throw new Error('Request payload mismatch');return this.replay(old);}
-    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
+    if(Object.keys(patch).some(key=>!['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model','coordinateSelfImprovement'].includes(key))||!Object.keys(patch).length)throw new Error('Invalid objective configuration');
     if(patch.model!==undefined)profileFor(patch.model);
     if(patch.continuous!==undefined&&typeof patch.continuous!=='boolean')throw new Error('Invalid continuous preference');
     if(patch.allowCodeWork!==undefined&&typeof patch.allowCodeWork!=='boolean')throw new Error('Invalid Codex work preference');
@@ -203,6 +203,19 @@ class NethraStore {
     if(patch.sources!==undefined&&!validSources(patch.sources))throw new Error('Invalid watched sources');
     const pacingOnly=Object.keys(patch).length===1&&Object.hasOwn(patch,'continuous');
     let task=this.get(id);if(task.revision!==revision&&!pacingOnly)throw new Error('Nethra revision conflict');if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');
+    if(Object.hasOwn(patch,'coordinateSelfImprovement')){
+      const {selfImprovementTask}=require('./nethra-coordination');
+      if(typeof patch.coordinateSelfImprovement!=='boolean'||Object.keys(patch).length!==1||(!selfImprovementTask(task)&&!task.coordination))throw new Error('Coordination applies to the Self Improvement task');
+      if(patch.coordinateSelfImprovement&&(!task.persistent||!task.allowCodeWork||task.privateProjectWork||!task.conversationId))throw new Error('Coordination requires a persistent task with a linked conversation and approved development work');
+      this.fenceInside(id);task=this.get(id);
+      if(patch.coordinateSelfImprovement&&!task.coordination){
+        task.coordination={stage:'consulting',advisors:{}};
+        if(task.status==='SLEEPING')task.nextWakeAt=this.now();
+      }else if(!patch.coordinateSelfImprovement&&task.coordination?.questionId){
+        task.questions=task.questions.map(q=>q.id===task.coordination.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
+        if(task.status==='WAITING_FOR_USER'&&!task.questions.some(q=>q.status==='OPEN')&&!this.approvals(id).some(a=>a.status==='PENDING'))task.status='ACTIVE';
+      }
+    }
     // The owner can change pacing while a model pass is active. The runner reads the
     // saved preference at the end of the pass; other edits still require no lease.
     if(!pacingOnly){if(patch.model!==undefined&&patch.model!==task.model){this.fenceInside(id);task=this.get(id);}else this.assertLease(id);}Object.assign(task,patch);
@@ -313,7 +326,7 @@ class NethraStore {
     this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_INVALIDATED',JSON.stringify({id,reason:experiment.result.detail}));
     return experiment;
   });}
-  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const priorEvidence=task.evidence||[],nextEvidence=patch.evidence;const latest=Array.isArray(nextEvidence)?nextEvidence.at(-1):null;const freshEvidence=latest&&!latest.result?.error&&!(latest.tool==='propose_code_work'&&latest.result?.status==='REVISE')&&(nextEvidence.length>priorEvidence.length||JSON.stringify(latest)!==JSON.stringify(priorEvidence.at(-1)));const progressed=freshEvidence||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','questions','evidence','contextCheckpoint','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
+  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const priorEvidence=task.evidence||[],nextEvidence=patch.evidence;const latest=Array.isArray(nextEvidence)?nextEvidence.at(-1):null;const freshEvidence=latest&&!latest.result?.error&&!(latest.tool==='propose_code_work'&&latest.result?.status==='REVISE')&&(nextEvidence.length>priorEvidence.length||JSON.stringify(latest)!==JSON.stringify(priorEvidence.at(-1)));const progressed=freshEvidence||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','questions','evidence','contextCheckpoint','coordination','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   /** Host repair after raising the shared context window. Preserve the objective checkpoint. */
   retryContextBlocked(id) {return this.transaction(()=>{
     const task=this.get(id);

@@ -21,7 +21,7 @@ function retryDeadline(value,now=Date.now()){
  const groups=value?.rateLimitsByLimitId?Object.values(value.rateLimitsByLimitId):value?.rateLimits?[value.rateLimits]:[];
  if(!groups.some(g=>g.primary||g.secondary||g.rateLimitReachedType))return now+300000;
  let unknown=false;const deadlines=[];
- for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean))if(Number(w.usedPercent)>=95||reached){if(Number.isFinite(w.resetsAt)&&w.resetsAt*1000>now)deadlines.push(w.resetsAt*1000+60000);else unknown=true;}if(reached&&!g.primary&&!g.secondary)unknown=true;}
+ for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean)){if(!Number.isFinite(w.usedPercent)){unknown=true;continue;}if(w.usedPercent>=95||reached){if(Number.isFinite(w.resetsAt)&&w.resetsAt*1000>now)deadlines.push(w.resetsAt*1000+60000);else unknown=true;}}if(reached&&!g.primary&&!g.secondary)unknown=true;}
  return deadlines.length?Math.max(...deadlines,unknown?now+300000:0):unknown?now+300000:null;
 }
 function protectedVerification(p,cwd,checks){
@@ -30,14 +30,15 @@ function protectedVerification(p,cwd,checks){
  return f=>explicitlyProtected(f)||verificationPaths.includes(f)||/(^|\/)(tests?|__tests__|\.github)\//i.test(f)||/(^|\/)([^/]*[._-](test|spec)[._-][^/]*|package\.json|.*lock.*|[^/]*config[^/]*|Makefile|CMakeLists\.txt|build\.gradle[^/]*)$/i.test(f);
 }
 function engineeringPacket(p,t,{patchOnly=false}={}){return [
+ ...(patchOnly?['PATCH AUTHORING ONLY: Your sole deliverable is a raw unified Git diff. Inspect files read-only as needed. Do not edit files, run verification commands, use GUI automation, or work around the read-only sandbox. Foreman validates and applies your diff and runs the fixed verification commands. Treat implementation below as authoring this patch, not changing files yourself. The owner authorizes this patch-only workflow without additional skill/process confirmations.']:[]),
  `Objective (owner approved): ${p.objective}\nJames has explicitly started this scoped implementation task and approved ordinary reversible implementation and testing. Execute it now. Do not ask for another design/process confirmation or stop at a plan; report only genuinely missing product decisions or external authority.`, `Architecture: ${p.handoff||'Inspect only the registered project. Preserve working systems.'}\nDecisions: ${JSON.stringify(p.decisions||[])}`,
  `Exact task: ${t.title}`,`Relevant files: ${JSON.stringify(t.files||[])}; work only within the supplied checkout. Baseline: ${p.verifiedSha||p.baseSha}`,
- 'Constraints: small reversible changes; no network, credentials, system changes, other repositories, push, merge, or weakened tests. Never change .git, .codex, hooks, or security controls. Do not run dependency install scripts. Do not commit: the foreman verifies and commits. If authority or a product decision is missing, finish with JUNCTION_DECISION_REQUIRED: followed by the question.',
+ 'Constraints: small reversible changes; no network, credentials, system changes, other repositories, push, merge, or weakened tests. Never change .git, .codex, hooks, or security controls. Do not run dependency install scripts. Do not commit: verification records a detached checkpoint; canonical commits remain with the authorised engineering session. If authority or a product decision is missing, finish with JUNCTION_DECISION_REQUIRED: followed by the question.',
  `Previous attempts: ${JSON.stringify(t.attempts.slice(-3)).slice(-10000)}`,`Build/test failures: ${t.attempts.filter(a=>a.error).map(a=>a.error).slice(-3).join('\n')||'None recorded'}`,
  `Acceptance criteria: ${t.acceptance}`,patchOnly?'Requested output: return the raw unified Git diff, starting with diff --git. Foreman runs verification.':`Requested output: implement this one task, then a concise summary of changes and remaining risks. Verification commands are fixed by the owner: ${JSON.stringify(p.verification)}`
  ].join('\n\n');}
 class ForemanExecutor{
- constructor(directory,{server,runGit,advisorLimits,runClaude=sendClaudeConsult,claudeStatus=getClaudeStatus}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});Object.assign(this,{runGit,advisorLimits,runClaude,claudeStatus});}
+ constructor(directory,{server,runGit,advisorLimits,runClaude=sendClaudeConsult,claudeStatus=getClaudeStatus,mayWrite=()=>true,processAlive=pid=>{try{process.kill(pid,0);return true;}catch(error){return error.code==='EPERM';}}}={}){this.directory=directory;fs.mkdirSync(directory,{recursive:true});this.server=server||new CodexAppServer({cwd:directory});Object.assign(this,{runGit,advisorLimits,runClaude,claudeStatus,mayWrite,processAlive});}
  async git(cwd,args){if(this.runGit)return this.runGit(cwd,args);const r=await exec('git',['-c','core.hooksPath=NUL','-c','core.fsmonitor=false','-c','commit.gpgSign=false','-c','protocol.file.allow=never','-C',cwd,...args],{windowsHide:true,shell:false,timeout:30000,maxBuffer:8*1024*1024,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}});return r.stdout;}
  async inspect(input){
   let requested=fs.realpathSync(input.repoPath),scopeFile=null;if(fs.statSync(requested).isFile()){scopeFile=path.basename(requested);requested=path.dirname(requested);}if(!fs.statSync(requested).isDirectory())throw new Error('Work scope must be a file or folder');
@@ -52,6 +53,7 @@ class ForemanExecutor{
  async sourceHash(root,includeProtected=false,scopeKind=null){const names=(await this.names(root,scopeKind)).filter(n=>n&&relative(n)&&(includeProtected||!forbidden.test(n)));const hash=crypto.createHash('sha256');let total=0;for(const n of new Set(names)){const f=path.join(root,n);if(!fs.existsSync(f))continue;const stat=fs.lstatSync(f);if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(f).startsWith(fs.realpathSync(root)+path.sep))throw new Error('Unsupported project path');total+=stat.size;if(stat.size>32*1024*1024||total>512*1024*1024)throw new Error('Project snapshot exceeds safety limit');hash.update(n+'\0');hash.update(fs.readFileSync(f));}return hash.digest('hex');}
  async review(p){
   if(!p.worktree||!p.verifiedSha)throw new Error('No verified candidate');
+  if(p.sharedCheckout&&(!p.sharedSourceHash||await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sharedSourceHash))throw new Error('Shared checkout changed since verification; verify again before review');
   if((await this.git(p.worktree,['status','--porcelain'])).trim())throw new Error('Candidate has unverified changes');
   const head=(await this.git(p.worktree,['rev-parse','HEAD'])).trim();if(head!==p.verifiedSha)throw new Error('Candidate moved since verification');
   const diff=await this.git(p.worktree,['diff','--binary','junction/verified',head]);
@@ -71,6 +73,7 @@ class ForemanExecutor{
  async applyReviewed(p){
   if(!p.reviewed)throw new Error('Review the exact candidate first');const review=await this.review(p);
   if(review.headSha!==p.reviewed.headSha||review.diffHash!==p.reviewed.diffHash)throw new Error('Candidate changed; review again');
+  if(p.sharedCheckout)return {summary:'Verified shared-checkout changes reviewed. No files staged or committed; the authorised engineer owns integration.'};
   if((await this.git(p.repoPath,['status','--porcelain'])).trim())throw new Error('Original checkout has uncommitted work. Commit it before applying; Junction will not discard it.');
   if(await this.sourceHash(p.repoPath,false,p.scopeKind)!==p.sourceHash)throw new Error('Original project changed; rebase and re-verify before integration');
   if(!review.patch.trim())throw new Error('No changes to apply');
@@ -83,11 +86,11 @@ class ForemanExecutor{
   // Leave the exact reviewed patch staged: owner retains control of the original branch commit.
   return {summary:'Reviewed changes applied and staged in the original checkout; inspect and commit when ready.'};
  }
- async command(cwd,command,signal,timeoutMs=120000){
+ async command(cwd,command,signal,timeoutMs=120000,verificationEnv={}){
   if(signal?.aborted)throw new Error('Paused');await this.server.start();
   const processId=crypto.randomUUID();const abort=()=>this.server.request('command/exec/terminate',{processId}).catch(()=>this.server.stop());
   signal?.addEventListener('abort',abort,{once:true});
-  try{if(signal?.aborted)throw new Error('Paused');const result=await this.server.request('command/exec',{processId,cwd,command,timeoutMs,sandboxPolicy:{type:'workspaceWrite',writableRoots:[cwd],networkAccess:false,excludeTmpdirEnvVar:true},env:{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',OPENAI_API_KEY:null,CODEX_API_KEY:null,GH_TOKEN:null,GITHUB_TOKEN:null}},timeoutMs+10000);if(signal?.aborted)throw new Error('Paused');return result;}finally{signal?.removeEventListener('abort',abort);}
+  try{if(signal?.aborted)throw new Error('Paused');const result=await this.server.request('command/exec',{processId,cwd,command,timeoutMs,sandboxPolicy:{type:'workspaceWrite',writableRoots:[cwd],networkAccess:false,excludeTmpdirEnvVar:true},env:{...verificationEnv,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',OPENAI_API_KEY:null,CODEX_API_KEY:null,GH_TOKEN:null,GITHUB_TOKEN:null}},timeoutMs+10000);if(signal?.aborted)throw new Error('Paused');return result;}finally{signal?.removeEventListener('abort',abort);}
  }
  async prepare(p,task,checkpoint,signal){
   const projectDir=path.join(this.directory,p.id);fs.mkdirSync(projectDir,{recursive:true});
@@ -113,11 +116,45 @@ class ForemanExecutor{
  }
  async handoff(cwd,p,t,summary){
   const base=p.verifiedSha||'junction/verified';
-  const changed=(await this.git(cwd,['diff','--name-only',base])).trim().split(/\r?\n/).filter(Boolean);
-  const untracked=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).trim().split(/\r?\n/).filter(Boolean);
+  const changed=(await this.workingGit(p,cwd,['diff','--name-only',base])).trim().split(/\r?\n/).filter(Boolean);
+  const untracked=(await this.workingGit(p,cwd,['ls-files','--others','--exclude-standard'])).trim().split(/\r?\n/).filter(Boolean);
   if([...changed,...untracked].some(file=>!relative(file)||forbidden.test(file)))throw new Error('Handoff contains a protected path');
-  return {base,head:(await this.git(cwd,['rev-parse','HEAD'])).trim(),sourceHash:await this.sourceHash(cwd,true),
+  return {base,head:(await this.workingGit(p,cwd,['rev-parse','HEAD'])).trim(),sourceHash:await this.sourceHash(cwd,true),
     changed,untracked,summary:String(summary).slice(0,2000),verification:'Pending on the candidate'};
+ }
+ workingGit(p,cwd,args){return p.sharedCheckout?this.git(p.worktree,[`--work-tree=${cwd}`,...args]):this.git(cwd,args);}
+ async applySharedPatch(p,cwd,patch,checks,before,signal){
+  if(await this.sourceHash(cwd,true)!==before)throw new Error('Shared source changed while the provider was reasoning; reconcile before applying');
+  const files=[...String(patch).matchAll(/^\+\+\+ b\/(.+)\r?$/gm)].map(m=>m[1].trimEnd());
+  const protectedPath=protectedVerification(p,cwd,checks);
+  if(!files.length||files.some(name=>!relative(name)||forbidden.test(name)||protectedPath(name)||(p.scopeFile&&name!==p.scopeFile)))throw new Error('Owner review required: patch exceeds approved source scope or changes protected verification');
+  const sources=await this.claudeSources(cwd,{files},{changed:[],untracked:[]},protectedPath);
+  if(files.some(name=>!Object.hasOwn(sources,name)))throw new Error('Patch requires additional file scope; no source changed');
+  await this.applyClaudePatch(cwd,patch,sources,signal,()=>{if(!this.mayWrite(p))throw new Error('Owner direction or permission changed; no patch applied');});
+ }
+ async acquireWriter(p){
+  const root=(await this.git(p.repoPath,['rev-parse','--show-toplevel'])).trim();
+  if((await this.git(root,['branch','--show-current'])).trim()!=='main')throw new Error('Shared engineering requires the canonical main checkout');
+  const common=(await this.git(root,['rev-parse','--git-common-dir'])).trim();
+  const file=path.resolve(root,common,'nethra-writer.lock');
+  const identity={pid:process.pid,project:p.id,nonce:crypto.randomUUID(),at:Date.now()};
+  const claim=()=>fs.writeFileSync(file,JSON.stringify(identity),{flag:'wx'});
+  try{claim();}catch(error){
+   if(error.code!=='EEXIST')throw error;
+   const held=new Error('The shared checkout has a writer lock. Wait for its provider to stop; reconcile a crashed writer before removing its lock.');
+   const holder=()=>{try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return null;}};
+   // Shared patches are applied by the Foreman host itself, so a lock recorded by a host
+   // process that has exited has no writer. Any other lock stays until a person reconciles it.
+   const crashed=lock=>Number.isSafeInteger(lock?.pid)&&lock.pid>0&&lock.pid!==process.pid&&typeof lock.nonce==='string'&&!this.processAlive(lock.pid);
+   const stale=holder();if(!crashed(stale))throw held;
+   const reclaim=`${file}.reclaim`;
+   try{fs.writeFileSync(reclaim,JSON.stringify(identity),{flag:'wx'});}catch{throw held;}
+   try{
+    const current=holder();if(current?.nonce!==stale.nonce||!crashed(current))throw held;
+    fs.unlinkSync(file);claim();
+   }catch(inner){if(inner===held||inner.code==='EEXIST')throw held;throw inner;}finally{fs.unlinkSync(reclaim);}
+  }
+  return ()=>{if(JSON.parse(fs.readFileSync(file,'utf8')).nonce!==identity.nonce)throw new Error('Shared checkout writer ownership changed');fs.unlinkSync(file);};
  }
  async claudeSources(cwd,t,handoff,protectedPath){
   const files=[...new Set([...(t.files||[]),...handoff.changed,...handoff.untracked])];
@@ -133,20 +170,34 @@ class ForemanExecutor{
   }
   return sources;
  }
- async applyClaudePatch(cwd,patch,sources,signal){
+ async applyClaudePatch(cwd,patch,sources,signal,authorize=()=>{}){
   const output=patch.trim();
   const fenced=/^```(?:diff|patch)?\r?\n([\s\S]*?)\r?\n```$/i.exec(output);
-  const clean=(fenced?.[1]||output).trimEnd()+'\n';
+  let clean=(fenced?.[1]||output).trimEnd()+'\n';
   if(!clean.startsWith('diff --git ')||Buffer.byteLength(clean)>96000||/^(?:old mode|new mode|new file mode|deleted file mode|rename |copy |GIT binary patch)/m.test(clean))throw new Error('Claude did not return a scoped textual patch');
   const directory=fs.mkdtempSync(path.join(this.directory,'claude-patch-'));
   const file=path.join(directory,'candidate.diff');
   try{
+   const root=(await this.git(cwd,['rev-parse','--show-toplevel'])).trim();
+   const prefix=path.relative(root,cwd).replaceAll('\\','/');
+   if(!relative(prefix||'.'))throw new Error('Patch scope escapes the canonical checkout');
+   const directoryArg=prefix?[`--directory=${prefix}`]:[];
+   // Diff metadata uses LF; only hunk payloads follow the supplied source EOL.
+   let crlf=false,inHunk=false;
+   clean=clean.split('\n').map(line=>{
+    line=line.replace(/\r$/,'');
+    if(line.startsWith('diff --git ')){inHunk=false;crlf=false;}
+    if(line.startsWith('+++ b/')){const source=sources[line.slice(6)];crlf=typeof source==='string'&&source.includes('\r\n')&&!/(?<!\r)\n/.test(source);}
+    if(line.startsWith('@@ ')){inHunk=true;return line;}
+    return crlf&&inHunk&&/^[ +\-]/.test(line)?line+'\r':line;
+   }).join('\n');
    fs.writeFileSync(file,clean,{flag:'wx'});
-   const stats=(await this.git(cwd,['apply','--numstat','-z','--',file])).split('\0').filter(Boolean);
-   if(!stats.length||stats.some(line=>{const match=/^\d+\t\d+\t([^\r\n\t]+)$/.exec(line);return !match||!Object.hasOwn(sources,match[1]);}))throw new Error('Claude patch exceeds the handoff file scope');
-   await this.git(cwd,['apply','--check','--',file]);
+   const stats=(await this.git(root,['apply','--numstat','-z',...directoryArg,'--',file])).split('\0').filter(Boolean);
+   if(!stats.length||stats.some(line=>{const match=/^\d+\t\d+\t([^\r\n\t]+)$/.exec(line);const name=match?.[1];return !name||(prefix&&!name.startsWith(prefix+'/'))||!Object.hasOwn(sources,prefix?name.slice(prefix.length+1):name);}))throw new Error('Claude patch exceeds the handoff file scope');
+   await this.git(root,['apply','--check',...directoryArg,'--',file]);
    signal?.throwIfAborted();
-   await this.git(cwd,['apply','--',file]);
+   authorize();
+   await this.git(root,['apply',...directoryArg,'--',file]);
   }finally{fs.unlinkSync(file);fs.rmdirSync(directory);}
  }
  async claudeCapacity({probe=false,signal}={}){
@@ -175,12 +226,15 @@ class ForemanExecutor{
   return confirmed.ready?confirmed:{ready:false,retryAt:confirmed.retryAt||now+3600000};
  }
  async run(p,t,{signal,checkpoint}){
+  const release=p.sharedCheckout?await this.acquireWriter(p):null;
   let stopping;const interrupt=()=>{stopping=this.server.stop();};signal.addEventListener('abort',interrupt,{once:true});
-  try { return await this.runTask(p,t,{signal,checkpoint}); } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;}
+  try { return await this.runTask(p,t,{signal,checkpoint}); } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;release?.();}
  }
  async runTask(p,t,{signal,checkpoint}){
   const checks=validateVerification(p.verification);
-  const cwd=await this.prepare(p,t,checkpoint,signal);
+  const candidate=await this.prepare(p,t,checkpoint,signal);
+  p={...p,worktree:candidate};
+  let cwd=p.sharedCheckout?fs.realpathSync(p.repoPath):candidate;
   if(signal.aborted)throw new Error('Paused');
   try{
    if(t.kind!=='verify'){
@@ -194,7 +248,8 @@ class ForemanExecutor{
     }
     if(signal.aborted)throw new Error('Paused');
     const previousHandoff=t.attempts.slice(0,-1).reverse().find(a=>a.engineeringHandoff?.codexRetryAt)?.engineeringHandoff;
-    if(p.autoHandoff&&previousHandoff?.codexRetryAt>Date.now())capacity=Math.max(capacity||0,previousHandoff.codexRetryAt);
+    // A fresh live account reading supersedes a saved reset deadline (owner may reset usage).
+    if(!codexSnapshot&&p.autoHandoff&&previousHandoff?.codexRetryAt>Date.now())capacity=Math.max(capacity||0,previousHandoff.codexRetryAt);
     if(capacity&&!p.autoHandoff)throw Object.assign(new Error('Waiting for confirmed Codex capacity'),{retryAt:capacity});
     const previous=t.attempts.slice(0,-1).reverse().find(a=>a.threadId);
     if(previous?.threadId){const state=await this.server.request('thread/read',{threadId:previous.threadId,includeTurns:true});const active=state.thread?.turns?.some(x=>x.status==='inProgress');if(active)throw new Error('Previous Codex turn is still active; reconcile before resuming');}
@@ -213,19 +268,22 @@ class ForemanExecutor{
      if(!(await this.claudeStatus()).subscription)throw Object.assign(new Error('Claude subscription sign-in is unavailable'),{retryAt:Math.min(capacity,Date.now()+300000),capacityDetail:'Waiting for Claude subscription sign-in or Codex capacity'});
      signal.throwIfAborted();
      checkpoint({provider:'claude',engineeringHandoff:handoff,summary:'Claude continuing the scoped candidate'});
-     const result=await this.runClaude({prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
+     const result=await this.runClaude({workingDirectory:cwd,prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
        subscriptionOnly:true,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
        onRateLimit:snapshot=>this.advisorLimits?.recordClaude(snapshot)});
      signal.throwIfAborted();
      if(result.content.startsWith('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.content.slice(0,2000));
      if((await this.sourceHash(cwd,true))!==handoff.sourceHash)throw new Error('Worktree changed during Claude handoff; reconcile before applying the candidate');
-     await this.applyClaudePatch(cwd,result.content,sources,signal);
+     if(p.sharedCheckout)await this.applySharedPatch(p,cwd,result.content,checks,handoff.sourceHash,signal);
+     else await this.applyClaudePatch(cwd,result.content,sources,signal);
     }else{
      if(p.autoHandoff&&(await this.server.request('account/read',{refreshToken:false})).account?.type!=='chatgpt')throw Object.assign(new Error('Codex subscription sign-in is unavailable'),{retryAt:Date.now()+300000,capacityDetail:'Waiting for Codex subscription sign-in'});
      signal.throwIfAborted();
      checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
      try{
-      const result=await this.server.run({cwd,prompt:engineeringPacket(p,t),signal,onTurnStarted:ids=>checkpoint(ids),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
+      const before=p.sharedCheckout?await this.sourceHash(cwd,true):null;
+      const result=await this.server.run({cwd,readOnly:p.sharedCheckout===true,prompt:engineeringPacket(p,t,{patchOnly:p.sharedCheckout===true}),signal,onTurnStarted:ids=>checkpoint(ids),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
+      if(p.sharedCheckout&&(!result.handoffRetryAt||result.text.trim().startsWith('diff --git ')))await this.applySharedPatch(p,cwd,result.text,checks,before,signal);
       if(result.handoffRetryAt){
        const handoff=await this.handoff(cwd,p,t,result.text);
        checkpoint({engineeringHandoff:{...handoff,codexRetryAt:result.handoffRetryAt},summary:'Codex handoff saved'});
@@ -243,17 +301,30 @@ class ForemanExecutor{
      }
     }
    }
-   const changed=(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
-   const added=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
+   const changed=(await this.workingGit(p,cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
+   const added=(await this.workingGit(p,cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
    if(p.scopeFile&&[...changed,...added].some(f=>f!==p.scopeFile))throw new Error('Candidate changed files outside the owner-named file scope');
    if([...changed,...added].some(f=>forbidden.test(f)))throw new Error('Candidate touched a protected path');
    for(const name of [...changed,...added]){const file=path.join(cwd,name);if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw new Error('Candidate contains a symlink');}
    const protectedChecks=[...changed,...added].filter(protectedVerification(p,cwd,checks));
    if(protectedChecks.length)throw new Error(`Owner review required: candidate changed verification or dependency definitions: ${protectedChecks.join(', ')}`);
+   let sharedSourceHash;
+   if(p.sharedCheckout){
+    sharedSourceHash=await this.sourceHash(cwd,false,p.scopeKind);
+    const sourceNames=(await this.names(cwd,p.scopeKind)).filter(name=>!forbidden.test(name)&&fs.existsSync(path.join(cwd,name)));
+    const candidateNames=(await this.names(candidate,p.scopeKind)).filter(name=>!forbidden.test(name));
+    // Replace the entire verification manifest, including untracked files left by a failed check.
+    for(const name of new Set([...sourceNames,...candidateNames])){
+     if(!relative(name)||forbidden.test(name))throw new Error('Unsafe shared change');
+     const from=path.join(cwd,name),to=path.join(candidate,name);
+     if(sourceNames.includes(name)){fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to);}else if(fs.existsSync(to))fs.unlinkSync(to);
+    }
+    cwd=candidate;
+   }
    checkpoint({phase:'verifying',summary:'Verifying candidate'});
    const beforeTests=await this.sourceHash(cwd,true);
    const tests=[];
-   for(const profile of checks){if(signal.aborted)throw new Error('Paused');const target=fs.realpathSync(path.join(cwd,profile.cwd));if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');const r=await this.command(target,profile.command,signal,profile.timeoutMs);const evidence={command:profile.command,exitCode:r.exitCode,output:(r.stdout+'\n'+r.stderr).slice(-12000)};tests.push(evidence);checkpoint({tests,summary:`Verification ${tests.length}/${checks.length}: exit ${r.exitCode}`});if(r.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);}
+   for(const profile of checks){if(signal.aborted)throw new Error('Paused');const target=fs.realpathSync(path.join(cwd,profile.cwd));if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');const r=await this.command(target,profile.command,signal,profile.timeoutMs,p.sharedCheckout?{NODE_PATH:path.join(p.repoPath,'node_modules')}:{});const evidence={command:profile.command,exitCode:r.exitCode,output:(r.stdout+'\n'+r.stderr).slice(-12000)};tests.push(evidence);checkpoint({tests,summary:`Verification ${tests.length}/${checks.length}: exit ${r.exitCode}`});if(r.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);}
    if(signal.aborted)throw new Error('Paused');
    const afterTests=await this.sourceHash(cwd,true);
    if(beforeTests!==afterTests)throw new Error('Verification changed project source or created untracked files; inspect candidate before retrying');
@@ -262,7 +333,8 @@ class ForemanExecutor{
    if((await this.git(cwd,['diff','--cached','--name-only'])).trim())await this.git(cwd,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','-m',`Verified task ${t.id}: ${t.title}`]);
    const headSha=(await this.git(cwd,['rev-parse','HEAD'])).trim();
    checkpoint({headSha,tests,summary:'Candidate committed after verification'});
-   return {headSha,tests,summary:`${t.title}: ${checks.length} verification commands passed. Commit ${headSha.slice(0,12)}.`,worktree:cwd,branch:null};
+   if(p.sharedCheckout&&sharedSourceHash!==await this.sourceHash(p.repoPath,false,p.scopeKind))throw new Error('Shared source changed during verification; verify again before reporting success');
+   return {headSha,tests,...(p.sharedCheckout?{sharedSourceHash}:{}),summary:`${t.title}: ${checks.length} verification commands passed. Checkpoint ${headSha.slice(0,12)}.`,worktree:cwd,branch:null};
   }catch(error){
    if(signal.aborted)throw error;
    if(error.retryAt)throw error;

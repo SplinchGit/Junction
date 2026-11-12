@@ -6,6 +6,15 @@ const {NethraApi}=require('../src/nethra-api');
 const {LocalDataStore}=require('../src/local-data');
 function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-api-'));const store=new NethraStore(dir);t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});return {store,api:new NethraApi({store,runtime:{modelCapabilities:async()=>({known:true,thinking:true})}})};}
 
+test('revoking development permission immediately pauses linked engineering',async t=>{
+ const {store,api}=fixture(t);let paused=false;
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'c'});
+ task=store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ api.onCoordinationControl=async(saved,action)=>{assert.equal(saved.allowCodeWork,false);assert.equal(action,'pause');paused=true;};
+ await api.dispatch('nethra.configure',{id:task.id,revision:task.revision,allowCodeWork:false},'revoke','desktop');
+ assert.equal(paused,true);
+});
+
 test('Android selects its notification phone and shared policy through the public API',async t=>{
   const {store,api}=fixture(t);
   const payload={notificationDeviceId:'phone-1',proactiveUpdates:'IMPORTANT',quietHours:{enabled:true,start:'21:30',end:'08:00'}};

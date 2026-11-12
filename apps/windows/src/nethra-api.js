@@ -6,6 +6,7 @@ const {performanceReport}=require('./nethra-performance');
 const {isSupportedLocalModel}=require('./model-catalog');
 const {taskContract}=require('./nethra-task-contract');
 const {projectDocumentStatus}=require('./nethra-project-documents');
+const {codeWorkSummary}=require('./nethra-work-status');
 const TYPES = ['nethra.agent.create','nethra.projectDocument','nethra.project','nethra.edit','nethra.delete','nethra.warm','nethra.redirect','nethra.list','nethra.get','nethra.openChat','nethra.reunion','nethra.create','nethra.configure','nethra.control','nethra.approve','nethra.settings','nethra.status','nethra.answer','nethra.message','nethra.device.pull','nethra.device.result','nethra.device.enqueue','nethra.device.list','nethra.source.calendar','nethra.source.gmail','nethra.advisors','nethra.child.stop'];
 const DEVICE_ID=/^[A-Za-z0-9._:-]{1,160}$/;
 function childSummary(child) {
@@ -13,7 +14,7 @@ function childSummary(child) {
     startedAt:child.startedAt,finishedAt:child.finishedAt??null,report:String(child.result?.report||'').slice(0,400),error:String(child.error||'').slice(0,200)};
 }
 class NethraApi {
-  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null,advisors=null,describeTask=null,onDeleteTask=null,listProjects=()=>[],listProjectDocuments=()=>[],readProjectDocument=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact,advisors,describeTask,onDeleteTask,listProjects,listProjectDocuments,readProjectDocument}); }
+  constructor({store,scheduler,runtime,localData=null,onSettings=async()=>{},deviceCommands=null,calendar=null,gmail=null,presence=null,onPhoneContact=null,advisors=null,describeTask=null,onDeleteTask=null,onCoordinationControl=null,listProjects=()=>[],listProjectDocuments=()=>[],readProjectDocument=null}) { Object.assign(this,{store,scheduler,runtime,localData,onSettings,deviceCommands,calendar,gmail,presence,onPhoneContact,advisors,describeTask,onDeleteTask,onCoordinationControl,listProjects,listProjectDocuments,readProjectDocument}); }
   async reconcileDeletions(id=null) {
     const records=id?[this.store.deletion(id)].filter(Boolean):this.store.pendingDeletions();
     for(const record of records){
@@ -91,9 +92,10 @@ class NethraApi {
           live:agent.id===liveId,continuous:agent.continuous===true,mode:agent.mode,nextWakeAt:agent.nextWakeAt,
           tracking:{doing:tracking.doing,waitingFor:{kind:tracking.waitingFor.kind},wake:tracking.wake}};
       });
+      const codeWork=this.listProjects().filter(project=>project.sourceObjectiveId===task.id).slice(0,4).map(codeWorkSummary);
       if(source==='desktop'){
         const projectDocuments=task.projectId?this.listProjectDocuments(task.projectId):[];
-        return {task,approvals,events,attention:s.attention(task.id),progress,performance,experiments,contract,children,agents,projects:this.listProjects().map(({id,name})=>({id,name})),projectDocuments,approvedDocumentStatus:projectDocumentStatus(task,projectDocuments)};
+        return {task,codeWork,approvals,events,attention:s.attention(task.id),progress,performance,experiments,contract,children,agents,projects:this.listProjects().map(({id,name})=>({id,name})),projectDocuments,approvedDocumentStatus:projectDocumentStatus(task,projectDocuments)};
       }
       // Keep the exact actionable payload when it fits. Older approvals and
       // large evidence remain on Windows; the mobile frame is bounded.
@@ -103,8 +105,8 @@ class NethraApi {
       const briefList=value=>(Array.isArray(value)?value:[]).slice(-8).map(item=>short(item,300));
       const mobileTask={id:task.id,parentId:task.parentId||null,conversationId:task.conversationId||null,goal:short(task.goal,1000),successCriteria:short(task.successCriteria,1000),status:task.status,mode:task.mode||'FINITE',model:task.model||'qwen3:30b',continuous:task.continuous===true,revision:task.revision,nextWakeAt:task.nextWakeAt,lastExecutionAt:task.lastExecutionAt,summary:short(task.summary,1000),plan:briefList(task.plan),completedSteps:briefList(task.completedSteps),pendingSteps:briefList(task.pendingSteps),evidence:(task.evidence||[]).slice(-4).map(item=>({tool:item.tool,result:short(JSON.stringify(item.result||item),800)})),errors:(task.errors||[]).slice(-3).map(item=>short(JSON.stringify(item),400)),persistent:task.persistent,thinking:task.thinking,autonomy:task.autonomy||'BALANCED',priority:task.priority||3,checkIn:task.checkIn||'WEEKLY',nextDirectionCheckAt:task.nextDirectionCheckAt||null,lastMeaningfulProgressAt:task.lastMeaningfulProgressAt||null};
       const mobileProgress={...progress,evidence:progress.evidence.slice(-4),outputs:progress.outputs.slice(-4).map(item=>({...item,path:String(item.path||'').slice(-200)}))};
-      const codeWork=this.listProjects().filter(project=>project.sourceObjectiveId===task.id).slice(0,4).map(project=>({id:project.id,status:project.status,nextAction:String(project.nextAction||'').slice(0,240),provider:project.tasks?.find(t=>t.id===project.activeTask)?.attempts.at(-1)?.provider||null,phase:project.tasks?.find(t=>t.id===project.activeTask)?.attempts.at(-1)?.phase||null,retryAt:project.retryAt}));
-      const result={codeWork,...(payload.approvalId!==undefined&&!selected?{approvalUnavailable:true}:{}),progress:mobileProgress,performance,task:mobileTask,contract,children,agents,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
+            const coordination=task.coordinateSelfImprovement&&task.coordination?{stage:task.coordination.stage,advisors:Object.fromEntries(Object.entries(task.coordination.advisors||{}).map(([name,value])=>[name,{status:value.status,retryAt:value.retryAt??null,reason:short(value.reason,200)}]))}:null;
+      const result={codeWork,coordination,...(payload.approvalId!==undefined&&!selected?{approvalUnavailable:true}:{}),progress:mobileProgress,performance,task:mobileTask,contract,children,agents,approvals:selected?[selected]:[],moreApprovals:Math.max(0,pending.length-(selected?1:0)),events:events.slice(-15).map(event=>({...event,detail:short(JSON.stringify(event.detail),300)})),attention:s.attention(task.id).slice(-10).map(item=>({kind:item.kind,source:item.source,evidenceRef:short(item.evidenceRef,300),state:item.state,dueAt:item.dueAt}))};
       if(Buffer.byteLength(JSON.stringify(result))>50000&&selected){
         const content=String(selected.args?.content||'');
         result.approvals=[{...selected,args:{...selected.args,content:content.slice(0,1000)},contentSha256:crypto.createHash('sha256').update(content).digest('hex'),reviewOnWindows:true}];
@@ -164,16 +166,29 @@ class NethraApi {
       return {task};
     }
     if(type==='nethra.configure'){
-      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model'].includes(key)))throw new Error('Unknown objective configuration');
-      if(source!=='desktop'&&payload.allowCodeWork===true)throw new Error('Enable Codex development work on Windows');
-      return {task:s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId)};
+      if(Object.keys(payload).some(key=>!['id','revision','autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model','coordinateSelfImprovement'].includes(key)))throw new Error('Unknown objective configuration');
+      if(source!=='desktop'&&(payload.allowCodeWork===true||Object.hasOwn(payload,'coordinateSelfImprovement')))throw new Error('Change development coordination on Windows');
+      const task=s.configure(payload.id,Object.fromEntries(['autonomy','priority','checkIn','sources','mode','continuous','allowCodeWork','model','coordinateSelfImprovement'].filter(key=>Object.hasOwn(payload,key)).map(key=>[key,payload[key]])),payload.revision,requestId);
+      if(payload.coordinateSelfImprovement===false||payload.allowCodeWork===false)await this.onCoordinationControl?.(task,'pause');
+      return {task};
     }
-    if(type==='nethra.control')return {task:s.control(payload.id,payload.action,payload.revision,requestId)};
-    if(type==='nethra.message')return s.chatTurn(payload.id,payload.text,requestId,{conversationId:payload.conversationId||null,questionId:payload.questionId??null,noteOnly:payload.noteOnly===undefined?false:payload.noteOnly,revision:payload.revision??null});
+    if(type==='nethra.control'){
+      const task=s.control(payload.id,payload.action,payload.revision,requestId);
+      if(task.coordinateSelfImprovement&&['pause','cancel','resume'].includes(payload.action))await this.onCoordinationControl?.(task,payload.action);
+      return {task};
+    }
+    if(type==='nethra.message'){
+      const result=s.chatTurn(payload.id,payload.text,requestId,{conversationId:payload.conversationId||null,questionId:payload.questionId??null,noteOnly:payload.noteOnly===undefined?false:payload.noteOnly,revision:payload.revision??null});
+      const task=s.get(payload.id);
+      if(task.coordination?.stage==='tracking'&&require('./nethra-coordination').ownerBrief(task)!==(task.coordination.brief||''))await this.onCoordinationControl?.(task,'pause');
+      return result;
+    }
     if(type==='nethra.redirect'){
       if(typeof payload.instruction!=='string'||!payload.instruction.trim()||payload.instruction.length>10000)throw new Error('Provide a bounded new direction');
       if(payload.skipPendingDrafts!==undefined&&typeof payload.skipPendingDrafts!=='boolean')throw new Error('Invalid draft skip preference');
-      return {task:s.redirect(payload.id,payload.instruction.trim(),payload.revision,requestId,payload.skipPendingDrafts===true)};
+      const task=s.redirect(payload.id,payload.instruction.trim(),payload.revision,requestId,payload.skipPendingDrafts===true);
+      if(task.coordination)await this.onCoordinationControl?.(task,'pause');
+      return {task};
     }
     if(type==='nethra.projectDocument'){
       if(source!=='desktop'||!this.readProjectDocument)throw new Error('Manage project document access on Windows');
@@ -203,7 +218,9 @@ class NethraApi {
         else if(stopped&&instruction.trim())return {clarification:'Should I keep this task stopped and update its wording, or continue work with your new direction?'};
         else execution=stopped?'preserve':'replan';
       }
-      return {task:s.edit(payload.id,changes,payload.revision,requestId,{execution,instruction})};
+      const task=s.edit(payload.id,changes,payload.revision,requestId,{execution,instruction});
+      if(task.coordination&&execution!=='preserve')await this.onCoordinationControl?.(task,'pause');
+      return {task};
     }
     if(type==='nethra.delete'){
       if(payload.confirm!==true)throw new Error('Confirm deletion');

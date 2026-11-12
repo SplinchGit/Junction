@@ -22,8 +22,8 @@ function documentMetadata({id,revision,name,sha256,importedAt}) { return {id,rev
 
 /** Durable work is not permission to execute: activation lives only in this process. */
 class Foreman {
-  constructor(directory, { executor, now = Date.now, audit = () => {} } = {}) {
-    this.directory = directory; this.executor = executor; this.now = now; this.audit = audit;
+  constructor(directory, { executor, now = Date.now, audit = () => {}, mayDispatch = () => true } = {}) {
+    this.directory = directory; this.executor = executor; this.now = now; this.audit = audit; this.mayDispatch=mayDispatch;
     this.enabled = new Set(); this.jobs = new Map(); this.timers = new Map(); this.closed = false;
     this.operations = new Map();
     fs.mkdirSync(directory, {recursive:true});
@@ -179,10 +179,11 @@ class Foreman {
     const name=text(input.name,80,'project name'),objective=text(input.objective,12000,'objective');
     if(!Array.isArray(input.tasks)||!input.tasks.length||input.tasks.length>50)throw new Error('Provide 1–50 concrete tasks');
     const tasks=input.tasks.map(t=>({id:crypto.randomUUID(),title:text(t.title,240,'task'),kind:t.kind==='verify'?'verify':'codex',acceptance:text(t.acceptance,4000,'acceptance criteria'),status:'QUEUED',attempts:[],files:Array.isArray(t.files)?t.files.slice(0,30):[]}));
+    if(input.sharedCheckout!==undefined&&typeof input.sharedCheckout!=='boolean')throw new Error('Invalid shared checkout preference');
     const inspected=await this.executor.inspect(input);
     if(inspected.scopeFile)for(const task of tasks)if(!task.files.length)task.files=[inspected.scopeFile];
     if(this.closed)throw new Error('Junction is quitting');
-    const p={id:crypto.randomUUID(),name,objective,repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,codeReviewVerdict:input.sourceObjectiveId&&input.codeReviewVerdict==='READY'?'READY':null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
+    const p={id:crypto.randomUUID(),name,objective,sharedCheckout:input.sharedCheckout===true,...(typeof input.coordinationBrief==='string'?{coordinationBrief:input.coordinationBrief.slice(0,700)}:{}),repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,codeReviewVerdict:input.sourceObjectiveId&&input.codeReviewVerdict==='READY'?'READY':null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
   }
   async submit(input) {
@@ -200,18 +201,27 @@ class Foreman {
     const created=await this.create({...input,objective:input.objective||input.task,tasks:[{title:input.task,kind:'codex',acceptance:input.acceptance||'Complete the owner request and pass the detected project checks'}]});
     return this.control(created.id,'start',created.revision,`owner-${crypto.randomUUID()}`);
   }
-  async control(id,action,revision,requestId,{autoHandoff}={}) {
+  async control(id,action,revision,requestId,{autoHandoff,sourceObjectiveId}={}) {
     if(this.operations.has(id))throw new Error('Project review/apply is finishing; retry after it completes');
     text(requestId,160,'request ID');
     const binding=JSON.stringify([id,action,revision,...(autoHandoff===undefined?[]:[autoHandoff])]);
     const previous=this.db.prepare('SELECT binding FROM receipts WHERE id=?').get(requestId);
     if(previous){if(previous.binding!==binding)throw new Error('Request ID reused');return this.get(id);}
     const p=this.get(id);
+    if(sourceObjectiveId!==undefined&&sourceObjectiveId!==p.sourceObjectiveId)throw new Error('Invalid linked objective control');
     if(!Number.isSafeInteger(revision)||p.revision!==revision)throw new Error('Stale task revision; refresh first');
-    if(!['start','resume','pause','stop'].includes(action))throw new Error('Invalid task control');
+    if(!['start','resume','pause','stop','retry'].includes(action))throw new Error('Invalid task control');
+    if(action==='retry'){
+      if(this.closed||!['WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)||!this.enabled.has(id))throw new Error('Only an active capacity wait can be rechecked; Resume paused work explicitly');
+      if(!this.mayDispatch(p))throw new Error('Resume the linked Nethra task first');
+      p.retryAt=null;p.nextAction='Checking confirmed provider availability';
+      clearTimeout(this.timers.get(id));this.timers.delete(id);
+      this.save(p,'CAPACITY_RECHECK','Owner requested a fresh availability check',{id:requestId,binding});this.kick(id);return this.get(id);
+    }
     if(action==='start'||action==='resume') {
       if(autoHandoff!==undefined&&typeof autoHandoff!=='boolean')throw new Error('Invalid provider handoff approval');
       if(this.closed)throw new Error('Junction is quitting');
+      if(!this.mayDispatch(p))throw new Error('Resume the linked Nethra task first');
         if(p.sourceObjectiveId&&p.codeReviewVerdict!=='READY')throw new Error('A Codex READY verdict for this exact Nethra proposal is required before implementation');
         if(p.sourceObjectiveId&&p.tasks.some(task=>!measurableAcceptance(task.acceptance)))throw new Error('Provide measurable acceptance criteria before starting Nethra code work');
       if(ACTIVE.has(p.status)||p.status==='COMPLETED'||this.jobs.has(id))throw new Error('Task is already active or finishing');
@@ -219,12 +229,12 @@ class Foreman {
       if(this.enabled.size)throw new Error('Pause the active project before starting another');
       if(autoHandoff===false&&p.autoHandoff)throw new Error('Create a new draft to change an approved provider handoff scope');
       if(autoHandoff===true)p.autoHandoff=true;
-      p.status='RUNNING';p.nextAction='Reconcile and execute next approved task';
+      p.status='RUNNING';p.pausedByObjective=null;p.nextAction='Reconcile and execute next approved task';
       this.save(p,'RESUMED',`Owner selected ${action}`,{id:requestId,binding});this.enabled.add(id);this.kick(id);
     }else{
       this.enabled.delete(id);clearTimeout(this.timers.get(id));this.timers.delete(id);
-      const interrupted=p.tasks.find(t=>t.status==='RUNNING');if(interrupted){interrupted.status='QUEUED';if(interrupted.attempts.length)interrupted.attempts.at(-1).status='INTERRUPTED';}
-      p.status=action==='stop'?'STOPPED':'PAUSED';p.nextAction='Resume explicitly';
+      const interrupted=p.tasks.find(t=>t.status==='RUNNING');if(interrupted){interrupted.status='QUEUED';if(interrupted.attempts.length)Object.assign(interrupted.attempts.at(-1),{status:'INTERRUPTED',finishedAt:this.now()});}
+      p.status=action==='stop'?'STOPPED':'PAUSED';p.pausedByObjective=action==='pause'?sourceObjectiveId||null:null;p.nextAction='Resume explicitly';
       try{this.save(p,action.toUpperCase(),'Preserving progress and interrupting current work',{id:requestId,binding});}finally{this.jobs.get(id)?.controller.abort();}
     }
     return this.get(id);
@@ -236,13 +246,16 @@ class Foreman {
   }
   async step(id,signal) {
     let p=this.get(id);
+    if(!this.mayDispatch(p)){
+      this.enabled.delete(id);p.status='PAUSED';p.nextAction='Resume the linked Nethra task first';this.save(p,'PAUSED','Linked Nethra task is paused or stopped');return;
+    }
     if(p.retryAt>this.now()){this.schedule(id,p.retryAt);return;}
     const task=p.tasks.find(t=>t.status!=='COMPLETED');
-    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
+    if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sharedCheckout?'Review verified changes in the canonical main checkout; engineering owns the commit':p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
     p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
     const attempt={id:crypto.randomUUID(),startedAt:this.now(),status:'RUNNING'};task.attempts.push(attempt);
     this.save(p,'ATTEMPT',`${task.kind}: ${task.title}`);
-    const checkpoint=fields=>{if(signal.aborted||!this.enabled.has(id))return;const current=this.get(id),t=current.tasks.find(t=>t.id===task.id);Object.assign(t.attempts.at(-1),fields);if(fields.worktree)current.worktree=fields.worktree;if(Object.hasOwn(fields,'branch'))current.branch=fields.branch;this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');};
+    const checkpoint=fields=>{if(signal.aborted||!this.enabled.has(id))return;const current=this.get(id),t=current.tasks.find(t=>t.id===task.id);const attempt=t.attempts.at(-1);if((fields.provider||fields.phase==='verifying')&&!attempt.activeAt)attempt.activeAt=this.now();if(fields.tests?.length||fields.engineeringHandoff?.sourceHash)attempt.lastEvidenceAt=this.now();Object.assign(attempt,fields);if(fields.worktree)current.worktree=fields.worktree;if(Object.hasOwn(fields,'branch'))current.branch=fields.branch;this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');};
     try {
       const result=await this.executor.run(p,task,{signal,checkpoint});
       if(signal.aborted||!this.enabled.has(id))return;
@@ -250,9 +263,9 @@ class Foreman {
       if(!Array.isArray(result.tests)||!result.tests.length||result.tests.some(t=>t.exitCode!==0))throw new Error('Verification failed; candidate retained for inspection');
       // Nethra-originated and dual-provider work have a second owner gate: a verified candidate stays
       // in the isolated checkout until the owner reviews and applies that exact patch.
-      const promoted=p.sourceObjectiveId||p.autoHandoff?null:await this.executor.promoteVerified?.(p,result);
+      const promoted=p.sharedCheckout||p.sourceObjectiveId||p.autoHandoff?null:await this.executor.promoteVerified?.(p,result);
       t.status='COMPLETED';Object.assign(t.attempts.at(-1),result,{status:'COMPLETED',finishedAt:this.now(),promoted});
-      p.verifiedSha=result.headSha;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
+      p.verifiedSha=result.headSha;if(result.sharedSourceHash)p.sharedSourceHash=result.sharedSourceHash;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sharedCheckout?'Review verified changes in the canonical main checkout; engineering owns the commit':p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
     }catch(error){
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});

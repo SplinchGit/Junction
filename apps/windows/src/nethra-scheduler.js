@@ -59,7 +59,7 @@ class NethraScheduler {
     const {task,token}=claim,controller=new AbortController();this.controller=controller;this.runningTaskId=task.id;
     // Source adapters have already compared stable revisions. A routine checkpoint with
     // no changed evidence needs bookkeeping, not a fresh 30B inference.
-    if(isRoutineMonitor(task,this.now(),this.sourceStatus,this.store.hasClaimedReasoningAttention(task.id,token))){
+    if(!task.coordinateSelfImprovement&&isRoutineMonitor(task,this.now(),this.sourceStatus,this.store.hasClaimedReasoningAttention(task.id,token))){
       const sources=task.sources.map(source=>{try{return {source,status:this.sourceStatus(source)?.status||'UNKNOWN'};}catch{return {source,status:'ERROR'};}});
       const unavailable=sources.filter(item=>item.status!=='CONNECTED');
       const summary=unavailable.length?`Waiting for fresh source access: ${unavailable.map(item=>`${item.source} ${item.status.toLowerCase()}`).join(', ')}. No new check was confirmed.`:task.summary;
@@ -70,7 +70,7 @@ class NethraScheduler {
     }
     const started=this.now(),settings=this.store.settings();
     const fingerprint=inputFingerprint(task,this.store);
-    if(['CONTINUE','BACKOFF'].includes(task.wakeReason?.kind)&&task.lastCycleProgressed===false&&task.lastInferenceFingerprint===fingerprint){
+    if(!task.coordinateSelfImprovement&&['CONTINUE','BACKOFF'].includes(task.wakeReason?.kind)&&task.lastCycleProgressed===false&&task.lastInferenceFingerprint===fingerprint){
       const unchanged=(task.unchangedWakes||0)+1;
       try{
         if(unchanged>=3)this.store.update(task.id,{status:'WAITING_FOR_USER',summary:'Nothing has changed since my last attempts and I have no useful next action. What should I try next?',nextWakeAt:null,unchangedWakes:unchanged,wakeReason:null},'NO_NEW_EVIDENCE_STOPPED',token);
@@ -111,7 +111,7 @@ class NethraScheduler {
       const progressed=(live.lastMeaningfulProgressAt||0)>(task.lastMeaningfulProgressAt||0)
         ||(Array.isArray(patch.evidence)&&patch.evidence.length>(live.evidence||[]).length)
         ||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(live.completedSteps||[]).length);
-      const repeatedShortWake=patch.status==='SLEEPING'&&!progressed
+      const repeatedShortWake=!task.coordinateSelfImprovement&&patch.status==='SLEEPING'&&!progressed
         &&(!Number.isFinite(patch.nextWakeAt)||patch.nextWakeAt<=this.now()+settings.minWakeMs);
       patch.noProgressCycles=repeatedShortWake?(live.noProgressCycles||0)+1:0;
       // A source/check-in wake already revisited progress known at claim time.
@@ -123,7 +123,7 @@ class NethraScheduler {
       }
       const modelWake=Number.isFinite(patch.nextWakeAt);
       const hasNextStep=(patch.pendingSteps??live.pendingSteps??[]).length>0;
-      const continuing=patch.status==='SLEEPING'&&live.continuous===true&&progressed&&(live.mode!=='ONGOING'||hasNextStep);
+      const continuing=!task.coordinateSelfImprovement&&patch.status==='SLEEPING'&&live.continuous===true&&progressed&&(live.mode!=='ONGOING'||hasNextStep);
       patch.nextWakeAt=patch.status==='SLEEPING'?(continuing?this.now()+CONTINUOUS_GAP_MS:clampWake(patch.nextWakeAt,this.now(),settings.minWakeMs,settings.maxWakeMs)):null;
       patch.lastInferenceFingerprint=fingerprint;patch.lastCycleProgressed=progressed;patch.unchangedWakes=progressed?0:(live.unchangedWakes||0);
       // Keep a reason the runner already recorded (schedule_wake, monitoring); otherwise this is a continuation.

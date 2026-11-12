@@ -11,9 +11,22 @@ function createWorkStatus(foreman){
       // Nethra candidates are applied only after separate owner review. Their
       // attempts deliberately have no automatic promotion receipt.
       if(Number.isSafeInteger(project.appliedAt)&&project.appliedAt>0)promoted.push(project.appliedAt);
-      return {status:project.status,promotedAt:promoted.length?Math.max(...promoted):null};
+      return {status:project.status,retryAt:project.retryAt,nextAction:project.nextAction,promotedAt:promoted.length?Math.max(...promoted):null};
     }catch{return null;}
   };
+}
+
+/** Bounded Work Activity status for the Tasks views: who is working, what was last verified, what blocks it and when it is next checked. */
+function codeWorkSummary(project){
+  const active=project.tasks?.find(task=>task.id===project.activeTask)?.attempts.at(-1);
+  const verified=(project.tasks||[]).flatMap(task=>(task.attempts||[]).map(attempt=>({attempt,title:task.title})))
+    .filter(({attempt})=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0))
+    .sort((a,b)=>(a.attempt.finishedAt||0)-(b.attempt.finishedAt||0)).at(-1);
+  const waiting=['WAITING_CAPACITY','WAITING_CODEX'].includes(project.status);
+  return {id:project.id,status:project.status,nextAction:String(project.nextAction||'').slice(0,240),provider:active?.provider||null,phase:active?.phase||null,
+    retryAt:waiting&&Number.isFinite(project.retryAt)?project.retryAt:null,
+    lastVerified:verified?{summary:String(verified.attempt.summary||verified.title).slice(0,240),at:verified.attempt.finishedAt||null}:null,
+    blocker:project.status==='BLOCKED'?String(project.handoff||'').slice(0,240):null};
 }
 
 /** Reconcile durable executor state so missed notifications survive host restart. */
@@ -32,4 +45,4 @@ function reconcileCodeWork({store,projects,now=Date.now()}){
   return observed;
 }
 
-module.exports={createWorkStatus,reconcileCodeWork};
+module.exports={createWorkStatus,reconcileCodeWork,codeWorkSummary};

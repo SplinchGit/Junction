@@ -182,18 +182,35 @@ function queueProjectMilestoneNotifications(store,queue,{date=new Date(),tasks=s
   });
 }
 
-function codeWorkEvent(task,project){
+function coordinationProgress(project,now){
+  const interval=75*60_000;
+  let active=0,evidenceAt=0;
+  for(const attempt of (project.tasks||[]).flatMap(item=>item.attempts||[])){
+    if(!Number.isFinite(attempt.activeAt))continue;
+    const duration=Math.max(0,(attempt.finishedAt||(attempt.status==='RUNNING'&&project.status==='RUNNING'?now:attempt.activeAt))-attempt.activeAt);
+    if(Number.isFinite(attempt.lastEvidenceAt))evidenceAt=active+Math.min(duration,Math.max(0,attempt.lastEvidenceAt-attempt.activeAt));
+    active+=duration;
+  }
+  const intervalNumber=Math.floor(active/interval);
+  return intervalNumber&&evidenceAt>(intervalNumber-1)*interval?intervalNumber:null;
+}
+function codeWorkEvent(task,project,now=Date.now()){
   const ready=project.status==='COMPLETED'&&project.verifiedSha&&!project.appliedAt;
   const blocked=project.status==='BLOCKED';
-  if(project.sourceObjectiveId!==task.id||!project.autoHandoff||(!ready&&!blocked))return null;
+  if(project.sourceObjectiveId!==task.id||!project.autoHandoff)return null;
+  if(!ready&&!blocked){
+    if(!task.coordinateSelfImprovement||['PAUSED','CANCELLED'].includes(task.status)||!['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(project.status))return null;
+    const interval=coordinationProgress(project,now);
+    return interval?{id:`nethra-code-work-${task.id}-${project.id}-progress-${interval}`,progress:true,body:'Development work has a saved checkpoint or verification result. Open Tasks to see the next action.'}:null;
+  }
   const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts.at(-1);
   const version=ready?project.verifiedSha:attempt?.id;
   if(!version)return null;
   return {id:`nethra-code-work-${task.id}-${project.id}-${version}`,body:ready?'A verified code candidate is ready for review in Work Activity.':'Coding work needs your attention. Open Work Activity to see what stopped it.'};
 }
 function queueCodeWorkNotification(task,project,store,queue,{date=new Date()}={}){
-  const settings=store.settings(),policy=deliveryPolicy(settings,date),event=codeWorkEvent(task,project);
-  if(!event||!policy.outcomes||!settings.notificationDeviceId||!projectAllowsNotification(settings,task)||project.updatedAt<(settings.notificationDeviceSince||0))return null;
+  const settings=store.settings(),policy=deliveryPolicy(settings,date),event=codeWorkEvent(task,project,store.now());
+  if(!event||!policy.outcomes||(event.progress&&!policy.milestones)||!settings.notificationDeviceId||!projectAllowsNotification(settings,task)||project.updatedAt<(settings.notificationDeviceSince||0))return null;
   return queue.enqueueNotification({requestId:event.id,taskId:task.id,deviceId:settings.notificationDeviceId,
     args:{eventId:event.id,taskId:task.id,title:'Nethra — development work',body:event.body}});
 }
@@ -203,7 +220,7 @@ function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>
   const task=store.get(command.taskId);
   const eventId=command.notificationSourceEventId||command.args.eventId;
   if(eventId.startsWith(`nethra-code-work-${task.id}-`)){
-    if(!projectAllowsNotification(settings,task)||!projects().some(project=>project.updatedAt>=(settings.notificationDeviceSince||0)&&codeWorkEvent(task,project)?.id===eventId))return 'cancel';
+    if(!projectAllowsNotification(settings,task)||!projects().some(project=>{const event=codeWorkEvent(task,project,store.now());return project.updatedAt>=(settings.notificationDeviceSince||0)&&event?.id===eventId&&(!event.progress||policy.milestones);}))return 'cancel';
     return policy.quiet?'hold':'deliver';
   }
   if(command.args.voiceInvite){

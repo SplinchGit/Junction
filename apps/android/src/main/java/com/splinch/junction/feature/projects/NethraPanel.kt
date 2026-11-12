@@ -444,17 +444,32 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                     )
                 }
                 TaskTracking(detail?.get("progress") as? Map<*, *>, null, task["mode"]?.toString())
+                (detail?.get("coordination") as? Map<*, *>)?.let { coordination ->
+                    Text("Self Improvement coordination", style = MaterialTheme.typography.titleSmall)
+                    (coordination["advisors"] as? Map<*, *>)?.forEach { (provider, value) ->
+                        val receipt = value as? Map<*, *> ?: return@forEach
+                        val name = if (provider == "codex") "Codex" else "Claude"
+                        val retry = (receipt["retryAt"] as? Number)?.let { " · next check ${dateLabel(it)}" }.orEmpty()
+                        Text("$name: ${receipt["status"]}$retry", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 maps(detail?.get("codeWork")).forEach { work ->
                     val activity = when {
                         work["status"] == "COMPLETED" -> "Coding candidate verified"
                         work["status"] in setOf("WAITING_CAPACITY", "WAITING_CODEX") -> "Waiting for coding capacity"
+                        work["status"] == "BLOCKED" -> "Development work blocked"
+                        work["status"] == "PAUSED" -> "Development work paused"
+                        work["status"] == "STOPPED" -> "Development work stopped"
                         work["status"] == "RUNNING" && work["phase"] == "verifying" -> "Verifying candidate"
                         work["status"] == "RUNNING" && work["provider"] == "claude" -> "Claude working"
                         work["status"] == "RUNNING" && work["provider"] == "codex" -> "Codex working"
                         else -> "Development work"
                     }
                     Text(activity, style = MaterialTheme.typography.titleSmall)
-                    work["nextAction"]?.toString()?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    (work["lastVerified"] as? Map<*, *>)?.get("summary")?.toString()?.let { Text("Last verified: $it", style = MaterialTheme.typography.bodySmall) }
+                    work["blocker"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Blocked: $it", style = MaterialTheme.typography.bodySmall) }
+                    work["nextAction"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }
+                    (work["retryAt"] as? Number)?.let { Text("Next provider check ${dateLabel(it)}", style = MaterialTheme.typography.bodySmall) }
                 }
                 if (task["parentId"] == null) {
                     var showAgents by rememberSaveable(id) { mutableStateOf(false) }

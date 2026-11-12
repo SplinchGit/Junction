@@ -214,8 +214,13 @@ async function createWindowImpl() {
   localData = new LocalDataStore(path.join(app.getPath("userData"), "local"));
   delegation = new AppServerDelegationCoordinator(path.join(app.getPath("userData"), "delegation"));
   const foremanDirectory = path.join(app.getPath("userData"), "foreman");
-  const foremanExecutor=new ForemanExecutor(path.join(foremanDirectory,"projects"));
-  foreman = new Foreman(foremanDirectory, {executor:foremanExecutor,audit:appendAudit});
+  const foremanExecutor=new ForemanExecutor(path.join(foremanDirectory,"projects"),{mayWrite:project=>Boolean(foreman?.mayDispatch(project))});
+  foreman = new Foreman(foremanDirectory, {executor:foremanExecutor,audit:appendAudit,mayDispatch:project=>{
+    if(!project.sourceObjectiveId||!nethraStore)return true;
+    if(nethraStore.deletion(project.sourceObjectiveId))return false;
+    const task=nethraStore.get(project.sourceObjectiveId);
+    return require('./nethra-coordination').allowsCoordinationWork(task,project);
+  }});
   foremanApi = new ForemanApi(foreman, {
     conversationExists: id => Boolean(localData.conversation(id)),
     pickProjectDocument: async () => {
@@ -278,8 +283,14 @@ async function createWindowImpl() {
   const sourceOptions={vault:new SecretVault(path.join(app.getPath('userData'),'sources'),safeStorage),store:nethraStore,attention:new NethraAttention(nethraStore),openExternal:url=>shell.openExternal(url)};
   calendarSource = new CalendarSource(sourceOptions);gmailSource = new GmailSource(sourceOptions);
   const nethraRunner = new NethraRunner({store:nethraStore,runtime:localAgent,researchCoordinator,deviceCommands,calendar:calendarSource,gmail:gmailSource,proposeCodeWork,localData,workStatus,advisorLimits,projectById:id=>foreman.find(id),listProjectDocuments:id=>foreman.find(id)?foreman.listDocuments(id):[],readProjectDocument:(...args)=>foreman.getDocument(...args),performanceReport:taskId=>require('./nethra-performance').performanceReport({store:nethraStore,localData,taskId})});
-  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),reconcileWork:async()=>{await nethraApi?.reconcileDeletions();return reconcileCodeWork({store:nethraStore,projects:foreman.list()});},sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task),warmBefore:task=>task.model==='qwen3:30b'?localAgent.warmer.warm({reason:'objective_due',priority:'background'}):null});
-  nethraApi = new NethraApi({listProjects:()=>foreman.list(),listProjectDocuments:id=>foreman.find(id)?foreman.listDocuments(id):[],readProjectDocument:(...args)=>foreman.getDocument(...args),onDeleteTask:async id=>{
+  nethraScheduler = new NethraScheduler({store:nethraStore,execute:(task,options)=>nethraRunner.execute(task,options),reconcileWork:async()=>{await nethraApi?.reconcileDeletions();for(const project of foreman.list())if(foreman.enabled.has(project.id)&&!foreman.mayDispatch(project))await foreman.control(project.id,'pause',project.revision,`direction-${project.id}-${project.revision}`);return reconcileCodeWork({store:nethraStore,projects:foreman.list()});},sourceStatus:source=>({calendar:calendarSource,gmail:gmailSource})[source]?.status(),onSettled:task=>reportObjectiveOutcome(task),warmBefore:task=>!task.coordinateSelfImprovement&&task.model==='qwen3:30b'?localAgent.warmer.warm({reason:'objective_due',priority:'background'}):null});
+  nethraApi = new NethraApi({listProjects:()=>foreman.list(),listProjectDocuments:id=>foreman.find(id)?foreman.listDocuments(id):[],readProjectDocument:(...args)=>foreman.getDocument(...args),onCoordinationControl:async(task,action)=>{
+    for(const project of foreman.list().filter(item=>item.sourceObjectiveId===task.id)){
+      if(action==='resume'){
+        if(project.status==='PAUSED'&&project.pausedByObjective===task.id&&foreman.mayDispatch(project))await foreman.control(project.id,'resume',project.revision,`coordination-resume-${task.id}-${project.id}-${task.revision}`);
+      }else if(foreman.enabled.has(project.id))await foreman.control(project.id,action==='cancel'?'stop':'pause',project.revision,`coordination-${task.id}-${project.id}-${task.revision}`,{sourceObjectiveId:task.id});
+    }
+  },onDeleteTask:async id=>{
     for(const project of foreman.list().filter(item=>item.sourceObjectiveId===id&&!['STOPPED','COMPLETED'].includes(item.status))){
       await foreman.control(project.id,'stop',project.revision,`deleted-${id}-${project.revision}`);
     }

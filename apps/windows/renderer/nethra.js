@@ -136,13 +136,38 @@
      const topDelete=button('Delete',async()=>{if(window.confirm('Delete this task and its drafts? Its ordinary conversation is kept. This cannot be undone.'))await deleteTask(row.id);});topDelete.className='danger';
      const editButton=el('button','Edit');editButton.type='button';editButton.onclick=()=>{const editor=detailCard.querySelector('.task-editor');if(editor){editor.hidden=!editor.hidden;if(!editor.hidden)editor.scrollIntoView({block:'nearest'});}};
      topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',taskModels.find(([id])=>id===row.model)?.[1]||'Qwen3 30B'),{className:'task-detail-model'}));
-     const {task,approvals,events,attention,progress,performance,experiments,projects=[],children=[],agents=[],projectDocuments=[],approvedDocumentStatus=[]}=await api('nethra.get',{id:row.id});
+     const {task,codeWork=[],approvals,events,attention,progress,performance,experiments,projects=[],children=[],agents=[],projectDocuments=[],approvedDocumentStatus=[]}=await api('nethra.get',{id:row.id});
      if(deletedIds.has(row.id)||selectedId!==row.id)continue;
      for(const document of approvedDocumentStatus){
        if(document.status==='NEWER_AVAILABLE')detailCard.append(el('p',`${document.name}: revision ${document.latestRevision} is available. This task can read only approved revision ${document.revision}.`));
        if(document.status==='UNAVAILABLE')detailCard.append(el('p',`${document.name}: approved revision ${document.revision} is unavailable.`));
      }
      const diagnostics=el('details');diagnostics.dataset.section='diagnostics';diagnostics.open=keepExpanded(row.id,'diagnostics');diagnostics.append(el('summary','Diagnostics'));
+     if(!task.parentId&&(/^self[ -]improvement[.!]?$/i.test(task.goal.trim())||task.coordination)){
+       const coordination=el('section');coordination.append(el('h3','Self Improvement coordination'));
+       if(task.coordinateSelfImprovement){
+         coordination.append(el('p',task.summary||'Queued for consultation.'));
+         for(const [provider,receipt] of Object.entries(task.coordination?.advisors||{})){
+           coordination.append(el('p',`${provider==='codex'?'Codex':'Claude'}: ${receipt.status}${receipt.retryAt?` · next check ${time(receipt.retryAt)}`:''}`));
+           if(receipt.advice){diagnostics.append(el('h4',`${provider} advice (unverified proposal)`));diagnostics.append(el('pre',receipt.advice));}
+         }
+       }else if(!task.allowCodeWork||!task.conversationId){
+         coordination.append(el('p','Enable development work under Approach and sources and link the task conversation first.'));
+       }
+       const toggle=button(task.coordinateSelfImprovement?'Disable coordination':'Enable coordination',()=>api('nethra.configure',{id:task.id,revision:task.revision,coordinateSelfImprovement:!task.coordinateSelfImprovement}));
+       toggle.disabled=!task.coordinateSelfImprovement&&(!task.allowCodeWork||!task.conversationId||!task.persistent||['COMPLETED','FAILED','CANCELLED'].includes(task.status));
+       coordination.append(toggle);detailCard.append(coordination);
+     }
+     for(const work of codeWork){
+       const section=el('section');section.dataset.section='code-work';
+       const activity=work.status==='COMPLETED'?'Verified; awaiting engineering review':work.status==='BLOCKED'?'Blocked':work.status==='PAUSED'?'Paused':work.status==='STOPPED'?'Stopped':work.status==='DRAFT'?'Draft awaiting your Start':['WAITING_CAPACITY','WAITING_CODEX'].includes(work.status)?'Waiting for provider capacity':work.phase==='verifying'?'Verifying':work.provider==='claude'?'Claude working':work.provider==='codex'?'Codex working':'Preparing';
+       section.append(el('h3',`Development work · ${activity}`));
+       section.append(el('p',work.lastVerified?`Last verified: ${work.lastVerified.summary}${work.lastVerified.at?` (${time(work.lastVerified.at)})`:''}`:'Nothing verified yet.'));
+       if(work.blocker)section.append(el('p',`Blocked: ${work.blocker}`));
+       if(work.nextAction)section.append(el('p',`Next: ${work.nextAction}`));
+       if(work.retryAt)section.append(el('p',`Next provider check ${time(work.retryAt)}`));
+       detailCard.append(section);
+     }
      if(!task.parentId){
        const delegation=el('section');
        delegation.append(el('h3','Task agents'));
