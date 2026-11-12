@@ -15,7 +15,7 @@
  const roots=el('input');roots.placeholder='Optional approved read folder on this PC';roots.setAttribute('aria-label','Approved read folder');
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
- const taskModels=[['qwen3:30b','Qwen3 30B · faster'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · deeper, slower']];
+ const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · instruct'],['junction-qwen3-next-thinking:80b-q3km','Qwen3-Next 80B · thinking']];
  const newTaskModel=select('Task model ',taskModels,'qwen3:30b');
  const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');
@@ -135,7 +135,7 @@
      const topActions=el('div');topActions.className='task-actions';
      const topDelete=button('Delete',async()=>{if(window.confirm('Delete this task and its drafts? Its ordinary conversation is kept. This cannot be undone.'))await deleteTask(row.id);});topDelete.className='danger';
      const editButton=el('button','Edit');editButton.type='button';editButton.onclick=()=>{const editor=detailCard.querySelector('.task-editor');if(editor){editor.hidden=!editor.hidden;if(!editor.hidden)editor.scrollIntoView({block:'nearest'});}};
-     topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',row.model==='junction-qwen3-next:80b-q3km'?'Qwen3-Next 80B':'Qwen3 30B'),{className:'task-detail-model'}));
+     topActions.append(editButton,topDelete);detailHead.append(topActions,Object.assign(el('small',taskModels.find(([id])=>id===row.model)?.[1]||'Qwen3 30B'),{className:'task-detail-model'}));
      const {task,approvals,events,attention,progress,performance,experiments,projects=[],children=[],agents=[],projectDocuments=[],approvedDocumentStatus=[]}=await api('nethra.get',{id:row.id});
      if(deletedIds.has(row.id)||selectedId!==row.id)continue;
      for(const document of approvedDocumentStatus){
