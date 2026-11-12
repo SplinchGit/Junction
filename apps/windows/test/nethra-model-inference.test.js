@@ -16,12 +16,13 @@ function fixture(t,{goal='Measure five identical local prompts'}={}){
     options(runtime,clock){return {store,runtime,task:store.get(created.id),token:claim.token,now:()=>clock.value,inference:async callback=>{clock.accounted++;return callback();},writeDraft:args=>new NethraTools({store}).execute('write_draft',args,store.get(created.id),{token:claim.token})};}
   };
 }
-for(const target of [model,'qwen3:30b'])test(`measured inference sends the recorded settings and raw token metrics for ${target}`,async t=>{
+for(const target of [model,'qwen3:30b','junction-qwen3-next-thinking:80b-q3km'])test(`measured inference sends the recorded settings and raw token metrics for ${target}`,async t=>{
   const {LocalAgentRuntime}=require('../src/local-agent-runtime');
   const f=fixture(t),clock={value:Date.now(),accounted:0};let payload;
   const runtime=new LocalAgentRuntime({warmer:{model:target,keepAlive:()=> '15m',inferenceStarted(){},inferenceFinished(){}},fetchImpl:async(_url,options)=>{payload=JSON.parse(options.body);return {ok:true,json:async()=>({model:target,eval_count:7,eval_duration:700000000,prompt_eval_count:11,message:{role:'assistant',content:'amber'}})};}});
   const result=await runModelJob({...f.options(runtime,clock),args:{model:target,prompt:'Say amber',maxTokens:16}});
   assert.deepEqual({temperature:payload.options.temperature,maxTokens:payload.options.num_predict,stream:payload.stream},{temperature:0,maxTokens:16,stream:false});
+  assert.equal(payload.think,target!=='junction-qwen3-next:80b-q3km');
   assert.equal(result.statistics.outputTokens,7);assert.equal(result.statistics.tokensPerSecond,10);
   const report=JSON.parse(fs.readFileSync(result.path,'utf8'));assert.equal(report.temperature,payload.options.temperature);assert.equal(report.request.maxTokens,payload.options.num_predict);
 });
