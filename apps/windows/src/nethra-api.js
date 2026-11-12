@@ -4,6 +4,7 @@ const {NethraAttention}=require('./nethra-attention');
 const {progressView}=require('./nethra-progress');
 const {performanceReport}=require('./nethra-performance');
 const {isSupportedLocalModel}=require('./model-catalog');
+const {NEXT_80B_THINKING_Q4_MODEL}=require('./nethra-models');
 const {taskContract}=require('./nethra-task-contract');
 const {projectDocumentStatus}=require('./nethra-project-documents');
 const {codeWorkSummary}=require('./nethra-work-status');
@@ -240,6 +241,7 @@ class NethraApi {
       if(activeModel&&activeModel!==model)return {model:{...this.modelState(model),state:'deferred',warming:false,reason:`An objective is running on ${activeModel}; ${model} warm-up will wait until that model pass ends.`}};
       const priority=['chat_open','new_chat','chat_return','voice','manual'].includes(reason)?'interactive':'background';
       const options={reason:`${source}:${reason}`,priority,force:reason==='manual'&&source==='desktop'};
+      if(model===NEXT_80B_THINKING_Q4_MODEL&&!options.force)return {model:{...this.modelState(model),state:'deferred',warming:false,reason:'Thinking Q4 loads when you send a message or run a task.'}};
       const warmer=this.runtime.warmerFor?.(model)||(model==='qwen3:30b'?this.runtime.warmer:null);
       const warming=warmer?.warm?warmer.warm(options):Promise.resolve(this.runtime.prewarm?.(model,options));
       if(payload.wait===true)await warming;else warming?.catch?.(()=>{});

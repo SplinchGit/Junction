@@ -15,7 +15,7 @@
  const roots=el('input');roots.placeholder='Optional approved read folder on this PC';roots.setAttribute('aria-label','Approved read folder');
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
- const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · instruct'],['junction-qwen3-next-thinking:80b-q3km','Qwen3-Next 80B · thinking']];
+ const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · instruct'],['junction-qwen3-next-thinking:80b-q3km','Qwen3-Next 80B · Thinking Q3'],['junction-qwen3-next-thinking:80b-q4km','Qwen3-Next 80B · Thinking Q4']];
  const newTaskModel=select('Task model ',taskModels,'qwen3:30b');
  const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');

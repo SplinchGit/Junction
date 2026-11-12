@@ -1,6 +1,6 @@
 'use strict';
 const {createHash}=require('node:crypto');
-const {DEFAULT_MODEL,NEXT_80B_MODEL,NEXT_80B_THINKING_MODEL,profileFor}=require('./nethra-models');
+const {DEFAULT_MODEL,NEXT_80B_MODEL,NEXT_80B_THINKING_MODEL,NEXT_80B_THINKING_Q4_MODEL,isNextThinkingModel,profileFor}=require('./nethra-models');
 const {CONTEXT_TOKENS}=require('./model-context');
 const SAMPLES_PER_CALL=3,MAX_SAMPLES=50,MAX_TOKENS=4096;
 const round=n=>Math.round(n*1000)/1000;
@@ -9,7 +9,7 @@ function inferenceRequirement(task){
   if(!/\bbenchmark\b|\bmeasure\b.{0,120}\b(?:latency|tokens|wall.clock)\b/i.test(text))return null;
   const match=text.match(/\b(\d+)\s+(?:identical\s+)?(?:prompts?|samples?|runs?)\b/i);
   if(!match||Number(match[1])<1)return null;
-  const model=[NEXT_80B_THINKING_MODEL,NEXT_80B_MODEL,DEFAULT_MODEL].find(id=>text.includes(id))||task.model||DEFAULT_MODEL;
+  const model=[NEXT_80B_THINKING_Q4_MODEL,NEXT_80B_THINKING_MODEL,NEXT_80B_MODEL,DEFAULT_MODEL].find(id=>text.includes(id))||task.model||DEFAULT_MODEL;
   return {samples:Number(match[1]),model};
 }
 function inferenceCompletionError(task,jobs=[]){
@@ -29,9 +29,10 @@ function inputFor(args,task){
   if(args.label!==undefined&&(typeof args.label!=='string'||args.label.length>120))throw Error('Model job label is too long');
   const samples=args.samples??1,model=args.model||task.model||DEFAULT_MODEL;profileFor(model);
   // Thinking-only samples need room for reasoning plus the measured response.
-  const maxTokens=args.maxTokens??(model===NEXT_80B_THINKING_MODEL?2048:128);
+  const maxTokens=args.maxTokens??(isNextThinkingModel(model)?2048:128);
   if(!Number.isSafeInteger(samples)||samples<1||samples>MAX_SAMPLES)throw Error('Choose 1–50 identical samples');
-  if(!Number.isSafeInteger(maxTokens)||maxTokens<16||maxTokens>MAX_TOKENS)throw Error('Choose a model output limit of 16–4096 tokens');
+  const outputLimit=model===NEXT_80B_THINKING_Q4_MODEL?profileFor(model).outputTokens:MAX_TOKENS;
+  if(!Number.isSafeInteger(maxTokens)||maxTokens<16||maxTokens>outputLimit)throw Error(`Choose a model output limit of 16–${outputLimit} tokens`);
   return {model,request:{prompt:args.prompt,system:args.system??'You are a helpful assistant.',samples,maxTokens,label:args.label||''}};
 }
 function statistics(samples){
@@ -62,7 +63,7 @@ async function runModelJob({store,runtime,task,args,token,signal,inference=callb
       return inference(async()=>{
         const startedAt=now();
         store.recordActivity?.(task.id,'MODEL_STEP',{model:job.model,scope:'sample',jobId:job.id,index},token);
-        const response=await runtime.chat(job.model,messages,[],combined,null,null,{thinking:profile.thinking,rawMeasurement:true,num_ctx:CONTEXT_TOKENS,num_predict:job.request.maxTokens,temperature:0,noResourceRetry:true});
+        const response=await runtime.chat(job.model,messages,[],combined,null,null,{thinking:profile.thinking,rawMeasurement:true,num_ctx:profile.contextTokens||CONTEXT_TOKENS,num_predict:job.request.maxTokens,temperature:0,noResourceRetry:true});
         combined?.throwIfAborted();store.assertRunnable(task.id,token);
         const content=response?.message?.content;
         if(response?.model&&response.model!==job.model)throw Error('Model response identity does not match the job');
@@ -74,7 +75,7 @@ async function runModelJob({store,runtime,task,args,token,signal,inference=callb
   }
   const folder=`model-runs/${job.id}`,results=statistics(job.samples);
   for(const sample of job.samples)await writeDraft({path:`${folder}/sample-${String(sample.index).padStart(3,'0')}.json`,content:JSON.stringify({model:job.model,...sample},null,2)});
-  const report={jobId:job.id,model:job.model,createdAt:job.createdAt,status:job.status,request:job.request,contextTokens:CONTEXT_TOKENS,thinking:profile.thinking,temperature:0,statistics:results,columns:['index','promptTokens','outputTokens','wallMs','queueMs','generationMs','promptMs','loadMs'],measurements:job.samples.map(s=>[s.index,s.promptTokens,s.outputTokens,s.wallMs,s.queueMs,s.generationMs,s.promptMs,s.loadMs]),responseFiles:'sample-001.json through the completed sample count; each contains the exact response and measurements'};
+  const report={jobId:job.id,model:job.model,createdAt:job.createdAt,status:job.status,request:job.request,contextTokens:profile.contextTokens||CONTEXT_TOKENS,thinking:profile.thinking,temperature:0,statistics:results,columns:['index','promptTokens','outputTokens','wallMs','queueMs','generationMs','promptMs','loadMs'],measurements:job.samples.map(s=>[s.index,s.promptTokens,s.outputTokens,s.wallMs,s.queueMs,s.generationMs,s.promptMs,s.loadMs]),responseFiles:'sample-001.json through the completed sample count; each contains the exact response and measurements'};
   const artifact=await writeDraft({path:`${folder}/results-${String(job.samples.length).padStart(3,'0')}.json`,content:JSON.stringify(report,null,2)});
   const goalError=inferenceCompletionError(task,store.modelJobs(task.id));
   return {jobId:job.id,model:job.model,status:job.status,completed:job.samples.length,total:job.request.samples,statistics:results,path:artifact.path,sha256:artifact.sha256,...(resumeInfo?{resumeInfo}:{}),response:job.request.samples===1?job.samples[0]?.response.slice(0,1600):undefined,next:job.status==='COMPLETED'?(goalError||'Read the saved results and report the measured outcome.'):`Continue with run_model({jobId:"${job.id}"}); saved samples will not repeat.`};

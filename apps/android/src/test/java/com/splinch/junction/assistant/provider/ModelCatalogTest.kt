@@ -8,12 +8,14 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
-    fun `local model picker offers all three supported PC models`() {
+    fun `local model picker distinguishes Instruct and both Thinking quantizations`() {
         val local = ModelCatalog.providerById("local")!!
         assertEquals("qwen3:30b", local.defaultModelId)
         val nextModel = "junction-qwen3-next:80b-q3km"
         val thinkingModel = "junction-qwen3-next-thinking:80b-q3km"
-        assertEquals(listOf("qwen3:30b", nextModel, thinkingModel), local.models.map { it.id })
+        val thinkingQ4 = "junction-qwen3-next-thinking:80b-q4km"
+        assertEquals(listOf("qwen3:30b", nextModel, thinkingModel, thinkingQ4), local.models.map { it.id })
+        assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", "hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M"))
         assertEquals(thinkingModel, ModelCatalog.normalizeModelId("local", thinkingModel))
         assertEquals(thinkingModel, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF:Q3_K_M"))
         assertEquals(nextModel, ModelCatalog.normalizeModelId("local", nextModel))

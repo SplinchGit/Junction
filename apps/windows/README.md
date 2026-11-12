@@ -139,7 +139,8 @@ expose usable UI Automation metadata. No broad automation is implemented.
 Choose **Local LLM** in either app. **Qwen3 30B** (`qwen3:30b`) remains the default
 for chat and Nethra tasks. **Qwen3-Next 80B A3B Instruct · Q3_K_M** can be selected
 for chat or individual Nethra tasks. A separate **80B Thinking · Q3_K_M** option
-is now available for longer reasoning. All three models use the same Nethra task,
+is available for longer reasoning, alongside the official **80B Thinking · Q4_K_M**.
+All models use the same Nethra task,
 plan, evidence, permissions and checkpoint; switching does not erase progress.
 The existing 80B Instruct option uses the local Ollama alias
 `junction-qwen3-next:80b-q3km`. To prepare another paired PC, run
@@ -173,6 +174,19 @@ junction-qwen3-next-thinking:80b-q3km` from `apps/windows`: it checks a real
 structured tool call and a follow-up answer against a deterministic fake tool
 result, and exits nonzero if either fails. Then test a small research-and-draft
 Nethra task. This smoke requires the model weights and Ollama running locally.
+
+For the official 48 GB Q4 Thinking weights, use this separate Ollama alias:
+
+```powershell
+ollama pull hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M
+ollama cp hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M junction-qwen3-next-thinking:80b-q4km
+```
+
+Select **Qwen3-Next 80B Thinking · Q4_K_M** in Local LLM or **Thinking Q4** in
+Tasks. The alias shares the official blob. This profile uses an 8,192-token
+context and up to 2,048 output tokens. On the 32 GiB RAM / 12 GiB VRAM PC,
+both automatic offload and CPU-only cold-load tests timed out. Keep 30B for
+routine work until Q4 completes a live inference test on the paired host.
 
 Keep Junction and Ollama running on the paired PC. Android uses the authenticated
 LAN connection or the separately selected encrypted relay mode; weights stay on

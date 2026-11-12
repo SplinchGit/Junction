@@ -5,7 +5,7 @@ const { providers, normalizeLocalModel, normalizeModel, credentialProviderId } =
 const { LocalDataStore } = require("../src/local-data");
 const nextModel = "junction-qwen3-next:80b-q3km";
 const previousNextModel = "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M";
-assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:30b", nextModel, "junction-qwen3-next-thinking:80b-q3km"]);
+assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:30b", nextModel, "junction-qwen3-next-thinking:80b-q3km", "junction-qwen3-next-thinking:80b-q4km"]);
 assert.equal(normalizeLocalModel(nextModel), nextModel);
 assert.equal(normalizeLocalModel(previousNextModel), nextModel);
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "junction-model-retirement-"));

@@ -9,7 +9,7 @@ const {objectiveBrief}=require('./nethra-brief');
 const {projectOwnerNotes}=require('./assistant-environment');
 const {projectDocumentStatus}=require('./nethra-project-documents');
 const {checkpointAfterTool,seedForWake}=require('./nethra-checkpoint');
-const {DEFAULT_MODEL,NEXT_80B_MODEL,NEXT_80B_THINKING_MODEL,profileFor}=require('./nethra-models');
+const {DEFAULT_MODEL,NEXT_80B_MODEL,isNextThinkingModel,profileFor}=require('./nethra-models');
 const {taskContract,taskWork,ownerQuestion,openQuestions}=require('./nethra-task-contract');
 const {runModelJob,modelAccessQuestion,inferenceRequirement,inferenceCompletionError,measuredExecutionStep}=require('./nethra-model-inference');
 // Re-running unchanged queries needs no duplicate work. A source-change error
@@ -199,16 +199,16 @@ class NethraRunner {
       }
       // Extended-thinking calls must leave room for reasoning AND the tool result.
       const outputTokens=profile.outputTokens||1536;
-      const fit=fitContext(messages,definitions,{reserveTokens:outputTokens+256});
+      const fit=fitContext(messages,definitions,{contextTokens:profile.contextTokens||CONTEXT_TOKENS,reserveTokens:outputTokens+256});
       if(fit.compacted||fit.removedExchanges)this.store.recordContextCompaction?.(task.id,fit);
       if(!fit.fits)throw new ContextOverflowError(`Nethra's protected prompt needs about ${fit.estimatedTokens} tokens, above its ${fit.budget}-token input budget. The host must reduce this task's context before it can continue.`);
-      const response=await this.runtime.withInference(yielded=>inference(()=>{assertScoped();this.store.recordActivity?.(task.id,'MODEL_STEP',{model,scope:child?'child':'task'},token);return this.runtime.chat(model,messages,definitions,yielded?AbortSignal.any([executionSignal,yielded]):executionSignal,null,null,{thinking:profile.thinking,num_ctx:CONTEXT_TOKENS,num_predict:profile.outputTokens||1536,...(profile.thinking?{onThinking:()=>{},...(profile.thinkingBudget>0?{thinkingBudget:profile.thinkingBudget}:{})}:{})});}),executionSignal,{priority:'background',preemptible:true});
+      const response=await this.runtime.withInference(yielded=>inference(()=>{assertScoped();this.store.recordActivity?.(task.id,'MODEL_STEP',{model,scope:child?'child':'task'},token);return this.runtime.chat(model,messages,definitions,yielded?AbortSignal.any([executionSignal,yielded]):executionSignal,null,null,{thinking:profile.thinking,num_ctx:profile.contextTokens||CONTEXT_TOKENS,num_predict:profile.outputTokens||1536,...(profile.thinking?{onThinking:()=>{},...(profile.thinkingBudget>0?{thinkingBudget:profile.thinkingBudget}:{})}:{})});}),executionSignal,{priority:'background',preemptible:true});
       assertScoped();const m=response?.message;if(!m||m.role&&m.role!=='assistant')throw Error('Local model returned no assistant message');
       if(Number.isSafeInteger(response.prompt_eval_count)&&response.prompt_eval_count>=0)this.store.recordContextMeasurement?.(task.id,{estimatedTokens:fit.estimatedTokens,actualTokens:response.prompt_eval_count,budget:fit.budget});
       if(!child&&inputKey!==directionKey(this.store.get(task.id)))return {stale:true};
       if(!child)lastModelDirectionKey=inputKey;
       const content=cleanText(m.content,3000);if(content.trim())this.store.recordActivity?.(task.id,'NETHRA_UPDATE',{model,text:content.trim().slice(0,300),scope:child?'child':'task'},token);
-      const calls=m.tool_calls?.length?m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};}):[NEXT_80B_MODEL,NEXT_80B_THINKING_MODEL].includes(model)?[textualCall(content,definitions)].filter(Boolean):[];
+      const calls=m.tool_calls?.length?m.tool_calls.slice(0,MAX_TOOLS).map(call=>{const {name,args}=nativeCall(call);return {function:{name,arguments:args}};}):(model===NEXT_80B_MODEL||isNextThinkingModel(model))?[textualCall(content,definitions)].filter(Boolean):[];
       return {role:'assistant',content,...(calls.length?{tool_calls:calls}:{})};
     };
     const toolMessage=(name,value)=>({role:'tool',tool_name:name,content:bounded(value)});

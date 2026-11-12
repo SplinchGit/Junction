@@ -91,8 +91,8 @@ function parseNethraChat(content) {
     const verb = goal[0].trim().split(/\s+/).at(-1);
     objective = `${verb} ${objective}`.trim();
   }
-  const selected=/\b(?:use|using|with|on)\s+(?:the\s+)?(80|30)\s?b(?:\s+(thinking|instruct))?\b/i.exec(objective);
-  return objective ? { action: "create", goal: objective, mode:isOngoingRequest(message)||/\btrack\b/i.test(goal[0])?'ONGOING':'FINITE',...(selected?{model:selected[1]==='80'?(selected[2]?.toLowerCase()==='thinking'?'junction-qwen3-next-thinking:80b-q3km':'junction-qwen3-next:80b-q3km'):'qwen3:30b'}:{}) } : { action: "help" };
+  const selected=/\b(?:use|using|with|on)\s+(?:the\s+)?(80|30)\s?b(?:\s+(thinking|instruct))?(?:\s+(q4(?:_k_m)?))?\b/i.exec(objective);
+  return objective ? { action: "create", goal: objective, mode:isOngoingRequest(message)||/\btrack\b/i.test(goal[0])?'ONGOING':'FINITE',...(selected?{model:selected[1]==='80'?(selected[3]&&selected[2]?.toLowerCase()!=='instruct'?'junction-qwen3-next-thinking:80b-q4km':selected[2]?.toLowerCase()==='thinking'?'junction-qwen3-next-thinking:80b-q3km':'junction-qwen3-next:80b-q3km'):'qwen3:30b'}:{}) } : { action: "help" };
 }
 
 const FINISHED = new Set(["COMPLETED", "CANCELLED", "FAILED"]);

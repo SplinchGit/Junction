@@ -5,6 +5,23 @@ const { LocalAgentRuntime } = require("../src/local-agent-runtime");
 const { profileFor, NEXT_80B_THINKING_MODEL, NEXT_80B_MODEL, DEFAULT_MODEL } = require("../src/nethra-models");
 const { providers } = require("../src/model-catalog");
 
+test("official Q4 Thinking is selectable and uses its own context budget", async () => {
+  const { normalizeLocalModel } = require("../src/model-catalog");
+  const model = "junction-qwen3-next-thinking:80b-q4km";
+  assert.equal(normalizeLocalModel("hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M"), model);
+  assert.equal(profileFor(model).thinking, true);
+  let payload;
+  const runtime = new LocalAgentRuntime({ fetchImpl: async (_url, request) => {
+    payload = JSON.parse(request.body);
+    return { ok: true, json: async () => ({ message: { content: "391" } }) };
+  } });
+  await runtime.chatOnceInner(model, [{role:"user",content:"17 times 23"}], [], null, null, null, {thinking:false});
+  assert.equal(payload.model, model);
+  assert.equal(payload.think, true);
+  assert.equal(payload.options.num_ctx, 8192);
+  assert.equal(payload.options.num_predict, 2048);
+});
+
 test("80B Thinking remains a separate, opt-in model profile", () => {
   assert.equal(profileFor(DEFAULT_MODEL).thinking, true);
   assert.equal(profileFor(DEFAULT_MODEL).thinkingBudget, 1100);
