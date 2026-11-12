@@ -296,7 +296,7 @@ test('runner uses native messages, explicit completion and never persists thinki
   assert.equal(JSON.stringify(f.task).includes('private reasoning'),false);
 });
 
-test('one objective can resume with either model using the same harness',async t=>{
+test('one objective can use 30B, 80B Instruct and 80B Thinking without changing its harness',async t=>{
   const f=fixture(t),calls=[];
   f.task.model='junction-qwen3-next:80b-q3km';
   const runtime={withInference:fn=>fn(),chat:async(model,messages,tools,signal,onText,format,options)=>{
@@ -307,8 +307,12 @@ test('one objective can resume with either model using the same harness',async t
   await runner.execute(f.task);
   f.task.model='qwen3:30b';
   await runner.execute(f.task);
-  assert.deepEqual(calls.map(call=>call.model),['junction-qwen3-next:80b-q3km','qwen3:30b']);
-  assert.deepEqual(calls.map(call=>call.options.thinking),[false,true]);
+  f.task.model='junction-qwen3-next-thinking:80b-q3km';
+  await runner.execute(f.task);
+  assert.deepEqual(calls.map(call=>call.model),['junction-qwen3-next:80b-q3km','qwen3:30b','junction-qwen3-next-thinking:80b-q3km']);
+  assert.deepEqual(calls.map(call=>call.options.thinking),[false,true,true]);
+  assert.deepEqual(calls.map(call=>call.options.num_predict),[1536,1536,6144]);
+  assert.equal(calls[2].options.thinkingBudget,undefined);
   assert.ok(calls.every(call=>!call.system.includes('qwen3:30b')));
 });
 test('a requested local file read cannot be replaced by a directory listing and a copied success criterion',async t=>{
