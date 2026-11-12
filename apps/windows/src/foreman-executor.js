@@ -125,6 +125,14 @@ class ForemanExecutor{
  workingGit(p,cwd,args){return p.sharedCheckout?this.git(p.worktree,[`--work-tree=${cwd}`,...args]):this.git(cwd,args);}
  async applySharedPatch(p,cwd,patch,checks,before,signal){
   if(await this.sourceHash(cwd,true)!==before)throw new Error('Shared source changed while the provider was reasoning; reconcile before applying');
+  // Providers see the whole repository, so a patch may name files from the Git root. Accept that form
+  // only when every file lies inside the approved scope folder, and rewrite it relative to that folder.
+  const prefix=path.relative((await this.git(cwd,['rev-parse','--show-toplevel'])).trim(),cwd).replaceAll('\\','/');
+  const named=[...String(patch).matchAll(/^(?:\+\+\+ b|--- a)\/(.+?)\r?$/gm)].map(m=>m[1].trimEnd());
+  if(prefix&&named.length&&named.every(name=>name.startsWith(prefix+'/'))){
+   const strip=name=>name.startsWith(prefix+'/')?name.slice(prefix.length+1):name;
+   patch=String(patch).replace(/^(diff --git a\/|--- a\/|\+\+\+ b\/)(\S+)(?: b\/(\S+))?/gm,(line,head,first,second)=>head+strip(first)+(second?' b/'+strip(second):''));
+  }
   const files=[...String(patch).matchAll(/^\+\+\+ b\/(.+)\r?$/gm)].map(m=>m[1].trimEnd());
   const protectedPath=protectedVerification(p,cwd,checks);
   if(!files.length||files.some(name=>!relative(name)||forbidden.test(name)||protectedPath(name)||(p.scopeFile&&name!==p.scopeFile)))throw new Error('Owner review required: patch exceeds approved source scope or changes protected verification');

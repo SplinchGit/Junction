@@ -257,3 +257,16 @@ test('with neither provider available the wait ends at a confirmed reset or a re
  assert.equal(dispatched,0);assert.equal(fs.existsSync(path.join(repo,'.git','nethra-writer.lock')),false);
  assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
 });
+
+test('a repository-root patch for a scoped subfolder applies only inside that folder',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-root-patch-')),scope=path.join(root,'apps','windows');
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ fs.mkdirSync(scope,{recursive:true});execFileSync('git',['init','-b','main'],{cwd:root});
+ fs.writeFileSync(path.join(scope,'answer.js'),'module.exports = 1;\n');fs.writeFileSync(path.join(root,'outside.js'),'outside\n');
+ const e=new ForemanExecutor(path.join(root,'state'),{server:{}}),p={repoPath:scope};
+ const diff=name=>`diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n-module.exports = 1;\n+module.exports = 2;\n`;
+ await assert.rejects(e.applySharedPatch(p,scope,diff('apps/windows/answer.js')+diff('outside.js').replace(/module\.exports = 1;/,'outside').replace(/module\.exports = 2;/,'changed'),[],await e.sourceHash(scope,true)),/additional file scope|scope/);
+ assert.equal(fs.readFileSync(path.join(root,'outside.js'),'utf8'),'outside\n');
+ await e.applySharedPatch(p,scope,diff('apps/windows/answer.js'),[],await e.sourceHash(scope,true));
+ assert.equal(fs.readFileSync(path.join(scope,'answer.js'),'utf8'),'module.exports = 2;\n');
+});
