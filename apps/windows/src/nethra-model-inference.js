@@ -1,15 +1,15 @@
 'use strict';
 const {createHash}=require('node:crypto');
-const {DEFAULT_MODEL,profileFor}=require('./nethra-models');
+const {DEFAULT_MODEL,NEXT_80B_MODEL,NEXT_80B_THINKING_MODEL,profileFor}=require('./nethra-models');
 const {CONTEXT_TOKENS}=require('./model-context');
-const SAMPLES_PER_CALL=3,MAX_SAMPLES=50,MAX_TOKENS=512;
+const SAMPLES_PER_CALL=3,MAX_SAMPLES=50,MAX_TOKENS=4096;
 const round=n=>Math.round(n*1000)/1000;
 function inferenceRequirement(task){
   const text=`${task.goal||task.objective||''}. ${task.successCriteria||''}`;
   if(!/\bbenchmark\b|\bmeasure\b.{0,120}\b(?:latency|tokens|wall.clock)\b/i.test(text))return null;
   const match=text.match(/\b(\d+)\s+(?:identical\s+)?(?:prompts?|samples?|runs?)\b/i);
   if(!match||Number(match[1])<1)return null;
-  const model=['junction-qwen3-next:80b-q3km',DEFAULT_MODEL].find(id=>text.includes(id))||task.model||DEFAULT_MODEL;
+  const model=[NEXT_80B_THINKING_MODEL,NEXT_80B_MODEL,DEFAULT_MODEL].find(id=>text.includes(id))||task.model||DEFAULT_MODEL;
   return {samples:Number(match[1]),model};
 }
 function inferenceCompletionError(task,jobs=[]){
@@ -27,9 +27,11 @@ function inputFor(args,task){
   if(typeof args.prompt!=='string'||!args.prompt.trim()||args.prompt.length>4000)throw Error('Model prompt must contain 1–4000 characters');
   if(args.system!==undefined&&(typeof args.system!=='string'||args.system.length>1500))throw Error('Fixed model context must contain at most 1500 characters');
   if(args.label!==undefined&&(typeof args.label!=='string'||args.label.length>120))throw Error('Model job label is too long');
-  const samples=args.samples??1,maxTokens=args.maxTokens??128,model=args.model||task.model||DEFAULT_MODEL;profileFor(model);
+  const samples=args.samples??1,model=args.model||task.model||DEFAULT_MODEL;profileFor(model);
+  // Thinking-only samples need room for reasoning plus the measured response.
+  const maxTokens=args.maxTokens??(model===NEXT_80B_THINKING_MODEL?2048:128);
   if(!Number.isSafeInteger(samples)||samples<1||samples>MAX_SAMPLES)throw Error('Choose 1–50 identical samples');
-  if(!Number.isSafeInteger(maxTokens)||maxTokens<16||maxTokens>MAX_TOKENS)throw Error('Choose a model output limit of 16–512 tokens');
+  if(!Number.isSafeInteger(maxTokens)||maxTokens<16||maxTokens>MAX_TOKENS)throw Error('Choose a model output limit of 16–4096 tokens');
   return {model,request:{prompt:args.prompt,system:args.system??'You are a helpful assistant.',samples,maxTokens,label:args.label||''}};
 }
 function statistics(samples){
