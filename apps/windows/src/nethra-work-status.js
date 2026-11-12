@@ -11,7 +11,7 @@ function createWorkStatus(foreman){
       // Nethra candidates are applied only after separate owner review. Their
       // attempts deliberately have no automatic promotion receipt.
       if(Number.isSafeInteger(project.appliedAt)&&project.appliedAt>0)promoted.push(project.appliedAt);
-      return {status:project.status,retryAt:project.retryAt,nextAction:project.nextAction,promotedAt:promoted.length?Math.max(...promoted):null};
+      return {status:project.status,sharedCheckout:project.sharedCheckout===true,retryAt:project.retryAt,nextAction:project.nextAction,promotedAt:promoted.length?Math.max(...promoted):null};
     }catch{return null;}
   };
 }

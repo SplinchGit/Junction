@@ -7,6 +7,12 @@ const BRIEF='Nethra is a persistent local companion with Tasks, Android pairing,
 
 const selfImprovementTask=task=>/^self[ -]improvement[.!]?$/i.test(String(task.goal||'').trim())&&!task.parentId;
 const summarizeAdvice=advice=>String(advice||'').replace(/\s+/g,' ').trim().slice(0,320);
+const coordinationContinue=/^continue co[- ]?ordination[.!]*$/i;
+const workControl=/^(?:please\s+)?(?:start|start scoped work|start with codex and claude|continue(?: co[- ]?ordination)?|resume|keep going|carry on)[.!]*$/i;
+const emptyDirection=/^(?:here|there|this|that|it|this chat|this conversation)[.!?]*$/i;
+const draftStartMessage=work=>work?.sharedCheckout
+  ?'Draft saved. In Work Activity, select “Start with Codex and Claude” and confirm to authorize engineering and handoffs.'
+  :'Draft saved. Start it in Work Activity to authorize engineering.';
 function pilotChoice(text){
   const value=String(text||'').trim();
   const match=/^(?:please\s+)?(?:approve|aprove)\s+(?:the\s+)?(?:(codex|claude)(?:'s)?\s+)?pilot(?:,?\s+please)?(?:[.!]+\s*|$)([\s\S]*)$/i.exec(value);
@@ -20,7 +26,7 @@ function ownerBrief(task){
   for(const input of [...(task.ownerInputs||[])].reverse()){
     const text=String(input.text||'').trim();
     if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
-    if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||/^(?:retry consultation|continue coordination)[.!]?$/i.test(text))continue;
+    if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||workControl.test(text)||/^retry consultation[.!]?$/i.test(text)||(input.kind==='redirect'&&emptyDirection.test(text)))continue;
     if(text)return text.slice(0,700);
   }
   return '';
@@ -68,9 +74,14 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
   // A changed brief invalidates advice and approval, never a running engineering scope.
   const brief=ownerBrief(current);
   if(state.stage==='tracking'&&brief!==(state.brief||''))return ask('Your direction changed. Review and stop or revise the existing work in Work Activity before approving a replacement. Reply “continue coordination” after stopping the old work.','scope_changed');
+  if(state.stage==='scope_changed'&&brief===(state.brief||'')){
+    const questions=(current.questions||[]).map(question=>question.id===state.questionId&&question.status==='OPEN'?{...question,status:'SUPERSEDED'}:question);
+    state={...state,stage:'tracking',questionId:null};
+    await persist({questions},'COORDINATION_SCOPE_RESTORED');
+  }
   if(state.stage==='scope_changed'){
     const work=tools.workStatus?.(state.workId);
-    if(!/^continue coordination[.!]?$/i.test(answer()?.trim()||'')||!work||!['STOPPED','COMPLETED'].includes(work.status))return ask('Stop the old scope in Work Activity, then reply “continue coordination” to consult on your new direction.','scope_changed');
+    if(!coordinationContinue.test(answer()?.trim()||'')||!work||!['STOPPED','COMPLETED'].includes(work.status))return ask('In Work Activity, stop the previous draft or work. Then reply “continue coordination” to consult on your new direction.','scope_changed');
     state={stage:'consulting',advisors:{},brief};
     await persist({summary:'Consulting on the revised direction.'},'COORDINATION_SCOPE_CHANGED');
   }
@@ -144,11 +155,11 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
       return ask(`The approved pilot needs a clearer scope or test before I can save a draft. ${state.draftReview} Reply “GPT brief: …” with the change you want reviewed.`, 'revision_needed');
     }
     state={...state,stage:'tracking',workId:result.workId};
-    await persist({summary:'Draft saved. Start it in Work Activity to authorize engineering.'},'COORDINATION_DRAFT_READY');
+    await persist({summary:draftStartMessage(tools.workStatus?.(result.workId))},'COORDINATION_DRAFT_READY');
   }
   const work=tools.workStatus?.(state.workId);
   if(!work)return sleep(now()+HALF_HOUR,'Work Activity record unavailable. Check the linked draft.');
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
-    work.status==='DRAFT'?'Draft saved. Start it in Work Activity to authorize engineering.':work.nextAction||`Work Activity: ${work.status}.`);
+    work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }
-module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice};
+module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,workControl,emptyDirection,draftStartMessage};

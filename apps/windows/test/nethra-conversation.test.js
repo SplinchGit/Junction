@@ -7,6 +7,7 @@ const {NethraApi}=require('../src/nethra-api');
 const {NethraScheduler}=require('../src/nethra-scheduler');
 const {NethraTools}=require('../src/nethra-tools');
 const {handleOwnerWorkInstruction}=require('../src/owner-work-instruction');
+const {ownerBrief,runCoordination}=require('../src/nethra-coordination');
 
 function fixture(t,{approval=true}={}){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-conversation-'));
@@ -21,6 +22,50 @@ function fixture(t,{approval=true}={}){
   const turn=(content,requestId)=>handleOwnerWorkInstruction({content,conversationId:'ordinary-chat',requestId,history,source:'android',api,store,ownerWork});
   return {store,task,history,turn};
 }
+
+test('chat controls preserve the approved pilot and explain how to start both engineers',async t=>{
+  const {store,task}=fixture(t,{approval:false});
+  store.note(task.id,'GPT brief: Keep the engineering handoff on shared main.');
+  store.configure(task.id,{allowCodeWork:true},store.get(task.id).revision,'enable-code');
+  const configured=store.configure(task.id,{coordinateSelfImprovement:true},store.get(task.id).revision,'enable-coordination');
+  const brief=ownerBrief(configured);
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:Date.now()+600_000,coordination:{stage:'tracking',workId:'approved-draft',brief}},'DRAFT_SAVED');
+  const work={id:'approved-draft',sourceObjectiveId:task.id,status:'DRAFT',sharedCheckout:true,nextAction:'Waiting for owner'};
+  const turn=(content,requestId)=>handleOwnerWorkInstruction({content,requestId,conversationId:'task-chat',source:'android',api:new NethraApi({store,runtime:{}}),store,findWork:id=>id===work.id?work:null,ownerWork:async()=>assert.fail('escaped to ordinary coding router')});
+  for(const [index,content] of ['Start','Continue co-ordination','CONTINUE!','Start'].entries()){
+    assert.match(await turn(content,'draft-control-'+index),/Start with Codex and Claude/);
+    assert.equal(ownerBrief(store.get(task.id)),brief);
+  }
+  assert.match(await turn('Redirect that task to here','deictic-redirect'),/new direction/i);
+  assert.equal(ownerBrief(store.get(task.id)),brief);
+  assert.equal(store.get(task.id).coordination.stage,'tracking');
+  assert.equal(store.get(task.id).ownerInputs.length,1);
+  await turn('Redirect that task to focus on voice interruption','real-redirect');
+  assert.equal(ownerBrief(store.get(task.id)),'focus on voice interruption');
+  assert.match(await turn('Start','start-changed-scope'),/brief changed/i);
+});
+
+test('a persisted phantom scope change recovers the same draft without another consultation',async t=>{
+  const {store,task}=fixture(t,{approval:false});
+  store.note(task.id,'GPT brief: Keep the engineering handoff on shared main.');
+  store.configure(task.id,{allowCodeWork:true},store.get(task.id).revision,'enable-code');
+  const configured=store.configure(task.id,{coordinateSelfImprovement:true},store.get(task.id).revision,'enable-coordination');
+  const brief=ownerBrief(configured);
+  store.note(task.id,'Start');
+  store.redirect(task.id,'here',store.get(task.id).revision,'old-deictic-redirect');
+  const question={id:'scope-question',status:'OPEN',question:'Stop the old scope',blocking:true};
+  store.update(task.id,{status:'ACTIVE',questions:[question],coordination:{stage:'scope_changed',questionId:question.id,workId:'approved-draft',brief}},'FALSE_SCOPE_CHANGE');
+  const claim=store.claim('test');
+  assert.ok(claim);
+  try{
+    await runCoordination(claim.task,{store,token:claim.token,tools:{workStatus:()=>({status:'DRAFT',sharedCheckout:true}),execute:()=>assert.fail('reopened consultation')}});
+  }finally{store.release(task.id,claim.token);}
+  const result=store.get(task.id);
+  assert.equal(result.coordination.stage,'tracking');
+  assert.equal(result.coordination.workId,'approved-draft');
+  assert.equal(result.questions[0].status,'SUPERSEDED');
+  assert.match(result.summary,/Start with Codex and Claude/);
+});
 
 test('asking Codex to work on code reaches the task instead of becoming a continue/status command',async t=>{
   const {store,task}=fixture(t,{approval:false}),api=new NethraApi({store,runtime:{}});

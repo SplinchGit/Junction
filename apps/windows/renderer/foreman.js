@@ -109,7 +109,7 @@
  }
  async function refresh(){if(pending)return;pending=true;try{const [{projects},threads]=await Promise.all([window.junction.foreman('project.list'),window.junction.conversations()]);list.replaceChildren();if(!projects.length)list.append(element('p','No active work yet. Give Junction a development instruction in Chat.'));
   for(const row of projects){const {project:p}=await window.junction.foreman('project.get',{id:row.id});const card=element('article','');card.className='delegation-card';card.append(element('h3',`${p.name} · ${p.status.replaceAll('_',' ')}`),element('strong',statusText(p)),element('p',p.repoPath||''),element('p',p.objective));
-   if(p.sourceObjectiveId)card.append(element('p','Nethra proposed this work. Codex reviewed the proposal; your Start authorizes isolated implementation. Applying its verified patch is a separate choice.'));
+   if(p.sourceObjectiveId)card.append(element('p',p.sharedCheckout?'Nethra proposed this work. Codex reviewed the proposal. Choose “Start with Codex and Claude” to authorize both providers.':'Nethra proposed this work. Codex reviewed the proposal; your Start authorizes isolated implementation. Applying its verified patch is a separate choice.'));
    if(p.sharedCheckout)card.append(element('p','Codex and Claude share the original main checkout. Start authorizes scoped file edits; Nethra will not commit or push. Pause stops further dispatch.'));
    if(['WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)){const recheck=element('button','Check provider availability','secondary');recheck.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'retry'}));card.append(recheck);}
    if(p.status==='DRAFT'){const start=element('button','Start scoped work','primary');const needsAcceptance=p.sourceObjectiveId&&p.tasks.some(task=>!task.acceptance||task.acceptance.trim().length<30);const needsReview=p.sourceObjectiveId&&p.codeReviewVerdict!=='READY';if(needsAcceptance||needsReview){start.disabled=true;card.append(element('p',needsAcceptance?'Nethra must give measurable acceptance criteria before this draft can start. Ask her to prepare a revised proposal.':'Codex requested a revision or has not marked this exact proposal ready. Ask Nethra to prepare a revised proposal.'));}start.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'start'}));card.append(start);}
@@ -119,6 +119,7 @@
      handoff.onclick=()=>{if(window.confirm(p.sharedCheckout?'Approve Codex and Claude to take turns editing this scope in the shared main checkout? Neither Nethra nor this action commits or pushes.':'Approve Codex and Claude to work on this scope and hand off automatically? The candidate stays isolated until you review and apply it.'))call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:p.status==='DRAFT'?'start':'resume',autoHandoff:true}));};
      card.append(handoff);
    }
+   if(p.status==='DRAFT'&&p.sourceObjectiveId)card.append(stopButton(p));
    const active=['RUNNING','VERIFYING','WAITING_CODEX','WAITING_CAPACITY'].includes(p.status);
    if(active){
      const actions=element('div','');actions.className='delegation-actions';

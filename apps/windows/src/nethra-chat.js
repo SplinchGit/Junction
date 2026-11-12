@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const {normalizeLocalModel}=require("./model-catalog");
 const {isOngoingRequest}=require('./local-agent-tools');
 const {continuationGate,continueReviewedTask,isTaskContinuation}=require('./nethra-conversation');
+const {emptyDirection}=require('./nethra-coordination');
 
 const TASK_NOUN = /\b(?:task|objective|goal|tracking|research|monitoring)\b/i;
 const PRONOUN = /^(?:it|that|this)$/i;
@@ -39,7 +40,7 @@ function parseReference(message) {
   topic = topic.replace(TASK_NOUN, "").replace(/\b(?:the|my|that|this|it|on|with|going|doing)\b/gi, " ").replace(/\s+/g, " ").trim();
   let command = VERBS.find(([, pattern]) => pattern.test(verb))?.[0] || "status";
   if (command === "wake" && !match[4] && !/^(?:run|wake)$/.test(verb)) command = verb === "check" ? "wake" : "status";
-  if (command === "redirect" && !direction) return { action: "clarify", text: "Tell me the new direction, for example: ‘redirect that task to focus on official sources only’." };
+  if (command === "redirect" && (!direction||emptyDirection.test(direction))) return { action: "clarify", text: "Tell me the new direction, for example: ‘redirect that task to focus on official sources only’." };
   return { action: "reference", command, topic, direction };
 }
 

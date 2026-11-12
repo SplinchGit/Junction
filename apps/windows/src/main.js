@@ -114,7 +114,7 @@ function taskForConversation(conversationId){
 async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop',history=null,selectedLocalModel=null){
   const provider=source==='desktop'?localData?.provider():null;
   const model=selectedLocalModel||(provider?.id==='local'?provider.model:null);
-  return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,selectedLocalModel:model,api:nethraApi,store:nethraStore,
+  return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,selectedLocalModel:model,api:nethraApi,store:nethraStore,findWork:id=>foreman?.find(id),
     ownerWork:request=>executeOwnerWork({foreman,roots:[app.getPath('documents')],content:request.content,conversationId:request.conversationId,requestId:request.requestId})});
 }
 function hydrateFirebaseEnvironment() {
