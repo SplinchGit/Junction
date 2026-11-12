@@ -5,7 +5,7 @@ const { ROUTING_SCHEMA, normalizeDecision, decisionAllowsDelegation, routingProm
 const { citationAudit, mergeResearch, renderCitations } = require("./research-coordinator");
 const { LocalAgentToolRegistry, compactResearchContext, isOngoingRequest } = require("./local-agent-tools");
 const { providers, isSupportedLocalModel } = require("./model-catalog");
-const { NEXT_80B_THINKING_Q4_MODEL, Q4_CONTEXT_TOKENS, Q4_OUTPUT_TOKENS, Q4_SAMPLING, Q4_LOAD_OPTIONS, isNextThinkingModel } = require("./nethra-models");
+const { NEXT_80B_MODEL, NEXT_80B_THINKING_Q4_MODEL, Q4_CONTEXT_TOKENS, Q4_OUTPUT_TOKENS, Q4_SAMPLING, Q4_LOAD_OPTIONS, isNextThinkingModel } = require("./nethra-models");
 const { environmentContext } = require("./assistant-environment");
 const { ModelWarmer } = require("./model-warmer");
 const { isSelfCapabilityQuestion, capabilityResult } = require('./self-capabilities');
@@ -404,7 +404,7 @@ class LocalAgentRuntime {
     // total would make the owner's metrics line contradict itself.
     const started = Date.now();
     const modelEntry = providers.find(provider => provider.id === "local")?.models.find(item => item.id === model);
-    const thinkingEnabled = model === "qwen3:30b" || isNextThinkingModel(model) || (modelEntry?.thinking === false ? false : typeof thinking === "boolean" ? thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
+    const thinkingEnabled = model === "qwen3:30b" || isNextThinkingModel(model) || (model === NEXT_80B_MODEL || modelEntry?.thinking === false ? false : typeof thinking === "boolean" ? thinking : process.env.JUNCTION_OLLAMA_THINK === "true");
     const latency = { queueMs: Number(timing.queueMs) || 0, coldStart: Boolean(timing.coldStart), firstTokenMs: null, firstContentMs: null };
     const onPhase = async event => {
       if (event.phase === "thinking" && latency.firstTokenMs === null) latency.firstTokenMs = Date.now() - started;

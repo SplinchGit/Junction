@@ -42,7 +42,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var criteria by rememberSaveable { mutableStateOf("") }
     var persistent by rememberSaveable { mutableStateOf(true) }
     var taskModel by rememberSaveable { mutableStateOf("qwen3:30b") }
-    val taskModels = listOf("qwen3:30b" to "Qwen3 30B · thinking", "junction-qwen3-next:80b-q3km" to "Qwen3-Next 80B · instruct", "junction-qwen3-next-thinking:80b-q3km" to "Qwen3-Next 80B · Thinking Q3", "junction-qwen3-next-thinking:80b-q4km" to "Qwen3-Next 80B · Thinking Q4")
+    val taskModels = listOf("qwen3:30b" to "Qwen3 30B · thinking", "junction-qwen3-next-thinking:80b-q4km" to "Qwen3-Next 80B · Thinking Q4")
     var mode by rememberSaveable { mutableStateOf("FINITE") }
     var autonomy by rememberSaveable { mutableStateOf("BALANCED") }
     var priority by rememberSaveable { mutableIntStateOf(3) }
@@ -532,7 +532,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 var showApproach by rememberSaveable(id) { mutableStateOf(false) }
                 TextButton(onClick = { showApproach = !showApproach }) { Text(if (showApproach) "Hide approach" else "Approach and settings") }
                 if (showApproach) {
-                if (detail?.get("coordination") == null) PolicyChoice("Local task model", task["model"]?.toString() ?: "qwen3:30b", taskModels, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "model" to it)) }
+                PolicyChoice(if (detail?.get("coordination") == null) "Local task model" else "Model for local reasoning", task["model"]?.toString() ?: "qwen3:30b", taskModels, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "model" to it)) }
                 PolicyChoice("Objective type", task["mode"]?.toString() ?: "FINITE", listOf("FINITE" to "Finish when achieved", "ONGOING" to "Keep monitoring after each result"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "mode" to it)) }
                 PolicyChoice("Autonomy", task["autonomy"]?.toString() ?: "BALANCED", listOf("QUIET" to "Quiet monitoring", "BALANCED" to "Balanced initiative", "ACTIVE" to "Active exploration"), !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "autonomy" to it)) }
                 PolicyChoice("Priority", task["priority"]?.toString() ?: "3", (1..5).map { it.toString() to "$it · Priority" }, !busy && connected && !terminal) { perform("nethra.configure", mapOf("id" to id, "revision" to revision, "priority" to it.toInt())) }

@@ -8,18 +8,18 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
-    fun `local model picker distinguishes Instruct and both Thinking quantizations`() {
+    fun `local model picker offers only 30B and Thinking Q4`() {
         val local = ModelCatalog.providerById("local")!!
         assertEquals("qwen3:30b", local.defaultModelId)
         val nextModel = "junction-qwen3-next:80b-q3km"
         val thinkingModel = "junction-qwen3-next-thinking:80b-q3km"
         val thinkingQ4 = "junction-qwen3-next-thinking:80b-q4km"
-        assertEquals(listOf("qwen3:30b", nextModel, thinkingModel, thinkingQ4), local.models.map { it.id })
+        assertEquals(listOf("qwen3:30b", thinkingQ4), local.models.map { it.id })
         assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", "hf.co/Qwen/Qwen3-Next-80B-A3B-Thinking-GGUF:Q4_K_M"))
-        assertEquals(thinkingModel, ModelCatalog.normalizeModelId("local", thinkingModel))
-        assertEquals(thinkingModel, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF:Q3_K_M"))
-        assertEquals(nextModel, ModelCatalog.normalizeModelId("local", nextModel))
-        assertEquals(nextModel, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M"))
+        assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", thinkingModel))
+        assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF:Q3_K_M"))
+        assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", nextModel))
+        assertEquals(thinkingQ4, ModelCatalog.normalizeModelId("local", "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M"))
         assertNull(ModelCatalog.modelById("local", "lfm2.5:2.6b"))
         assertEquals("qwen3:30b", ModelCatalog.normalizeModelId("local", "qwen3:14b"))
     }

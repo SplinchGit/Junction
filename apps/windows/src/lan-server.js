@@ -248,7 +248,7 @@ class LanServer {
       emit("chat.started", { conversationId: payload.conversationId || null });
       let conversation = this.localData?.conversation(payload.conversationId) || this.localData?.createConversation?.(payload.conversationId);
       if (conversation && this.localData?.addMessage) { this.localData.addMessage(conversation.id, "user", String(payload.content || ""), "OWNER"); conversation = this.localData.conversation(conversation.id); }
-      const workReply=await this.onOwnerWork?.({content,conversationId:conversation?.id||payload.conversationId,requestId:envelope.requestId});
+      const workReply=await this.onOwnerWork?.({content,conversationId:conversation?.id||payload.conversationId,requestId:envelope.requestId,model:normalizeLocalModel(payload.model)});
       if(workReply){const assistantMessage=conversation&&this.localData?.addMessage?this.localData.addMessage(conversation.id,"assistant",workReply,"JUNCTION"):null;emit("chat.complete",{conversationId:conversation?.id||payload.conversationId||null,messageId:assistantMessage?.id||null,content:workReply,model:"Junction foreman",usage:null});return;}
       if (!this.runtime?.run) throw new Error("LAN model runtime is unavailable.");
       let streamed = "", lastPhase = null;

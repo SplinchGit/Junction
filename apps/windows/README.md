@@ -136,12 +136,12 @@ expose usable UI Automation metadata. No broad automation is implemented.
 
 ## Local Qwen models on Windows and Android
 
-Choose **Local LLM** in either app. **Qwen3 30B** (`qwen3:30b`) remains the default
-for chat and Nethra tasks. **Qwen3-Next 80B A3B Instruct · Q3_K_M** can be selected
-for chat or individual Nethra tasks. A separate **80B Thinking · Q3_K_M** option
-is available for longer reasoning, alongside the official **80B Thinking · Q4_K_M**.
-All models use the same Nethra task,
-plan, evidence, permissions and checkpoint; switching does not erase progress.
+Choose **Local LLM** in either app. New selections offer **Qwen3 30B**
+(`qwen3:30b`, the default) and **Qwen3-Next 80B Thinking · Q4_K_M**. A task
+started from local chat inherits the chat model unless you specify another.
+Saved tasks retain their own model, plan, evidence and approvals. The two
+Q3 profiles below remain supported for older saved tasks with those weights.
+They are no longer shown in the model pickers.
 The existing 80B Instruct option uses the local Ollama alias
 `junction-qwen3-next:80b-q3km`. To prepare another paired PC, run
 `ollama pull hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M`, then

@@ -60,8 +60,9 @@ test('chat can send a durable direction to an existing task with the original ow
 test('chat task creation accepts explicit 80B and continuous selection while retaining the existing default',async()=>{
   const {created,adapter}=objectivesFake();
   const registry=new LocalAgentToolRegistry({objectives:adapter});
-  await registry.execute('start_objective',{goal:'Keep preparing the workshop notes',model:'junction-qwen3-next:80b-q3km',continuous:true},{goal:'Use 80B for continuous workshop notes',conversationId:'chat',runId:'create-80b',audit:{}});
-  assert.equal(created[0].model,'junction-qwen3-next:80b-q3km');assert.equal(created[0].continuous,true);
+  const selected='junction-qwen3-next-thinking:80b-q4km';
+  await registry.execute('start_objective',{goal:'Keep preparing the workshop notes',continuous:true},{goal:'Use 80B for continuous workshop notes',conversationId:'chat',runId:'create-80b',audit:{model:selected}});
+  assert.equal(created[0].model,selected);assert.equal(created[0].continuous,true);
   await registry.execute('start_objective',{goal:'Research another workshop topic'},{goal:'Research the workshop topic',conversationId:'chat',runId:'create-default',audit:{}});
   assert.equal(created[1].model,undefined);
 });

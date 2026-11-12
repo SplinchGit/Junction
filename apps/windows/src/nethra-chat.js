@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const {normalizeLocalModel}=require("./model-catalog");
 const {isOngoingRequest}=require('./local-agent-tools');
 const {continuationGate,continueReviewedTask,isTaskContinuation}=require('./nethra-conversation');
 
@@ -199,7 +200,7 @@ async function handleReference({ api, instruction, conversationId, requestId, so
   return `It's already ${task.status === "ACTIVE" ? "running" : "queued"}.\n${describe(task, progress)}`;
 }
 
-async function handleNethraChat({ api, content, conversationId = null, requestId = crypto.randomUUID(), source = "desktop" }) {
+async function handleNethraChat({ api, content, conversationId = null, requestId = crypto.randomUUID(), source = "desktop", selectedLocalModel = null }) {
   let instruction = parseNethraChat(content);
   if (!instruction && conversationId) {
     const bare = parseTaskChatControl(content);
@@ -241,7 +242,7 @@ async function handleNethraChat({ api, content, conversationId = null, requestId
     return objectives.length ? objectives.slice(0, 10).map(task => `${task.id} — ${task.status}: ${task.goal}${task.nextWakeAt ? ` (next wake ${new Date(task.nextWakeAt).toLocaleString()})` : ""}`).join("\n") : "Nethra has no saved objectives yet. Say ‘Start a Nethra goal: <objective>’ to begin.";
   }
   if (instruction.action === "create") {
-    const { task } = await api.dispatch("nethra.create", { goal: instruction.goal, successCriteria: instruction.goal, mode:instruction.mode, persistent: true, continuous:true,conversationId,...(instruction.model?{model:instruction.model}:{}) }, requestId, source);
+    const { task } = await api.dispatch("nethra.create", { goal: instruction.goal, successCriteria: instruction.goal, mode:instruction.mode, persistent: true, continuous:true,conversationId,...((instruction.model||selectedLocalModel)?{model:normalizeLocalModel(instruction.model||selectedLocalModel)}:{}) }, requestId, source);
     return `Nethra saved objective ${task.id}: ${task.goal}. Status: ${task.status}. I’ll continue it on the Windows host; open Nethra to review the plan, progress and any approval requests.`;
   }
   const { task: current } = await api.dispatch("nethra.get", { id: instruction.id }, `${requestId}:get`, source);

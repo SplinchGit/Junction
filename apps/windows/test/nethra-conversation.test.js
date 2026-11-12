@@ -200,7 +200,7 @@ test('an explicit chat request can start a continuous 80B task',async t=>{
   const {store}=fixture(t,{approval:false});
   await handleOwnerWorkInstruction({content:'Start a Nethra task: use 80B to prepare workshop notes',conversationId:'new-chat',requestId:'explicit-80b-task',api:new NethraApi({store,runtime:{}}),store,ownerWork:async()=>{throw Error('Explicit task creation escaped');}});
   const created=store.list().find(task=>task.conversationId==='new-chat');
-  assert.equal(created.model,'junction-qwen3-next:80b-q3km');
+  assert.equal(created.model,'junction-qwen3-next-thinking:80b-q4km');
   assert.equal(created.continuous,true);
 });
 

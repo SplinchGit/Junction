@@ -35,7 +35,9 @@ test("80B Thinking remains a separate, opt-in model profile", () => {
   assert.equal(profileFor(NEXT_80B_THINKING_MODEL).thinkingBudget, 0);
   assert.equal(profileFor(NEXT_80B_THINKING_MODEL).outputTokens, 6144);
   assert.equal(providers.find(provider => provider.id === "local").defaultModel, DEFAULT_MODEL);
-  assert.ok(providers.find(provider => provider.id === "local").models.some(model => model.id === NEXT_80B_THINKING_MODEL && model.thinking));
+  const offered = providers.find(provider => provider.id === "local").models;
+  assert.ok(offered.some(model => model.id === "junction-qwen3-next-thinking:80b-q4km" && model.thinking));
+  assert.ok(!offered.some(model => model.id === NEXT_80B_THINKING_MODEL));
 });
 
 test("native Thinking weights force Ollama think:true and preserve the extended output budget", async () => {

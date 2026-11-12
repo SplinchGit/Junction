@@ -15,7 +15,7 @@
  const roots=el('input');roots.placeholder='Optional approved read folder on this PC';roots.setAttribute('aria-label','Approved read folder');
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
- const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next:80b-q3km','Qwen3-Next 80B · instruct'],['junction-qwen3-next-thinking:80b-q3km','Qwen3-Next 80B · Thinking Q3'],['junction-qwen3-next-thinking:80b-q4km','Qwen3-Next 80B · Thinking Q4']];
+ const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next-thinking:80b-q4km','Qwen3-Next 80B · Thinking Q4']];
  const newTaskModel=select('Task model ',taskModels,'qwen3:30b');
  const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');
@@ -25,6 +25,7 @@
  const checkbox=(text,checked=false)=>{const input=el('input');input.type='checkbox';input.checked=checked;const label=el('label',text);label.prepend(input);return {label,input};};
  const watchCalendar=checkbox(' Watch my Google Calendar (read-only)'),watchGmail=checkbox(' Watch new Gmail inbox mail (headers only)'),codeWorkNew=checkbox(' Allow Codex advice and development drafts (uses shared plan allowance)');
  const continuousNew=checkbox(' Keep working continuously until done',true);const create=el('button','Create task');create.type='submit';const moreOptions=el('details');moreOptions.className='task-more-options';moreOptions.append(el('summary','More options'),roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label,codeWorkNew.label,el('p','Advice is limited to three Codex calls per UTC day across all tasks. Development drafts wait in Work Activity until you start them.'));form.append(goal,continuousNew.label,moreOptions,create);const createDetails=el('details');createDetails.className='task-create-details';createDetails.append(el('summary','+ New task'),form);area.append(createDetails);
+ createDetails.ontoggle=async()=>{if(createDetails.open&&!goal.value.trim()){const provider=await window.junction.provider();if(provider.id==='local'&&taskModels.some(([id])=>id===provider.model))newTaskModel.field.value=provider.model;}};
  const settings=el('article');settings.className='panel';const thinking=el('input');thinking.type='checkbox';thinking.checked=true;thinking.disabled=true;const thinkingLabel=el('label',' Thinking is always on with Qwen3 30B');thinkingLabel.prepend(thinking);
  const startup=el('input');startup.type='checkbox';const startupLabel=el('label',' Start Nethra after Windows sign-in');startupLabel.prepend(startup);const modelStatus=el('p','Checking host…');settings.append(thinkingLabel,startupLabel,modelStatus);document.querySelector('.settings').append(settings);
  // Model warm-up and proactive updates. Loading never generates a reply or touches chats.
@@ -79,7 +80,7 @@
  const visible=task=>!['COMPLETED','CANCELLED','FAILED'].includes(task.status);
  const needsOwner=kind=>['approval','input','blocked','owner_resume'].includes(kind);
  const updateObjectiveStatus=objectives=>{const active=objectives.filter(visible).length;objectiveStatus.textContent=active?`${active} active`:'Tasks';objectiveStatus.classList.toggle('has-active',active>0);};
- const taskEngine=row=>row.coordinateSelfImprovement?'Codex + Claude coordination':`Task model: ${taskModels.find(([id])=>id===row.model)?.[1]||'Qwen3 30B'}`;
+ const taskEngine=row=>row.coordinateSelfImprovement?'Codex + Claude coordination':`Task model: ${taskModels.find(([id])=>id===row.model)?.[1]||row.model||'Qwen3 30B'}`;
  const updateStrip=()=>{const linked=lastObjectives.filter(row=>row.conversationId&&row.conversationId===activeConversationId);strip.hidden=!linked.length;if(!linked.length)return;const row=linked[0],wake=` · ${taskEngine(row)}`,needs=needsOwner(row.tracking?.waitingFor?.kind)?' · needs you':'',progress=row.progress?.total?` · Step ${Math.min(row.progress.done+1,row.progress.total)} of ${row.progress.total}${row.step?`: ${row.step}`:''}`:'';strip.textContent=`${linked.length>1?`${linked.length} tasks · `:''}${row.goal} · ${row.live?'Working now':row.status.replaceAll('_',' ')}${needs}${wake}${progress} · ${row.nextWakeAt?`Next wake ${time(row.nextWakeAt)}`:'No wake scheduled'}`;};
  const refreshBadge=async()=>{try{lastObjectives=(await api('nethra.list')).objectives;updateObjectiveStatus(lastObjectives);updateStrip();}catch{objectiveStatus.textContent='Tasks';}};
  window.addEventListener('junction:chat-opened',refreshBadge);
@@ -292,6 +293,10 @@
        redirectRow.append(direction,button('Redirect',()=>api('nethra.redirect',{id:task.id,revision:task.revision,instruction:direction.value})));redirect.append(redirectRow);detailCard.append(redirect);
        const taskMode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],task.mode||'FINITE');
        const taskModel=select('Local task model ',taskModels,task.model||'qwen3:30b');
+       if(task.model&&!taskModels.some(([id])=>id===task.model)){
+         const saved=new Option('Saved legacy model',task.model,true,true);
+         saved.disabled=true;taskModel.field.add(saved);
+       }
        const profile=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],task.autonomy||'BALANCED');
        const rank=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],String(task.priority||3));
        const review=select('Direction check-in ',[['DAILY','Daily'],['WEEKLY','Weekly'],['MILESTONES','At milestones or blockers'],['MANUAL','Manual only']],task.checkIn||'WEEKLY');

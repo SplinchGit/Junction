@@ -3,8 +3,8 @@ const {handleNethraChat}=require('./nethra-chat');
 const {handleTaskTurn}=require('./nethra-task-turn');
 const {handleTaskFollowup}=require('./nethra-conversation');
 
-async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',api,store,ownerWork}){
-  const commandReply=await handleNethraChat({api,content,conversationId,requestId,source});
+async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',selectedLocalModel=null,api,store,ownerWork}){
+  const commandReply=await handleNethraChat({api,content,conversationId,requestId,source,selectedLocalModel});
   if(commandReply)return commandReply;
   const followup=await handleTaskFollowup({api,store,content,conversationId,history,requestId,source});
   if(followup)return followup;

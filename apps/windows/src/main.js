@@ -111,8 +111,10 @@ function taskForConversation(conversationId){
   if(!conversationId||!nethraStore)return null;
   return nethraStore.list().find(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status))||null;
 }
-async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop',history=null){
-  return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,api:nethraApi,store:nethraStore,
+async function handleOwnerWorkInstruction(content,conversationId,requestId,source='desktop',history=null,selectedLocalModel=null){
+  const provider=source==='desktop'?localData?.provider():null;
+  const model=selectedLocalModel||(provider?.id==='local'?provider.model:null);
+  return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,selectedLocalModel:model,api:nethraApi,store:nethraStore,
     ownerWork:request=>executeOwnerWork({foreman,roots:[app.getPath('documents')],content:request.content,conversationId:request.conversationId,requestId:request.requestId})});
 }
 function hydrateFirebaseEnvironment() {
@@ -307,7 +309,7 @@ async function createWindowImpl() {
         onActivity: () => presence.seen('lan'),
         nethraApi,
         worldAuditStore, worldControlStore, worldChatStore, foremanApi,
-        onOwnerWork: ({content,conversationId,requestId}) => handleOwnerWorkInstruction(content,conversationId,requestId,'android'),
+        onOwnerWork: ({content,conversationId,requestId,model}) => handleOwnerWorkInstruction(content,conversationId,requestId,'android',null,model),
         onWorldControl: () => worldHostRelay?.pollNow(), onWorldMessage: () => worldHostRelay?.pollNow(),
         getWorldStatus: async () => {
           const relay = worldHostRelay?.getStatus?.() || { state: "OFFLINE" };
@@ -340,7 +342,7 @@ async function createWindowImpl() {
     onCommandStarted: () => {
       if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
     },
-    runLocalAgent: async request => {presence.seen('relay','chat');const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android',request.history);return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId,request.goal,request.history,nethraStore.list()),situation:situationFor({surface:'android-relay',conversationId:request.conversationId,session:request.session})});},
+    runLocalAgent: async request => {presence.seen('relay','chat');const workReply=await handleOwnerWorkInstruction(request.goal,request.conversationId,request.runId,'android',request.history,request.model);return workReply?{content:workReply}:localAgent.run({...request,thinking:nethraStore.settings().thinking,workSnapshot:workSnapshot(foreman.list(),request.conversationId,request.goal,request.history,nethraStore.list()),situation:situationFor({surface:'android-relay',conversationId:request.conversationId,session:request.session})});},
     dispatchAgent: (type,payload,requestId)=>{presence.seen('relay',type);return nethraApi.dispatch(type,payload,requestId,'android');},
     syncConversations: payload => new PairedConversationSync(localData, () => {
       scheduleSharedSync(); mainWindow?.webContents.send("junction:conversations-changed");

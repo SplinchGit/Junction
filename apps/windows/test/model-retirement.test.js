@@ -5,9 +5,12 @@ const { providers, normalizeLocalModel, normalizeModel, credentialProviderId } =
 const { LocalDataStore } = require("../src/local-data");
 const nextModel = "junction-qwen3-next:80b-q3km";
 const previousNextModel = "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M";
-assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:30b", nextModel, "junction-qwen3-next-thinking:80b-q3km", "junction-qwen3-next-thinking:80b-q4km"]);
-assert.equal(normalizeLocalModel(nextModel), nextModel);
-assert.equal(normalizeLocalModel(previousNextModel), nextModel);
+const q4 = "junction-qwen3-next-thinking:80b-q4km";
+assert.deepEqual(providers.find(p => p.id === "local").models.map(m => m.id), ["qwen3:30b", q4]);
+assert.equal(normalizeLocalModel(nextModel), q4);
+assert.equal(normalizeLocalModel(previousNextModel), q4);
+assert.equal(normalizeLocalModel("junction-qwen3-next-thinking:80b-q3km"), q4);
+assert.equal(require("../src/model-catalog").isSupportedLocalModel(nextModel), true);
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "junction-model-retirement-"));
 for (const retired of ["qwen3:8b", "qwen3:14b", "qwen3.5:4b", "qwen3.5:2b", "qwen3:1.7b", "lfm2.5:2.6b", "gemma3:1b", ""]) {
   assert.equal(normalizeLocalModel(retired), "qwen3:30b");
