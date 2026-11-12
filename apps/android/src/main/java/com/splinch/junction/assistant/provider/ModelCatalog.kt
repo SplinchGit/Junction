@@ -73,7 +73,8 @@ object ModelCatalog {
             defaultModelId = "qwen3:30b",
             models = listOf(
                 ModelEntry("qwen3:30b", "Qwen3 30B", "Local agent", "Runs on your paired PC with native agent tools and always-on thinking.", 0.0, 0.0),
-                ModelEntry("junction-qwen3-next:80b-q3km", "Qwen3-Next 80B A3B · Q3_K_M", "Local agent", "3-bit Instruct quant on your paired PC. Uses a corrected local chat template and substantial RAM.", 0.0, 0.0)
+                ModelEntry("junction-qwen3-next:80b-q3km", "Qwen3-Next 80B A3B · Q3_K_M", "Local agent", "3-bit Instruct quant on your paired PC. Uses a corrected local chat template and substantial RAM.", 0.0, 0.0),
+                ModelEntry("junction-qwen3-next-thinking:80b-q3km", "Qwen3-Next 80B Thinking · Q3_K_M", "Local agent", "Separate native Thinking model on your PC. Install its Ollama alias first; extended reasoning is slower.", 0.0, 0.0)
             )
         ),
         ProviderDefinition(
@@ -172,6 +173,7 @@ object ModelCatalog {
         val provider = providerById(providerId) ?: return modelId
         if (providerId == "custom") return modelId
         if (providerId == "local" && modelId == "hf.co/unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF:Q3_K_M") return "junction-qwen3-next:80b-q3km"
+        if (providerId == "local" && modelId == "hf.co/unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF:Q3_K_M") return "junction-qwen3-next-thinking:80b-q3km"
         return provider.models.find { it.id == modelId }?.id ?: provider.defaultModelId
     }
 
