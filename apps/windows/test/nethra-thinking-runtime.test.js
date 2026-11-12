@@ -21,7 +21,7 @@ test("native Thinking weights force Ollama think:true and preserve the extended 
   const runtime = new LocalAgentRuntime({
     warmer: { model: NEXT_80B_THINKING_MODEL, keepAlive: () => "15m", inferenceStarted() {}, inferenceFinished() {} },
     fetchImpl: async (url, options) => {
-      assert.match(url, /\\/api\\/chat$/);
+      assert.ok(url.endsWith("/api/chat"));
       payload = JSON.parse(options.body);
       return { ok: true, json: async () => ({
         model: NEXT_80B_THINKING_MODEL,
