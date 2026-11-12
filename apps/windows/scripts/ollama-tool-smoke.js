@@ -65,7 +65,7 @@ async function testModel(model) {
     stream: false,
     think: model === NEXT_80B_THINKING_MODEL,
     tools: [weatherTool],
-    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: model === NEXT_80B_THINKING_MODEL ? 6144 : 256, temperature: 0 },
+    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: model === NEXT_80B_THINKING_MODEL ? 6144 : 256, temperature: model === NEXT_80B_THINKING_MODEL ? 0.6 : 0 },
     keep_alive: "5m",
   };
   const result = { model, success: false };
