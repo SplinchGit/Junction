@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { NEXT_80B_THINKING_MODEL } = require("../src/nethra-models");
 
 const models = process.argv.slice(2);
 const selectedModels = models.length
@@ -31,7 +32,7 @@ async function post(route, body) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(body.model === NEXT_80B_THINKING_MODEL ? 12 * 60_000 : 180_000),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 500)}`);
@@ -62,9 +63,9 @@ async function testModel(model) {
   const common = {
     model,
     stream: false,
-    think: false,
+    think: model === NEXT_80B_THINKING_MODEL,
     tools: [weatherTool],
-    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: 256, temperature: 0 },
+    options: { num_ctx: require("../src/model-context").CONTEXT_TOKENS, num_predict: model === NEXT_80B_THINKING_MODEL ? 6144 : 256, temperature: 0 },
     keep_alive: "5m",
   };
   const result = { model, success: false };
