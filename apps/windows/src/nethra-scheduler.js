@@ -3,6 +3,7 @@
 const dailyLimits=settings=>({taskMs:settings.objectiveDailyBudgetMs??Infinity,globalMs:settings.globalDailyBudgetMs??Infinity});
 const {randomUUID,createHash}=require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
+const {openQuestions,ownerQuestion}=require('./nethra-task-contract');
 const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=20*60_000, LEASE_MS=MAX_RUNTIME+60_000;
 const EVIDENCE_ONLY_NUDGE=3, EVIDENCE_ONLY_STOP=6;
 function completedWork(store,taskId){
@@ -126,7 +127,14 @@ class NethraScheduler {
       const stalled=patch.evidenceOnlyCycles>=EVIDENCE_ONLY_STOP&&evidenceOnly;
       if(stalled){
         patch.status='WAITING_FOR_USER';
-        patch.summary='I have collected more evidence over several passes without completing a step. Which finding should I act on, or should I revise the plan?';
+        const existing=openQuestions(live);
+        const question='I have collected more evidence over several passes without completing a step. Which finding should I act on, or should I revise the plan?';
+        if(existing.length<8){
+          patch.questions=ownerQuestion(live,live,{question,reason:'OWNER_PREFERENCE',blocking:true},this.now()).questions;
+          patch.summary=question;
+        }else{
+          patch.summary=(existing.find(item=>item.blocking)||existing.at(-1)).question;
+        }
       }
       const repeatedShortWake=!task.coordinateSelfImprovement&&patch.status==='SLEEPING'&&!progressed
         &&(!Number.isFinite(patch.nextWakeAt)||patch.nextWakeAt<=this.now()+settings.minWakeMs);

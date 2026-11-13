@@ -25,6 +25,14 @@ for(const productive of [false,true])test(`A22: ${productive?'productive work co
   assert.equal(saved.status,productive?'SLEEPING':'WAITING_FOR_USER');
   assert.equal(saved.evidenceOnlyCycles,productive?0:6);
   assert.equal(f.store.events(task.id).filter(event=>event.kind==='EVIDENCE_ONLY_STOPPED').length,productive?0:1);
+  if(!productive){
+    const question=saved.questions.find(item=>item.status==='OPEN');
+    assert.ok(question?.blocking);
+    const answer=f.store.chatTurn(task.id,'Use the most recent local finding','answer-stall',{questionId:question.id}).task;
+    assert.equal(answer.status,'ACTIVE');
+    assert.equal(answer.evidenceOnlyCycles,0);
+    assert.deepEqual(answer.evidence,saved.evidence);
+  }
 });
 function fixture(t){const directory=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-scheduler-'));let time=1000000;const store=new NethraStore(directory,{now:()=>time});t.after(()=>{store.close();fs.rmSync(directory,{recursive:true,force:true});});return {store,now:()=>time,advance:n=>time+=n};}
 test('successful runs persist checkpoints and sleeping tasks use no further executions before wake',async t=>{const f=fixture(t),a=f.store.create({goal:'Check later'});let runs=0;const scheduler=new NethraScheduler({...f,execute:async(task,{checkpoint,inference})=>{runs++;checkpoint({evidence:['source']});await inference(async()=>f.advance(5000));return {status:'SLEEPING',nextWakeAt:f.now()+1};}});await scheduler.tick();const task=f.store.get(a.id);assert.equal(task.nextWakeAt,1305000);assert.deepEqual(task.evidence,['source']);assert.equal(task.budget.totalMs,5000);await scheduler.tick();assert.equal(runs,1);});
