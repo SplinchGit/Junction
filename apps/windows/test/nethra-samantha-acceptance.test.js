@@ -8,6 +8,44 @@ const path = require('node:path');
 const { NethraStore } = require('../src/nethra-store');
 const { NethraRunner } = require('../src/nethra-runner');
 const { NethraTools, actionKey } = require('../src/nethra-tools');
+const { queueMissedWakeNotification } = require('../src/nethra-conversation-report');
+
+test('A27: overdue wakes are journaled once and delivered as one alert', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
+  let now = Date.UTC(2026, 10, 13, 12);
+  const store = new NethraStore(directory, { now: () => now });
+  t.after(() => {
+    store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  store.setSettings({ notificationDeviceId: 'test-phone' });
+  store.recordHostStart();
+  const overdue = [2, 1, 3].map(priority => {
+    const task = store.create({ goal: `Scheduled work ${priority}`, priority });
+    store.update(task.id, { status: 'ACTIVE' });
+    return store.update(task.id, { status: 'SLEEPING', nextWakeAt: now + 300_000 });
+  });
+  now += 24 * 60 * 60_000;
+  store.recordHostStart();
+  store.recordHostStart();
+  for (const task of overdue) {
+    const missed = store.events(task.id).filter(event => event.kind === 'MISSED');
+    assert.equal(missed.length, 1);
+    assert.equal(missed[0].detail.gapMs, now - task.nextWakeAt);
+  }
+  const notifications = new Map();
+  const queue = {
+    enqueueNotification: command => {
+      notifications.set(command.requestId, command);
+      return command;
+    }
+  };
+  queueMissedWakeNotification(store, queue);
+  queueMissedWakeNotification(store, queue);
+  assert.equal(notifications.size, 1);
+  assert.match([...notifications.values()][0].args.body, /3 scheduled tasks/);
+  assert.equal(store.claim('restarted-host').task.id, overdue[1].id);
+});
 
 for (const phase of ['reserved', 'approved', 'written', 'completed', 'checkpointed']) {
   test(`draft recovery after ${phase} never replays the write`, async t => {

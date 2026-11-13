@@ -276,7 +276,26 @@ class NethraStore {
   recordContextMeasurement(id,{estimatedTokens,actualTokens,budget}) {this.get(id);if(![estimatedTokens,actualTokens,budget].every(value=>Number.isSafeInteger(value)&&value>=0))throw new Error('Invalid context measurement');this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(id,this.now(),'CONTEXT_MEASURED',JSON.stringify({estimatedTokens,actualTokens,budget}));}
   advisorSnapshot(provider) {const row=this.db.prepare('SELECT body FROM advisor_limits WHERE provider=?').get(provider);return row?JSON.parse(row.body):null;}
   recordAdvisorSnapshot(provider,body) {this.db.prepare('INSERT INTO advisor_limits VALUES(?,?) ON CONFLICT(provider) DO UPDATE SET body=excluded.body').run(provider,JSON.stringify(body));}
-  recordHostStart() {this.db.prepare('INSERT INTO host_starts VALUES(?)').run(this.now());this.db.prepare('DELETE FROM host_starts WHERE at<?').run(this.now()-90*DAY);}
+  recordHostStart() {return this.transaction(()=>{
+    const now=this.now();
+    const batch=randomUUID();
+    this.db.prepare('INSERT INTO host_starts VALUES(?)').run(now);
+    this.db.prepare('DELETE FROM host_starts WHERE at<?').run(now-90*DAY);
+    const recorded=this.db.prepare("SELECT 1 FROM events WHERE taskId=? AND kind='MISSED' AND json_extract(detail,'$.dueAt')=?");
+    const journal=this.db.prepare("INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,'MISSED',?)");
+    for(const task of this.list()){
+      const dueAt=task.nextWakeAt;
+      if(!task.persistent||task.status!=='SLEEPING'||!Number.isSafeInteger(dueAt)||dueAt>=now||recorded.get(task.id,dueAt))continue;
+      journal.run(task.id,now,JSON.stringify({batch,dueAt,gapMs:now-dueAt}));
+    }
+  });}
+  latestMissedWakeBatch(since=0) {
+    return this.db.prepare(`SELECT e.taskId,e.at,json_extract(e.detail,'$.batch') AS batch,json_extract(e.detail,'$.dueAt') AS dueAt
+      FROM events e JOIN tasks t ON t.id=e.taskId
+      WHERE e.kind='MISSED' AND e.at>=? AND json_extract(e.detail,'$.batch')=(
+        SELECT json_extract(detail,'$.batch') FROM events WHERE kind='MISSED' AND at>=? ORDER BY seq DESC LIMIT 1
+      ) ORDER BY e.seq`).all(since,since);
+  }
   hostStartsAfter(at) {return this.db.prepare('SELECT at FROM host_starts WHERE at>? ORDER BY at LIMIT 10').all(at).map(row=>row.at);}
   experiments(taskId) {return this.db.prepare('SELECT body FROM experiments WHERE taskId=? ORDER BY rowid DESC').all(taskId).map(row=>JSON.parse(row.body));}
   experiment(taskId,id) {const row=this.db.prepare('SELECT body FROM experiments WHERE id=? AND taskId=?').get(id,taskId);if(!row)throw new Error('Unknown experiment for this objective');return JSON.parse(row.body);}
@@ -458,7 +477,7 @@ class NethraStore {
     this.closeInferenceIntervals(token);return this.accountUsage(id,0,token);
   });}
   recordUsage(id,elapsed,token) {return this.transaction(()=>this.accountUsage(id,elapsed,token));}
-  claim(owner,leaseMs=420000) {return this.transaction(()=>{this.recoverInside();if(this.db.prepare('SELECT 1 FROM lease').get())return null;const settings=this.settings();if(!settings.enabled)return null;const effective=task=>Math.max(1,(task.priority??3)-Math.floor(Math.max(0,this.now()-(task.lastExecutionAt??task.createdAt??this.now()))/3600000));const tasks=this.list().filter(task=>(!task.parentId||settings.taskAgentsEnabled)&&['CREATED','ACTIVE','PLANNING','SLEEPING'].includes(task.status)&&!(task.nextWakeAt>this.now())).sort((a,b)=>effective(a)-effective(b)||(a.lastExecutionAt??0)-(b.lastExecutionAt??0)||(a.createdAt??0)-(b.createdAt??0));for(const task of tasks){if(task.dependencies.some(id=>{try{return this.get(id).status!=='COMPLETED';}catch{return true;}}))continue;const u=this.usage(task.id),limits=dailyLimits(settings);if(u.globalMs>=limits.globalMs||u.taskMs>=limits.taskMs){task.status='SLEEPING';task.nextWakeAt=(u.day+1)*DAY;this.save(task,'BUDGET_WAIT');continue;}const token=randomUUID();this.db.prepare('INSERT INTO lease VALUES(1,?,?,?,?)').run(task.id,token,String(owner),this.now()+leaseMs);this.db.prepare('INSERT INTO executions(token,taskId,startedAt,inferenceOnly) VALUES(?,?,?,1)').run(token,task.id,this.now());this.db.prepare('UPDATE attention SET state=\'CLAIMED\',leaseToken=? WHERE taskId=? AND state=\'PENDING\' AND dueAt<=?').run(token,task.id,this.now());task.status=task.status==='CREATED'?'PLANNING':'ACTIVE';task.lastExecutionAt=this.now();task.nextWakeAt=null;return {task:this.save(task,'CLAIMED',{owner}),token};}return null;});}
+  claim(owner,leaseMs=420000) {return this.transaction(()=>{this.recoverInside();if(this.db.prepare('SELECT 1 FROM lease').get())return null;const settings=this.settings();if(!settings.enabled)return null;const missed=new Map(this.latestMissedWakeBatch().map(event=>[event.taskId,event.dueAt]));const effective=task=>missed.get(task.id)===task.nextWakeAt?(task.priority??3):Math.max(1,(task.priority??3)-Math.floor(Math.max(0,this.now()-(task.lastExecutionAt??task.createdAt??this.now()))/3600000));const tasks=this.list().filter(task=>(!task.parentId||settings.taskAgentsEnabled)&&['CREATED','ACTIVE','PLANNING','SLEEPING'].includes(task.status)&&!(task.nextWakeAt>this.now())).sort((a,b)=>effective(a)-effective(b)||(a.lastExecutionAt??0)-(b.lastExecutionAt??0)||(a.createdAt??0)-(b.createdAt??0));for(const task of tasks){if(task.dependencies.some(id=>{try{return this.get(id).status!=='COMPLETED';}catch{return true;}}))continue;const u=this.usage(task.id),limits=dailyLimits(settings);if(u.globalMs>=limits.globalMs||u.taskMs>=limits.taskMs){task.status='SLEEPING';task.nextWakeAt=(u.day+1)*DAY;this.save(task,'BUDGET_WAIT');continue;}const token=randomUUID();this.db.prepare('INSERT INTO lease VALUES(1,?,?,?,?)').run(task.id,token,String(owner),this.now()+leaseMs);this.db.prepare('INSERT INTO executions(token,taskId,startedAt,inferenceOnly) VALUES(?,?,?,1)').run(token,task.id,this.now());this.db.prepare('UPDATE attention SET state=\'CLAIMED\',leaseToken=? WHERE taskId=? AND state=\'PENDING\' AND dueAt<=?').run(token,task.id,this.now());task.status=task.status==='CREATED'?'PLANNING':'ACTIVE';task.lastExecutionAt=this.now();task.nextWakeAt=null;return {task:this.save(task,'CLAIMED',{owner}),token};}return null;});}
   renew(id,token,leaseMs=420000) {return this.transaction(()=>{const changed=this.db.prepare('UPDATE lease SET expiresAt=? WHERE singleton=1 AND taskId=? AND token=? AND expiresAt>?').run(this.now()+leaseMs,id,token,this.now()).changes===1;if(changed)this.accountUsage(id,this.now()-this.execution(token).startedAt,token);return changed;});}
   release(id,token,consumed=true) {return this.transaction(()=>{const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1 AND taskId=? AND token=?').get(id,token);if(!lease)return false;this.closeInferenceIntervals(token);this.accountUsage(id,this.now()-this.execution(token).startedAt,token);this.interruptChildrenInside(id,token);this.db.prepare('UPDATE attention SET state=?,leaseToken=NULL WHERE leaseToken=?').run(consumed?'DONE':'PENDING',token);this.db.prepare('DELETE FROM lease WHERE singleton=1').run();return true;});}
   answer(id,text,revision,requestId,questionId=null) {return this.transaction(()=>{

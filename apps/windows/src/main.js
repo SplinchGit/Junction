@@ -51,7 +51,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
+const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueMissedWakeNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
 const { postCoordinationChat } = require('./nethra-conversation-report');
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
@@ -93,6 +93,7 @@ function deliverObjectiveUpdates() {
     const names=new Map(projects.map(project=>[project.id,project.name]));
     for(const project of projects){const task=tasks.find(item=>item.id===project.sourceObjectiveId);if(task){queueCodeWorkNotification(task,project,nethraStore,deviceCommands);if(project.status==='COMPLETED'&&postCoordinationChat(task,localData,project))changed=true;}}
     queueProjectMilestoneNotifications(nethraStore,deviceCommands,{tasks,projectName:id=>names.get(id)});
+    queueMissedWakeNotification(nethraStore,deviceCommands);
   } catch (error) { recordStartupIssue('project milestone delivery',error); }
   for (const task of tasks) {
     try {

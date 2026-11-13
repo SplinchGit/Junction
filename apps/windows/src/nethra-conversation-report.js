@@ -170,6 +170,24 @@ function postTaskReports(task,store,localData,{date=new Date()}={}){
   return changed;
 }
 
+/** Group the overdue schedules discovered at startup into one notification. */
+function queueMissedWakeNotification(store,queue,{date=new Date()}={}){
+  const settings=store.settings(),policy=deliveryPolicy(settings,date);
+  if(!queue||!settings.notificationDeviceId||policy.quiet||!policy.milestones)return null;
+  const events=store.latestMissedWakeBatch(settings.notificationDeviceSince||0);
+  const eligible=events.filter(event=>projectAllowsNotification(settings,store.get(event.taskId),true));
+  if(!eligible.length)return null;
+  const {taskId}=eligible[0];
+  const eventId=`nethra-missed-wakes-${events.at(-1).batch}`;
+  const existing=queue.notificationForRequest?.(eventId);
+  if(existing)return existing;
+  const count=eligible.length;
+  return queue.enqueueNotification({requestId:eventId,taskId,deviceId:settings.notificationDeviceId,args:{
+    eventId,taskId,title:'Nethra is catching up',
+    body:`${count} scheduled task${count===1?' was':'s were'} overdue when Junction started. Open Tasks to review progress.`
+  }});
+}
+
 /** A single saved decision lets the owner's spoken response use the ordinary task chat. */
 function invitationQuestion(task,store,settings){
   if(settings.voiceInvitations!==true||task.status!=='WAITING_FOR_USER'||waitingFor(task,store).kind!=='input')return null;
@@ -317,4 +335,4 @@ function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>
   return policy.quiet?'hold':'deliver';
 }
 
-module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,postCoordinationChat,deliveryPolicy,outcomeText};
+module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueMissedWakeNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,postCoordinationChat,deliveryPolicy,outcomeText};
