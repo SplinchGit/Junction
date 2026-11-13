@@ -8,6 +8,7 @@ const {NethraScheduler}=require('../src/nethra-scheduler');
 const {NethraTools}=require('../src/nethra-tools');
 const {handleOwnerWorkInstruction}=require('../src/owner-work-instruction');
 const {ownerBrief,runCoordination}=require('../src/nethra-coordination');
+const {Foreman}=require('../src/foreman');
 
 function fixture(t,{approval=true}={}){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-conversation-'));
@@ -65,6 +66,39 @@ test('a persisted phantom scope change recovers the same draft without another c
   assert.equal(result.coordination.workId,'approved-draft');
   assert.equal(result.questions[0].status,'SUPERSEDED');
   assert.match(result.summary,/Start with Codex and Claude/);
+});
+
+test('explicit chat authorization starts the exact reviewed draft once through Foreman',async t=>{
+  const {store,task}=fixture(t,{approval:false});
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-foreman-'));
+  let executions=0;
+  const foreman=new Foreman(dir,{executor:{
+    inspect:async()=>({scopeKind:'git',baseSha:'base',baseBranch:'main',sourceHash:'source',dirty:false}),
+    run:async()=>{executions++;return {headSha:'verified',tests:[{exitCode:0}],summary:'Verified'};}
+  }});
+  t.after(async()=>{await foreman.idle();foreman.close();fs.rmSync(dir,{recursive:true,force:true});});
+  store.note(task.id,'GPT brief: Keep the engineering handoff on shared main.');
+  store.configure(task.id,{allowCodeWork:true},store.get(task.id).revision,'enable-code');
+  const configured=store.configure(task.id,{coordinateSelfImprovement:true},store.get(task.id).revision,'enable-coordination');
+  const brief=ownerBrief(configured);
+  const work=await foreman.create({name:'Pilot',repoPath:dir,sharedCheckout:true,sourceObjectiveId:task.id,conversationId:'task-chat',coordinationBrief:brief,codeReviewVerdict:'READY',objective:'Show live handoff status.',tasks:[{title:'Show status',kind:'codex',acceptance:'The status matches the current engineering receipt.'}]});
+  store.update(task.id,{status:'SLEEPING',nextWakeAt:Date.now()+600_000,coordination:{stage:'tracking',workId:work.id,brief}},'DRAFT_SAVED');
+  const turn=(content,requestId)=>handleOwnerWorkInstruction({content,requestId,conversationId:'task-chat',source:'android',api:new NethraApi({store,runtime:{}}),store,findWork:id=>foreman.find(id),startWork:(project,id)=>foreman.control(project.id,'start',project.revision,id,{autoHandoff:true,sourceObjectiveId:task.id}),ownerWork:async()=>assert.fail('escaped to ordinary coding router')});
+  await turn('Start','bare-start');
+  assert.equal(foreman.get(work.id).status,'DRAFT');
+  await turn('Start with Codex and Claude only after I review it','conditional-start');
+  assert.equal(foreman.get(work.id).status,'DRAFT');
+  assert.match(await turn('Start with Codex and Claude','explicit-start'),/authoriz/i);
+  await foreman.idle();
+  await turn('Start with Codex and Claude','explicit-start');
+  assert.equal(foreman.get(work.id).autoHandoff,true);
+  assert.equal(foreman.get(work.id).status,'COMPLETED');
+  assert.equal(executions,1);
+  assert.equal(ownerBrief(store.get(task.id)),brief);
+  const replacement=await foreman.create({...work,tasks:work.tasks.map(item=>({title:item.title,kind:item.kind,acceptance:item.acceptance}))});
+  store.update(task.id,{coordination:{stage:'tracking',workId:replacement.id,brief}},'REPLACEMENT_DRAFT');
+  assert.match(await turn('Start with Codex and Claude','explicit-start'),/could not start/i);
+  assert.equal(foreman.get(replacement.id).status,'DRAFT');
 });
 
 test('asking Codex to work on code reaches the task instead of becoming a continue/status command',async t=>{

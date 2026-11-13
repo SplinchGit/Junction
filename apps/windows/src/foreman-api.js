@@ -57,7 +57,13 @@ class ForemanApi{
   if(type==='project.register') {if(source!=='desktop')throw new Error('Register project paths on Windows');return {project:summary(await f.create(payload))};}
   if(type==='task.control'){
    if(Object.keys(payload).some(k=>!['id','action','revision','autoHandoff'].includes(k)))throw new Error('Invalid control fields');
-   if(Object.hasOwn(payload,'autoHandoff')&&(source!=='desktop'||typeof payload.autoHandoff!=='boolean'||!['start','resume'].includes(payload.action)))throw new Error('Approve provider handoff when starting or resuming on Windows');
+   if(Object.hasOwn(payload,'autoHandoff')){
+    if(typeof payload.autoHandoff!=='boolean'||!['start','resume'].includes(payload.action))throw new Error('Invalid provider handoff approval');
+    if(source!=='desktop'){
+     const p=f.find(payload.id);
+     if(source!=='android'||payload.autoHandoff!==true||payload.action!=='start'||!p?.sharedCheckout||!p.sourceObjectiveId||p.codeReviewVerdict!=='READY')throw new Error('Approve provider handoff when starting or resuming on Windows');
+    }
+   }
    const p=await f.control(payload.id,payload.action,payload.revision,requestId,{autoHandoff:payload.autoHandoff});return {id:p.id,status:p.status,revision:p.revision};
   }
   if(type==='task.enqueue'){

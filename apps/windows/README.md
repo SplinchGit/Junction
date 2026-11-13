@@ -53,6 +53,12 @@ resume. Saying “continue” in the same conversation resumes it. Stop preserve
 queue, checkpoint, results, and handoff. Junction never imports an owner project
 into the Junction source repository and never pushes unless the owner asks.
 
+For a reviewed Self Improvement draft, reply **Start with Codex and Claude** in
+the linked task chat to authorize engineering and provider handoffs on the shared
+`main` checkout. The same action is available in Work Activity on Windows and
+paired Android over LAN. Foreman checks the saved scope and Codex review before
+starting. Nethra tracks the work while the engineering providers edit it.
+
 ## Cloud and credential policy
 
 Cloud/API-backed reasoning and local Ollama are both supported reasoning paths.

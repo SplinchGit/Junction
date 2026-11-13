@@ -25,6 +25,7 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
     var connected by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var startDraft by remember { mutableStateOf<Pair<String, Long>?>(null) }
     suspend fun refresh() {
         try {
             projects = (client.request("project.list")["projects"] as? List<*>)?.mapNotNull { it as? Map<*, *> }.orEmpty()
@@ -43,6 +44,20 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
             try { client.request(type, payload); error = "" } catch (e: Exception) { error = e.message ?: "Request failed" }
             finally { refresh(); busy = false }
         }
+    }
+    startDraft?.let { (id, revision) ->
+        AlertDialog(
+            onDismissRequest = { startDraft = null },
+            title = { Text("Start with Codex and Claude?") },
+            text = { Text("Authorize both providers to work on this reviewed scope and hand off on the shared main checkout.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    startDraft = null
+                    perform("task.control", mapOf("id" to id, "revision" to revision, "action" to "start", "autoHandoff" to true))
+                }) { Text("Start") }
+            },
+            dismissButton = { TextButton(onClick = { startDraft = null }) { Text("Cancel") } }
+        )
     }
     LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -76,9 +91,15 @@ fun ProjectsScreen(modifier: Modifier = Modifier) {
                 }
                 Text("$activity · ${p["nextAction"]}")
                 (p["retryAt"] as? Number)?.let { Text("Scheduled retry: ${DateFormat.getDateTimeInstance().format(Date(it.toLong()))}") }
+                if (status == "DRAFT" && p["sharedCheckout"] == true && p["sourceObjectiveId"] != null && p["codeReviewVerdict"] == "READY") {
+                    Button(enabled = connected && !busy, onClick = { startDraft = id to revision }) {
+                        Text("Start with Codex and Claude")
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val actions = when {
                         active -> listOf("pause", "stop")
+                        status == "DRAFT" && p["sourceObjectiveId"] != null -> listOf("stop")
                         status in setOf("PAUSED", "STOPPED", "BLOCKED") -> listOf("resume")
                         else -> emptyList()
                     }

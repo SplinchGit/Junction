@@ -136,6 +136,21 @@ test('dual-provider approval is desktop-only, durable, and retains owner apply',
  assert.match(result.nextAction,/review.*apply/i);
 });
 
+test('paired Android can explicitly start a reviewed shared Nethra draft with both providers',async t=>{
+ const dir=fixture();
+ const f=new Foreman(dir,{executor});
+ t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const api=new (require('../src/foreman-api').ForemanApi)(f);
+ const draft=await f.create({...input,sharedCheckout:true,sourceObjectiveId:'self-improvement',codeReviewVerdict:'READY',tasks:[{...input.tasks[0],acceptance:'Run the existing checks and verify all exit codes are zero.'}]});
+ const payload={id:draft.id,revision:draft.revision,action:'start',autoHandoff:true};
+ await assert.rejects(api.dispatch('task.control',{...payload,action:'resume'},'mobile-resume','android'),/on Windows/);
+ await api.dispatch('task.control',payload,'paired-start','android');
+ await f.idle();
+ await api.dispatch('task.control',payload,'paired-start','android');
+ assert.equal(f.get(draft.id).autoHandoff,true);
+ assert.equal(f.get(draft.id).tasks[0].attempts.length,1);
+});
+
 const settle=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 test('Pause and Stop cancel a pending capacity retry and Resume continues the same approved work',async t=>{
  for(const action of ['pause','stop']){

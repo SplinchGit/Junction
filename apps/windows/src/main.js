@@ -115,6 +115,7 @@ async function handleOwnerWorkInstruction(content,conversationId,requestId,sourc
   const provider=source==='desktop'?localData?.provider():null;
   const model=selectedLocalModel||(provider?.id==='local'?provider.model:null);
   return routeOwnerWorkInstruction({content,conversationId,requestId,history:history||localData?.conversation(conversationId)?.messages?.slice(0,-1)||[],source,selectedLocalModel:model,api:nethraApi,store:nethraStore,findWork:id=>foreman?.find(id),
+    startWork:(work,id)=>foreman.control(work.id,'start',work.revision,id,{autoHandoff:true,sourceObjectiveId:work.sourceObjectiveId}),
     ownerWork:request=>executeOwnerWork({foreman,roots:[app.getPath('documents')],content:request.content,conversationId:request.conversationId,requestId:request.requestId})});
 }
 function hydrateFirebaseEnvironment() {

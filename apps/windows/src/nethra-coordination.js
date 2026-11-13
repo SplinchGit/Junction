@@ -8,10 +8,11 @@ const BRIEF='Nethra is a persistent local companion with Tasks, Android pairing,
 const selfImprovementTask=task=>/^self[ -]improvement[.!]?$/i.test(String(task.goal||'').trim())&&!task.parentId;
 const summarizeAdvice=advice=>String(advice||'').replace(/\s+/g,' ').trim().slice(0,320);
 const coordinationContinue=/^continue co[- ]?ordination[.!]*$/i;
+const dualProviderStart=/^(?:please\s+)?start (?:the (?:approved )?pilot )?with codex and claude[.!]*$/i;
 const workControl=/^(?:please\s+)?(?:start|start scoped work|start with codex and claude|continue(?: co[- ]?ordination)?|resume|keep going|carry on)[.!]*$/i;
 const emptyDirection=/^(?:here|there|this|that|it|this chat|this conversation)[.!?]*$/i;
 const draftStartMessage=work=>work?.sharedCheckout
-  ?'Draft saved. In Work Activity, select “Start with Codex and Claude” and confirm to authorize engineering and handoffs.'
+  ?'Draft saved. Reply “Start with Codex and Claude” in this task chat to authorize engineering and handoffs.'
   :'Draft saved. Start it in Work Activity to authorize engineering.';
 function pilotChoice(text){
   const value=String(text||'').trim();
@@ -162,4 +163,4 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
     work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }
-module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,workControl,emptyDirection,draftStartMessage};
+module.exports={runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};

@@ -2,11 +2,14 @@
 const {handleNethraChat}=require('./nethra-chat');
 const {handleTaskTurn}=require('./nethra-task-turn');
 const {handleTaskFollowup}=require('./nethra-conversation');
-const {ownerBrief,coordinationContinue,workControl,draftStartMessage}=require('./nethra-coordination');
+const {createHash}=require('node:crypto');
+const {ownerBrief,coordinationContinue,dualProviderStart,workControl,draftStartMessage}=require('./nethra-coordination');
 
-async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',selectedLocalModel=null,api,store,findWork,ownerWork}){
+async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',selectedLocalModel=null,api,store,findWork,startWork,ownerWork}){
   const text=String(content||'').trim();
-  if(conversationId&&findWork&&workControl.test(text)){
+  const authorize=dualProviderStart.test(text);
+  const startRequest=/^(?:please\s+)?start (?:the (?:approved )?pilot )?with codex and claude\b/i.test(text);
+  if(conversationId&&findWork&&(workControl.test(text)||startRequest)){
     const start=/^(?:please\s+)?start\b/i.test(text);
     const linked=store.list().filter(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status));
     const task=linked.length===1?linked[0]:null;
@@ -24,11 +27,29 @@ async function handleOwnerWorkInstruction({content,conversationId,requestId,hist
               ?'Reply “continue coordination” to consult on your new direction.'
               :'Your brief changed. In Work Activity, stop the previous draft or work, then reply “continue coordination”.';
           }
-          if(work.status==='DRAFT')return draftStartMessage(work);
+          if(work.status==='DRAFT'){
+            if(!authorize||!startWork||!requestId)return draftStartMessage(work);
+            if(!work.sharedCheckout||work.codeReviewVerdict!=='READY'||work.conversationId!==conversationId||work.coordinationBrief!==state.brief){
+              return 'This draft needs a matching Codex READY review before it can start from this chat.';
+            }
+            const pending=store.approvals(task.id).some(item=>item.status==='PENDING');
+            if(task.status==='BLOCKED'||pending||(task.status==='WAITING_FOR_USER'&&state.stage!=='scope_changed')){
+              return 'Resolve the linked task’s pending decision or approval in Tasks before starting engineering.';
+            }
+            const actionId=createHash('sha256').update(JSON.stringify(['owner-chat-start',source,conversationId,requestId])).digest('hex');
+            try{
+              store.bindTaskReference(`work-start-${actionId}`,work.id,conversationId,()=>task.id);
+              const result=await startWork(work,actionId);
+              return `You authorized Codex and Claude for the reviewed pilot. Work Activity is ${result.status.toLowerCase().replaceAll('_',' ')}.`;
+            }catch(error){
+              return `Foreman could not start the draft. ${error.message}`;
+            }
+          }
           if(start||coordinationContinue.test(text))return `Work Activity is ${work.status.toLowerCase().replaceAll('_',' ')}. ${work.nextAction||''}`.trim();
         }
       }
     }
+    if(authorize)return 'Open the task chat linked to the reviewed pilot, then send “Start with Codex and Claude”.';
   }
   const commandReply=await handleNethraChat({api,content,conversationId,requestId,source,selectedLocalModel});
   if(commandReply)return commandReply;
