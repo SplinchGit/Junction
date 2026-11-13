@@ -114,8 +114,8 @@ function postCoordinationChat(task,localData,project=null){
       const receipt=step.attempts?.findLast(attempt=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0));
       if(!receipt)continue;
       const provider=receipt.provider==='codex'?'Codex / OpenAI':receipt.provider==='claude'?'Claude / Anthropic':'Engineering';
-      const approval=project.codeReviewVerdict||'Saved work record';
-      post(['verified',project.id,step.id,receipt.id],`**Nethra · Verified engineering checkpoint**\n\n${step.title}\n\nProvider: ${provider}\nVerification: ${receipt.tests.length} checks passed${receipt.headSha?` · ${receipt.headSha.slice(0,12)}`:''}\nApproval reference: ${approval} · ${project.id}\nNext action: ${project.nextAction||'Review Work Activity'}`);
+      const approval=project.reviewedProposal||project.codeReviewVerdict||'Saved work record';
+      post(['verified',project.id,step.id,receipt.id,approval],`**Nethra · Verified engineering checkpoint**\n\n${step.title}\n\nProvider: ${provider}\nVerification: ${receipt.tests.length} checks passed${receipt.headSha?` · ${receipt.headSha.slice(0,12)}`:''}\nApproval reference: ${approval} · ${project.id}\nNext action: ${project.nextAction||'Review Work Activity'}`);
     }
   }
   if(project&&project.id===task.coordination?.workId){
@@ -126,11 +126,12 @@ function postCoordinationChat(task,localData,project=null){
       const provider=queued.attempts?.at(-1)?.provider||queued.kind;
       const label=provider==='codex'?'Codex / OpenAI':provider==='claude'?'Claude / Anthropic':'Awaiting assignment';
       const latest=queued.attempts?.at(-1);
-      const evidence=latest?.headSha||project.reviewed?.diffHash||`work:${project.id}`;
+      const verified=project.tasks.flatMap(step=>step.attempts||[]).filter(attempt=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0)).sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0)).at(-1);
+      const evidence=verified?.headSha||latest?.headSha||project.reviewed?.diffHash||`work:${project.id}`;
       const fenced=['PAUSED','CANCELLED'].includes(task.status)||['PAUSED','STOPPED'].includes(project.status);
       const locked=project.sharedCheckout&&project.repoPath&&existsSync(join(project.repoPath,'.git','nethra-writer.lock'));
       const next=fenced?'Resume explicitly':locked?'Wait for the shared writer lock to clear':project.nextAction||'Await engineering pickup';
-      post(['queue',project.id,queued.id,task.coordination.approvedAt,label,evidence,next],`**Nethra · Engineering queue receipt**\n\n${queued.title}\n\nApproval: Approved · ${new Date(task.coordination.approvedAt).toISOString()}\nProvider: ${label}\nEvidence: ${evidence}\nNext action: ${next}`);
+      post(['queue',project.id,queued.id,task.coordination.approvedAt,project.reviewedProposal,label,evidence,next],`**Nethra · Engineering queue receipt**\n\n${queued.title}\n\nApproval: Approved · ${new Date(task.coordination.approvedAt).toISOString()}\nApproved revision: ${project.reviewedProposal||'Unavailable in saved record'}\nProvider: ${label}\nEvidence: ${evidence}\nNext action: ${next}`);
     }
     const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts?.at(-1);
     const provider=attempt?.provider==='claude'?'Claude / Anthropic':attempt?.provider==='codex'?'Codex / OpenAI':null;
