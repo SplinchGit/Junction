@@ -153,3 +153,20 @@ test('a scoped code proposal creates one paused Work Activity draft and reuses i
   assert.match(projects[2].objective,/full scoped proposal/);
   await assert.rejects(propose({...input,objective:{...objective,readRoots:[]}}),/Approve the Junction read folder/);
 });
+
+test('when Codex is resting Claude reviews the exact proposal, so one engineer works at a time',async()=>{
+  const task={id:'self-improvement',goal:'Self Improvement',status:'ACTIVE',allowCodeWork:true,workspace:'C:/task-workspace'};
+  const resetsAt=Date.now()+3600_000,drafts=[];let codexCalls=0,claudeCalls=0;
+  const limits={check:async provider=>provider==='codex'?{available:false,detail:'five_hour 96%.',nextAvailableAt:resetsAt}:{provider,available:true,windows:[]},invalidate(){},recordClaude(){}};
+  const tools=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:true}),claudeStatus:async()=>({ready:true}),advisorLimits:limits,
+    codexConsult:async()=>{codexCalls++;return {content:'VERDICT: READY'};},
+    claudeConsult:async()=>{claudeCalls++;return {content:'VERDICT: READY\nBounded and testable.',model:'claude-test'};},
+    proposeCodeWork:async input=>{drafts.push(input);return {id:'reviewed-by-claude',status:'DRAFT'};}});
+  const result=await tools.execute('propose_code_work',{task:'Show token counts for chats',acceptance:'Show measured counts without message text'},task);
+  assert.equal(result.status,'DRAFT');assert.equal(codexCalls,0);assert.equal(claudeCalls,1);
+  assert.match(result.note,/^Claude reviewed/);assert.match(drafts[0].review.advice,/Bounded and testable/);
+  // Both resting: the draft waits for the earlier reset; nothing is created.
+  const both={check:async provider=>({available:false,detail:'resting.',nextAvailableAt:provider==='codex'?resetsAt:resetsAt-60_000}),invalidate(){},recordClaude(){}};
+  const waiting=new NethraTools({store:{get:()=>task},codexStatus:async()=>({ready:true}),claudeStatus:async()=>({ready:true}),advisorLimits:both,proposeCodeWork:async()=>{throw Error('no draft');}});
+  await assert.rejects(waiting.execute('propose_code_work',{task:'Show token counts for chats',acceptance:'Show measured counts without message text'},task),error=>error.retryAt===resetsAt-60_000);
+});

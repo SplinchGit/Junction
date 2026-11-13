@@ -220,12 +220,20 @@ class NethraTools {
       if(!task.allowCodeWork||!this.proposeCodeWork)throw Error('Codex development work is not enabled for this objective');
       if(typeof args.acceptance!=='string'||args.acceptance.trim().length<30)throw Error('Provide measurable acceptance criteria before asking Codex to review a code proposal');
       const question=`Review this exact Junction code proposal for bounded scope, risks, consistency and measurable owner outcomes. Do not implement. Begin with exactly VERDICT: READY when it is safe, coherent and testable. Leave routine source-field mapping, formatting and fixture details to the engineer where the expected behaviour is clear. Use VERDICT: REVISE only for an unsafe change, a contradictory or untestable outcome, or an unresolved owner decision. Name the concrete blocker. Task: ${args.task} Acceptance: ${args.acceptance}`;
-      const review=await this.execute('consult_codex',{question},task,{signal,token});
-      if(reviewVerdict(review.advice)!=='READY')return {status:'REVISE',draftCreated:false,reviewedBy:review.model,review:String(review.advice||'Codex did not give a clear verdict').slice(0,2800),note:'Codex requested changes to this proposal. Revise the task and acceptance criteria; no draft was created and no code was changed.'};
+      // Codex is preferred; Claude is equally acceptable when Codex is resting, so one provider works at a time.
+      let review;
+      try{review=await this.execute('consult_codex',{question},task,{signal,token});}
+      catch(error){
+        if(!Number.isFinite(error.retryAt))throw error;
+        try{review=await this.execute('consult_claude',{question},task,{signal,token});}
+        catch(second){throw Number.isFinite(second.retryAt)&&second.retryAt<error.retryAt?second:error;}
+      }
+      const reviewer=/claude/i.test(String(review.model||''))?'Claude':'Codex';
+      if(reviewVerdict(review.advice)!=='READY')return {status:'REVISE',draftCreated:false,reviewedBy:review.model,review:String(review.advice||`${reviewer} did not give a clear verdict`).slice(0,2800),note:`${reviewer} requested changes to this proposal.`+' Revise the task and acceptance criteria; no draft was created and no code was changed.'};
       authorize();
       const work=await withSignal(this.proposeCodeWork({objective:task,description:args.task,acceptance:args.acceptance,review}),signal);
       authorize();
-      return {workId:work.id,status:work.status,reviewedBy:review.model,note:'Codex reviewed this proposal. Draft saved in Work Activity. The owner must start implementation, then review and apply the exact verified patch.'};
+      return {workId:work.id,status:work.status,reviewedBy:review.model,note:reviewer+' reviewed this proposal. Draft saved in Work Activity. The owner must start implementation, then review and apply the exact verified patch.'};
     }
     if(name==='web_search'){
       if(!this.research)throw Error('Web research is unavailable');

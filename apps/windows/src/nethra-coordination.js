@@ -36,7 +36,7 @@ function ownerBrief(task){
     const text=String(input.text||'').trim();
     if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
     // An engineer's signed note in the owner's chat is discussion; only the owner's own words set direction.
-    if(collaboratorNote.test(text))continue;
+    if(collaboratorNote.test(text)||preferenceOnly.test(text))continue;
     if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||workControl.test(text)||/^retry consultation[.!]?$/i.test(text)||(input.kind==='redirect'&&emptyDirection.test(text)))continue;
     if(text)return text.slice(0,700);
   }
@@ -62,6 +62,8 @@ function decision(state){
   return {proposals,question:`${comparison}\n${choice||'No complete proposal was returned.'} Reply “retry consultation” to repair incomplete advice, or “GPT brief: …” to change direction. Full advice is in Windows task diagnostics.\n${PROVIDERS.map(p=>`${p==='codex'?'Codex':'Claude'}: ${proposals[p]?`${proposals[p].task.slice(0,130)} Test: ${proposals[p].acceptance.slice(0,130)}`:'Advice needs a bounded Improvement and Test before approval.'}`).join('\n')}`};
 }
 
+// A bare preference statement is a standing instruction, not the engineering brief.
+const preferenceOnly=/^generally\s+(?:we['’]ll|we will|i)\s+prefer\s+(?:codex|claude)['’]s\s+work\b[^\n]{0,200}$/i;
 /** The provider the owner last said they generally prefer, in their own words; null when they have not said. */
 function ownerPreference(task){
   for(const input of [...(task.ownerInputs||[])].reverse()){
@@ -89,6 +91,8 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   let state={stage:'consulting',advisors:{},...task.coordination};
   const carry=()=>({brief:state.brief,completedWork:state.completedWork});
   const unattended=()=>runsContinuously(current);
+  // Codex's work is preferred unless the owner says otherwise; either engineer's work is acceptable.
+  const preferred=()=>ownerPreference(current)||'codex';
   const save=async(patch,event)=>{
     signal?.throwIfAborted();
     const saved=await (checkpoint?checkpoint(patch,event):store.update(task.id,patch,event,token));
@@ -138,7 +142,11 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     await persist({summary:'Resuming the interrupted consultation.'},'COORDINATION_RESUMED');
   }
   if(state.stage==='consulting'){
-    for(const provider of PROVIDERS){
+    // A continuous task works with one engineer at a time: the preferred one first, the other only
+    // when the first is resting or gave nothing usable, so neither allowance is spent twice on a step.
+    const order=unattended()?[preferred(),...PROVIDERS.filter(p=>p!==preferred())]:PROVIDERS;
+    for(const provider of order){
+      if(unattended()&&order.some(p=>state.advisors[p]?.status==='completed'&&proposal(state.advisors[p].advice)))break;
       const prior=state.advisors[provider];
       if(prior?.status==='completed'||prior?.retryAt>now())continue;
       if(prior?.status==='requested'){
@@ -162,20 +170,20 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     const waiting=PROVIDERS.filter(provider=>state.advisors[provider]?.status!=='completed');
     // A resting provider does not hold up a continuous task while the other has a bounded proposal;
     // the independent review still happens before any draft is saved or started.
-    const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state,ownerPreference(current));
+    const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state,preferred());
     if(waiting.length&&!onlyWaiting)return sleep(Math.min(...waiting.map(provider=>state.advisors[provider]?.retryAt||now()+HALF_HOUR)),`Waiting for ${waiting.join(' and ')} consultation.`);
     state={...state,stage:'decision',questionId:null};
     await persist({summary:'Advisor proposals saved.'},'COORDINATION_PROPOSALS_READY');
   }
   const ownerDecided=pilotChoice(answer())||/^retry consultation[.!]?$/i.test(answer()?.trim()||'');
-  if(state.stage==='decision'&&!ownerDecided&&unattended()&&autoPilotProvider(state,ownerPreference(current))){
+  if(state.stage==='decision'&&!ownerDecided&&unattended()&&autoPilotProvider(state,preferred())){
     // Supersede the open question: the owner already chose continuous work inside this brief.
-    const provider=autoPilotProvider(state,ownerPreference(current)),questions=(current.questions||[]).map(q=>q.id===state.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
+    const provider=autoPilotProvider(state,preferred()),questions=(current.questions||[]).map(q=>q.id===state.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
     state={...state,stage:'drafting',selected:proposal(state.advisors[provider].advice),approvedAt:now(),approvedBy:'continuous'};
     await persist({questions,summary:`Continuing with ${provider==='codex'?'Codex':'Claude'}’s pilot inside your brief. Preparing the reviewed draft.`},'COORDINATION_PILOT_AUTO_APPROVED');
   }
   if(state.stage==='decision'&&!state.questionId){
-    return ask(decision(state).question+(unattended()?'\nThis task is continuous. Add “Generally we’ll prefer Codex’s work” (or Claude’s) to your reply and I’ll follow that when their proposals differ.':''),'decision');
+    return ask(decision(state).question,'decision');
   }
   if(state.stage==='decision'){
     if(/^retry consultation[.!]?$/i.test(answer()?.trim()||'')){

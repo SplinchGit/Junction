@@ -204,7 +204,7 @@ test('blocked engineering reports its actual failure once and leaves no polling 
  assert.equal(store.claim('test'),null);
 });
 
-test('a continuous task with the owner brief proceeds on one provider, starts only a reviewed draft and never settles a disagreement',async t=>{
+test('a continuous task with the owner brief proceeds on one provider, starts only a reviewed draft and works with one engineer at a time',async t=>{
  const {ownerBrief,runsContinuously}=require('../src/nethra-coordination');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-coordination-'));
  let now=Date.now();
@@ -212,9 +212,10 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
  t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
  let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'chat-a',continuous:true});
  store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
- const started=[];let codex='rest',work={status:'DRAFT'};
+ const started=[],calls=[];let codex='rest',work={status:'DRAFT'};
  const claudeAdvice='Friction: stale status. Improvement: Show the active engineer. Test: Confirm the active engineer matches the current Foreman attempt.';
  const tools={async execute(name){
+  calls.push(name);
   if(name==='propose_code_work')return {workId:'w1'};
   if(name==='consult_codex'){if(codex==='rest')throw Object.assign(new Error('limit'),{retryAt:now+3600_000});return {advice:codex==='differ'?'Friction: a. Improvement: Cancel speech on interruption. Test: Verify playback stops within 500 milliseconds of interruption.':claudeAdvice};}
   return {advice:claudeAdvice};
@@ -246,25 +247,25 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
  task=store.configure(task.id,{continuous:false},task.revision,'off');
  await run();await run();task=store.get(task.id);
  assert.equal(task.status,'SLEEPING');assert.equal(task.coordination.stage,'consulting','waits for Codex instead of proceeding');
- // A disagreement goes to the owner even when continuous.
+ // Back on: the proposal already paid for is used rather than spending another consultation.
  task=store.configure(task.id,{continuous:true},task.revision,'on');
- codex='differ';now+=2*3600_000;
+ codex='differ';now+=2*3600_000;work={status:'DRAFT'};calls.length=0;
  await run();task=store.get(task.id);
- assert.equal(task.status,'WAITING_FOR_USER');assert.match(task.questions.at(-1).question,/different proposals[\s\S]*Generally we’ll prefer/);
- // An engineer's note never answers the owner's question.
+ assert.equal(task.coordination.selected.task,'Show the active engineer.');assert.deepEqual(calls,['propose_code_work']);
+ // With both available, one engineer works at a time: Codex is preferred by default and Claude is not consulted.
+ work={status:'COMPLETED',nextAction:'verified'};
+ await run();work={status:'DRAFT'};calls.length=0;await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'tracking');assert.equal(task.coordination.selected.task,'Cancel speech on interruption.');
+ assert.deepEqual(calls,['consult_codex','propose_code_work'],'Claude allowance is not spent on the same step');
+ // An engineer's note cannot change the preference; the owner's own words can, without becoming the brief.
  const {handleTaskTurn}=require('../src/nethra-task-turn');
  handleTaskTurn({store,conversationId:'chat-a',content:"Claude note: generally we'll prefer claude's work",requestId:'note-1'});
- task=store.get(task.id);
- assert.equal(task.status,'WAITING_FOR_USER');assert.equal(task.questions.at(-1).status,'OPEN');
- // The owner's stated preference settles later disagreements without another question.
- work={status:'DRAFT'};
- handleTaskTurn({store,conversationId:'chat-a',content:"Approve the codex pilot. Generally we'll prefer codex's work.",requestId:'choose-1'});
- await run();task=store.get(task.id);
- assert.equal(task.coordination.stage,'tracking');assert.equal(task.coordination.selected.task,'Cancel speech on interruption.');
- work={status:'COMPLETED',nextAction:'verified'};
- const asked=task.questions.length;
- await run();work={status:'DRAFT'};await run();task=store.get(task.id);
- assert.equal(task.coordination.stage,'tracking','differing proposals follow the stated preference');
- assert.equal(task.coordination.approvedBy,'continuous');assert.equal(task.questions.length,asked,'no new question');
- assert.equal(task.coordination.selected.task,'Cancel speech on interruption.');
+ assert.equal(require('../src/nethra-coordination').ownerPreference(store.get(task.id)),null);
+ handleTaskTurn({store,conversationId:'chat-a',content:"Generally we'll prefer Claude's work",requestId:'prefer-1'});
+ assert.equal(ownerBrief(store.get(task.id)),'Make work status clear.');
+ work={status:'COMPLETED',nextAction:'verified'};const asked=store.get(task.id).questions?.length||0;
+ await run();work={status:'DRAFT'};calls.length=0;await run();task=store.get(task.id);
+ assert.equal(task.coordination.selected.task,'Show the active engineer.');
+ assert.deepEqual(calls,['consult_claude','propose_code_work']);
+ assert.equal(task.questions?.length||0,asked,'either engineer is accepted without asking the owner');
 });
