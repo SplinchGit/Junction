@@ -144,7 +144,25 @@ test('resume cannot bypass a rejected approval or an unanswered owner question',
 test('approval binds immutable payload and can be consumed only once across reopen',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'One'});const approval=s.requestApproval(a.id,{tool:'send',args:{to:'alice'},category:'external',key:'send-one'});assert.equal(s.get(a.id).status,'WAITING_FOR_USER');assert.throws(()=>s.requestApproval(a.id,{tool:'send',args:{to:'bob'},category:'external',key:'send-one'}),/payload/i);s.decideApproval(approval.id,true,'approve-one');assert.equal(s.get(a.id).status,'ACTIVE');s.close();const r=f.open();assert.equal(r.consumeApproval(approval.id).status,'CONSUMED');assert.equal(r.consumeApproval(approval.id),null);assert.throws(()=>r.decideApproval(approval.id,false,'other'),/decided/i);});
 test('action reservation prevents replay and rejects payload substitution',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'One'});const r=s.reserveAction(a.id,'action-1','write',{path:'a'});assert.equal(r.status,'RESERVED');assert.deepEqual(s.reserveAction(a.id,'action-1','write',{path:'a'}),r);assert.throws(()=>s.reserveAction(a.id,'action-1','write',{path:'b'}),/payload/i);s.finishAction('action-1',{ok:true});assert.equal(f.open().getAction('action-1').status,'COMPLETED');});
 test('mobile create retries cannot duplicate an objective or substitute its goal',t=>{const f=fixture(t),s=f.open();s.setSettings({thinking:true});const a=s.create({goal:'One',requestId:'mobile-one'});assert.equal(a.thinking,true);assert.equal(s.create({goal:'One',requestId:'mobile-one'}).id,a.id);assert.equal(s.list().length,1);assert.throws(()=>s.create({goal:'Two',requestId:'mobile-one'}),/payload/i);});
-test('crashed execution and pause are charged once against durable daily budgets',t=>{const f=fixture(t),s=f.open(),a=s.create({goal:'One'}),c=s.claim('a',100);s.beginInference(a.id,c.token);f.advance(101);s.close();const r=f.open();r.recoverExpired();assert.equal(r.get(a.id).budget.totalMs,101);r.recordUsage(a.id,101,c.token);assert.equal(r.get(a.id).budget.totalMs,101);const next=r.claim('b',100);r.beginInference(a.id,next.token);f.advance(30);const live=r.get(next.task.id);r.control(live.id,'pause',live.revision,'pause-budget');assert.equal(r.get(a.id).budget.totalMs,131);});
+test('expired recovery preserves heartbeat usage and pause accounts for live inference',t=>{
+  const f=fixture(t),s=f.open(),a=s.create({goal:'One'}),c=s.claim('a',100);
+  s.beginInference(a.id,c.token);
+  f.advance(20);
+  assert.equal(s.renew(a.id,c.token,100),true);
+  s.close();
+  f.advance(101);
+  const r=f.open();
+  assert.equal(r.recoverExpired(),1);
+  assert.equal(r.get(a.id).budget.totalMs,20);
+  r.recordUsage(a.id,121,c.token);
+  assert.equal(r.get(a.id).budget.totalMs,20);
+  const next=r.claim('b',100);
+  r.beginInference(a.id,next.token);
+  f.advance(30);
+  const live=r.get(next.task.id);
+  r.control(live.id,'pause',live.revision,'pause-budget');
+  assert.equal(r.get(a.id).budget.totalMs,50);
+});
 test('inference heartbeat accounts time without flooding events or invalidating owner revision',t=>{
   const f=fixture(t),s=f.open(),task=s.create({goal:'Long running objective'}),claim=s.claim('worker',10_000);
   s.beginInference(task.id,claim.token);
@@ -189,10 +207,10 @@ test('inference intervals exclude gaps and close on pause before stale worker cl
   assert.equal(s.usage(task.id).taskMs,50);f.advance(5000);s.endInference(task.id,claim.token);assert.equal(s.usage(task.id).taskMs,50);
 });
 
-test('recovery charges only a persisted active inference interval once',t=>{
+test('recovery does not count an inference interval without a heartbeat',t=>{
   const f=fixture(t),s=f.open(),task=s.create({goal:'Research'}),claim=s.claim('crashed',1000);
   f.advance(800);s.beginInference(task.id,claim.token);f.advance(201);s.close();const reopened=f.open();reopened.recoverExpired();
-  assert.equal(reopened.usage(task.id).taskMs,201);f.advance(1000);reopened.endInference(task.id,claim.token);assert.equal(reopened.usage(task.id).taskMs,201);
+  assert.equal(reopened.usage(task.id).taskMs,0);f.advance(1000);reopened.endInference(task.id,claim.token);assert.equal(reopened.usage(task.id).taskMs,0);
 });
 
 test('requesting an expired exact approval renews an actionable owner decision',t=>{

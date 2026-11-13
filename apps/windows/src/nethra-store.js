@@ -377,8 +377,9 @@ class NethraStore {
   recoverInside({force=false}={}) {
     const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();
     if(!lease||(!force&&lease.expiresAt>this.now()))return 0;
-    this.closeInferenceIntervals(lease.token);
-    this.accountUsage(lease.taskId,this.now()-this.execution(lease.token).startedAt,lease.token);
+    // An open interval only proves inference through its last recorded heartbeat.
+    this.db.prepare('UPDATE inference_intervals SET endedAt=startedAt+accountedMs WHERE token=? AND endedAt IS NULL').run(lease.token);
+    this.accountUsage(lease.taskId,this.execution(lease.token).accountedMs,lease.token);
     this.interruptChildrenInside(lease.taskId,lease.token);
     this.db.prepare("UPDATE attention SET state='PENDING',leaseToken=NULL WHERE leaseToken=?").run(lease.token);
     this.db.prepare('DELETE FROM lease WHERE singleton=1').run();
