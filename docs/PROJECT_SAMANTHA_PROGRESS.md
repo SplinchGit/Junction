@@ -24,6 +24,8 @@ The running host was replaced with nethra-agent-chat-20261022 after confirming t
 
 The controlled recovery objective is 579d028f-4307-4eed-a1ed-4de8c5dfaadd. With the host stopped, the normal store API created a nonpersistent objective, claimed it with a 21-minute lease, saved a checkpoint, and recorded an inference heartbeat. Launching the packaged app recovered the unexpired lease in 738 ms, cleared it, preserved the checkpoint and 1 ms usage, and paused the nonpersistent objective. The paused fixture is retained as evidence. This exercises packaged host startup, not an operating-system reboot.
 
+The package was rebuilt from 006c67c with no lease and no active engineering project, launched through the desktop shortcut `Nethra.lnk`, and opened its LAN listeners. The packaged `foreman.js` contains the provider-hold change. The older `Junction.lnk` on the desktop still targets `nethra-qwen3-next-q3km-20261106` and should not be used.
+
 The Android doctor reported no attached device during this verification. Phone acceptance remains pending.
 
 ## Baseline findings to address
