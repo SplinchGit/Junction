@@ -159,7 +159,8 @@ class ForemanExecutor{
   if((await this.git(root,['branch','--show-current'])).trim()!=='main')throw new Error('Shared engineering requires the canonical main checkout');
   const common=(await this.git(root,['rev-parse','--git-common-dir'])).trim();
   const file=path.resolve(root,common,'nethra-writer.lock');
-  const identity={pid:process.pid,project:p.id,nonce:crypto.randomUUID(),at:Date.now()};
+  const checkpoint={revision:p.revision,sourceHash:await this.sourceHash(p.repoPath,true,p.scopeKind)};
+  const identity={pid:process.pid,project:p.id,nonce:crypto.randomUUID(),at:Date.now(),checkpoint};
   const claim=()=>fs.writeFileSync(file,JSON.stringify(identity),{flag:'wx'});
   try{claim();}catch(error){
    if(error.code!=='EEXIST')throw error;
@@ -173,6 +174,9 @@ class ForemanExecutor{
    try{fs.writeFileSync(reclaim,JSON.stringify(identity),{flag:'wx'});}catch{throw held;}
    try{
     const current=holder();if(current?.nonce!==stale.nonce||!crashed(current))throw held;
+    if(current.checkpoint&&(current.project!==p.id||current.checkpoint.sourceHash!==checkpoint.sourceHash)){
+     throw new Error(`The shared checkout has a writer lock with an interrupted checkpoint for ${current.project}. Review the canonical diff against the approved revision before removing the lock.`);
+    }
     fs.unlinkSync(file);claim();
    }catch(inner){if(inner===held||inner.code==='EEXIST')throw held;throw inner;}finally{fs.unlinkSync(reclaim);}
   }

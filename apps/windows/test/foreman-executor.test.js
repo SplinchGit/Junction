@@ -208,7 +208,12 @@ test('a crashed host lock is reclaimed only after its recorded process has exite
  const release=await e.acquireWriter(p);
  assert.equal(JSON.parse(fs.readFileSync(lock,'utf8')).pid,process.pid);assert.equal(fs.existsSync(lock+'.reclaim'),false);
  await assert.rejects(e.acquireWriter({...p,id:'two'}),/writer lock/);
+ const interrupted={...JSON.parse(fs.readFileSync(lock,'utf8')),pid:777};
  release();assert.equal(fs.existsSync(lock),false);
+ fs.writeFileSync(path.join(root,'interrupted.js'),'unverified edit\n');
+ write(interrupted);
+ await assert.rejects(e.acquireWriter(p),/interrupted checkpoint/);
+ assert.deepEqual(JSON.parse(fs.readFileSync(lock,'utf8')),interrupted);
 });
 
 test('write ownership is held only during a provider turn and released by handoff and Pause without a late patch',async t=>{
