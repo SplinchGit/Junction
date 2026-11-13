@@ -135,6 +135,11 @@ function postCoordinationChat(task,localData,project=null){
     }
     const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts?.at(-1);
     const provider=attempt?.provider==='claude'?'Claude / Anthropic':attempt?.provider==='codex'?'Codex / OpenAI':null;
+    const progress=attempt?.verificationProgress;
+    if(progress&&project.status!=='COMPLETED'){
+      const next=progress.nextCheck?.join(' ')||'Finalize verification';
+      post(['verification',project.id,attempt.id,progress.binding,progress.completed.length,next,project.status,project.nextAction],`**Nethra · Verification checkpoint**\n\nProvider: ${provider||'Verification runner'}\nCandidate commit: ${progress.canonicalCommit||progress.candidateCommit}\nCompleted checks: ${progress.completed.length}\nNext pending check: ${next}\nNext action: ${project.nextAction}`);
+    }
     const detail=project.status==='BLOCKED'?project.handoff:project.nextAction;
     if(detail)post([project.id,project.status,attempt?.id,attempt?.phase,provider,detail,project.retryAt],`**Nethra · Work Activity**\n\n${provider?`${provider} · `:''}${project.status}\n\n${String(detail).slice(0,900)}${Number.isFinite(project.retryAt)?`\n\nNext check: ${new Date(project.retryAt).toISOString()}`:''}`);
   }

@@ -270,7 +270,8 @@ class ForemanExecutor{
   let cwd=p.sharedCheckout?fs.realpathSync(p.repoPath):candidate;
   if(signal.aborted)throw new Error('Paused');
   try{
-   if(t.kind!=='verify'){
+   const savedVerification=t.attempts.slice(0,-1).findLast(attempt=>attempt.verificationProgress)?.verificationProgress;
+   if(t.kind!=='verify'&&!savedVerification){
     let capacity,codexSnapshot;
     try{codexSnapshot=await this.server.readRateLimits();capacity=retryDeadline(codexSnapshot);}catch{capacity=Date.now()+300000;}
     if(p.autoHandoff){
@@ -373,13 +374,29 @@ class ForemanExecutor{
     }
     cwd=candidate;
    }
-   checkpoint({phase:'verifying',summary:'Verifying candidate'});
    const beforeTests=await this.sourceHash(cwd,true);
-   const tests=[];
-   for(const profile of checks){if(signal.aborted)throw new Error('Paused');const target=fs.realpathSync(path.join(cwd,profile.cwd));if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');const r=await this.command(target,profile.command,signal,profile.timeoutMs,p.sharedCheckout?{NODE_PATH:path.join(p.repoPath,'node_modules')}:{});const evidence={command:profile.command,exitCode:r.exitCode,output:(r.stdout+'\n'+r.stderr).slice(-12000)};tests.push(evidence);checkpoint({tests,summary:`Verification ${tests.length}/${checks.length}: exit ${r.exitCode}`});if(r.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);}
-   if(signal.aborted)throw new Error('Paused');
-   const afterTests=await this.sourceHash(cwd,true);
-   if(beforeTests!==afterTests)throw new Error('Verification changed project source or created untracked files; inspect candidate before retrying');
+   const candidateCommit=(await this.git(cwd,['rev-parse','HEAD'])).trim();
+   const canonicalCommit=p.sharedCheckout?(await this.git(p.repoPath,['rev-parse','HEAD'])).trim():null;
+   const binding=crypto.createHash('sha256').update(JSON.stringify([candidateCommit,canonicalCommit,beforeTests,checks])).digest('hex');
+   const tests=savedVerification?.binding===binding?savedVerification.completed.slice():[];
+   const saveProgress=()=>checkpoint({phase:'verifying',tests:tests.slice(),verificationProgress:{
+    binding,candidateCommit,canonicalCommit,completed:tests.slice(),nextCheck:checks[tests.length]?.command||null
+   },summary:`Verification ${tests.length}/${checks.length} passed`});
+   saveProgress();
+   for(const profile of checks.slice(tests.length)){
+    signal.throwIfAborted();
+    const target=fs.realpathSync(path.join(cwd,profile.cwd));
+    if(target!==cwd&&!target.startsWith(cwd+path.sep))throw new Error('Verification directory escapes checkout');
+    const result=await this.command(target,profile.command,signal,profile.timeoutMs,p.sharedCheckout?{NODE_PATH:path.join(p.repoPath,'node_modules')}:{});
+    const evidence={command:profile.command,exitCode:result.exitCode,output:(result.stdout+'\n'+result.stderr).slice(-12000)};
+    signal.throwIfAborted();
+    if(result.exitCode!==0)throw new Error(`Verification failed: ${JSON.stringify(profile.command)}\n${evidence.output}`);
+    if(beforeTests!==await this.sourceHash(cwd,true))throw new Error('Verification changed project source or created untracked files; inspect candidate before retrying');
+    signal.throwIfAborted();
+    tests.push(evidence);
+    saveProgress();
+   }
+   signal.throwIfAborted();
    const finalNames=[...(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/),...(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/)].filter(Boolean);if(finalNames.some(f=>forbidden.test(f)))throw new Error('Verification created a protected file');
    await this.git(cwd,['add','--all']);
    if((await this.git(cwd,['diff','--cached','--name-only'])).trim())await this.git(cwd,['-c','user.name=Junction','-c','user.email=junction@localhost','commit','-m',`Verified task ${t.id}: ${t.title}`]);
