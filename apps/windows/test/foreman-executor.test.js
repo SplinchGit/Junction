@@ -35,6 +35,8 @@ test('capacity respects latest applicable reset; unknown reached capacity is not
  assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:100,resetsAt:200},secondary:{usedPercent:100,resetsAt:300}}},100000),360000);
  assert.equal(retryDeadline({rateLimits:{rateLimitReachedType:'quota'}},100000),400000);
  assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:10,resetsAt:300}}},100000),null);
+ assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:10,resetsAt:90}}},100000),400000);
+ assert.equal(retryDeadline({rateLimits:{primary:{usedPercent:100,resetsAt:90}}},100000),150000);
  assert.equal(retryDeadline({rateLimits:{primary:{resetsAt:300}}},100000),400000);
 });
 
@@ -251,11 +253,80 @@ test('with neither provider available the wait ends at a confirmed reset or a re
  claude={checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:99,resetsAt:claudeReset}]};
  let wait=await run();
  assert.equal(wait.retryAt,claudeReset+60000);assert.match(wait.capacityDetail,/confirmed provider capacity/);
+ const justReset=Date.now()-10000;
+ claude={checkedAt:Date.now(),limitReached:true,limitResetsAt:justReset,windows:[]};
+ wait=await run();
+ assert.equal(wait.retryAt,justReset+60000);
  // No usable Claude reading: recheck soon, but never later than Codex's confirmed reset and never a dispatch.
  claude=null;wait=await run();
  assert.ok(wait.retryAt>Date.now()&&wait.retryAt<=codexReset*1000+60000);
  assert.equal(dispatched,0);assert.equal(fs.existsSync(path.join(repo,'.git','nethra-writer.lock')),false);
  assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
+});
+
+test('a Claude rejection during handoff waits for the earlier provider reset and resumes the same task',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-handoff-rejection-')),repo=path.join(root,'repo');fs.mkdirSync(repo);
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ git('init','-b','main');fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');git('add','.');git('-c','user.name=Test','-c','user.email=test@localhost','commit','-m','baseline');
+ const now=Date.now(),codexReset=Math.floor(now/1000)+7200;
+ const baseline=git('rev-parse','HEAD');
+ const ready={checkedAt:now,windows:[{name:'five_hour',usedPercent:1,resetsAt:now+10800000}]};
+ let claude=ready,rejection,codexReady=false,codexCalls=0,claudeCalls=0;
+ const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:codexReady?1:97,resetsAt:codexReset}}}),
+  request:async method=>method==='command/exec'?{exitCode:0,stdout:'',stderr:''}:{account:{type:'chatgpt'}},
+  start:async()=>{},stop:async()=>{},run:async()=>{codexCalls++;return {text:'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-module.exports = 1;\n+module.exports = 2;\n'};}};
+ const executor=new ForemanExecutor(path.join(root,'state'),{server,advisorLimits:{snapshot:async()=>claude,recordClaude:value=>{claude={...value,checkedAt:Date.now()};}},claudeStatus:async()=>({subscription:true}),runClaude:async({onRateLimit})=>{
+  claudeCalls++;
+  if(rejection)onRateLimit(rejection);
+  throw Object.assign(new Error('Claude usage limit reached'),{rateLimit:rejection});
+ }});
+ const p={id:'shared',sharedCheckout:true,autoHandoff:true,objective:'Fix answer',...await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]})};
+ const task={id:'t',kind:'codex',title:'Set answer',acceptance:'Answer is two',files:['answer.js'],attempts:[]};
+ const run=()=>{const attempt={};task.attempts.push(attempt);return executor.run(p,task,{signal:new AbortController().signal,checkpoint:fields=>{Object.assign(attempt,fields);if(fields.worktree)p.worktree=fields.worktree;}});};
+
+ for(const reset of [now+3600000,now+10800000]){
+  claude=ready;rejection={limitReached:true,limitResetsAt:reset,windows:[]};
+  await assert.rejects(run(),error=>error.retryAt===Math.min(reset,codexReset*1000)+60000);
+  assert.equal(task.attempts.at(-1).provider,'claude');
+  assert.equal(task.attempts.at(-1).engineeringHandoff.codexRetryAt,codexReset*1000+60000);
+  assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 1;\n');
+ }
+ claude=ready;rejection={limitReached:true,limitResetsAt:null,windows:[]};
+ const before=Date.now();
+ await assert.rejects(run(),error=>error.retryAt>=before+1800000&&error.retryAt<=Date.now()+1800000);
+ await assert.rejects(run(),error=>error.retryAt===claude.checkedAt+1800000);
+ claude=ready;rejection={limitReached:true,limitResetsAt:now-120000,windows:[]};
+ await assert.rejects(run(),error=>error.retryAt>=before+1800000&&error.retryAt<=Date.now()+1800000);
+ await assert.rejects(run(),error=>error.retryAt===claude.checkedAt+1800000);
+ claude=ready;rejection=null;
+ await assert.rejects(run(),error=>error.retryAt>=before+1800000&&error.retryAt<=Date.now()+1800000);
+ await assert.rejects(run(),error=>error.retryAt===claude.checkedAt+1800000);
+ assert.equal(claudeCalls,5);assert.equal(codexCalls,0);
+
+ codexReady=true;
+ fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 3;\n');
+ await assert.rejects(run(),/differs from the saved handoff/);
+ assert.equal(codexCalls,0);
+ fs.writeFileSync(path.join(repo,'answer.js'),'module.exports = 1;\n');
+ const result=await run();
+ assert.equal(codexCalls,1);assert.equal(claudeCalls,5);
+ assert.equal(result.tests[0].exitCode,0);
+ assert.equal(fs.readFileSync(path.join(repo,'answer.js'),'utf8'),'module.exports = 2;\n');
+ assert.equal(git('rev-parse','HEAD'),baseline);
+});
+
+test('a rejection can trigger one recheck after its deadline despite a recent Claude probe',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-probe-recheck-'));
+ t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const now=Date.now();let probes=0;
+ const rejection={checkedAt:now-1900000,limitReached:true,limitResetsAt:null,windows:[]};
+ const executor=new ForemanExecutor(root,{server:{},advisorLimits:{snapshot:async()=>rejection},
+  claudeStatus:async()=>({subscription:true}),runClaude:async()=>{probes++;}});
+ executor.lastClaudeProbeAt=now-2000000;
+ assert.equal((await executor.claudeCapacity({probe:true})).ready,false);
+ assert.equal((await executor.claudeCapacity({probe:true})).ready,false);
+ assert.equal(probes,1);
 });
 
 test('a repository-root patch for a scoped subfolder applies only inside that folder',async t=>{

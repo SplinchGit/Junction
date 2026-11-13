@@ -21,8 +21,16 @@ function retryDeadline(value,now=Date.now()){
  const groups=value?.rateLimitsByLimitId?Object.values(value.rateLimitsByLimitId):value?.rateLimits?[value.rateLimits]:[];
  if(!groups.some(g=>g.primary||g.secondary||g.rateLimitReachedType))return now+300000;
  let unknown=false;const deadlines=[];
- for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean)){if(!Number.isFinite(w.usedPercent)){unknown=true;continue;}if(w.usedPercent>=95||reached){if(Number.isFinite(w.resetsAt)&&w.resetsAt*1000>now)deadlines.push(w.resetsAt*1000+60000);else unknown=true;}}if(reached&&!g.primary&&!g.secondary)unknown=true;}
+ for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean)){if(!Number.isFinite(w.usedPercent)){unknown=true;continue;}const reset=Number.isFinite(w.resetsAt)?w.resetsAt*1000:null;if(w.usedPercent>=95||reached){if(reset!==null&&reset+60000>now)deadlines.push(reset+60000);else unknown=true;}else if(reset!==null&&reset<=now)unknown=true;}if(reached&&!g.primary&&!g.secondary)unknown=true;}
  return deadlines.length?Math.max(...deadlines,unknown?now+300000:0):unknown?now+300000:null;
+}
+const CLAUDE_UNKNOWN_LIMIT_RECHECK_MS=30*60*1000;
+function claudeRetryDeadline(snapshot){
+ const resets=(snapshot?.windows||[]).filter(window=>window.usedPercent>=95).map(window=>window.resetsAt);
+ if(snapshot?.limitReached)resets.push(snapshot.limitResetsAt);
+ const deadline=Math.max(...resets.filter(Number.isFinite).map(reset=>reset+60000));
+ if(deadline>(snapshot?.checkedAt||0))return deadline;
+ return snapshot?.limitReached&&Number.isFinite(snapshot.checkedAt)?snapshot.checkedAt+CLAUDE_UNKNOWN_LIMIT_RECHECK_MS:null;
 }
 function protectedVerification(p,cwd,checks){
  const verificationPaths=checks.flatMap(check=>check.command.filter(arg=>!arg.startsWith('-')).map(arg=>path.relative(cwd,path.resolve(cwd,check.cwd,arg.replace(/^res:\/\//,''))).replaceAll('\\','/')));
@@ -211,14 +219,15 @@ class ForemanExecutor{
  async claudeCapacity({probe=false,signal}={}){
   const snap=await this.advisorLimits?.snapshot('claude');
   const now=Date.now();
+  const retryAt=claudeRetryDeadline(snap);
+  if(retryAt>now)return {ready:false,retryAt};
   const windows=(snap?.windows||[]).filter(window=>window.resetsAt>now);
-  const blocking=windows.filter(window=>window.usedPercent>=95);
-  if(snap?.limitReached&&snap.limitResetsAt>now)blocking.push({resetsAt:snap.limitResetsAt});
-  if(blocking.length)return {ready:false,retryAt:Math.max(...blocking.map(window=>window.resetsAt))+60000};
   const ready=Boolean(snap&&!snap.limitReached&&now-snap.checkedAt<=300000&&windows.some(window=>/five.hour|5h|300_minutes/i.test(window.name)));
   if(ready||!probe||!this.advisorLimits)return {ready};
-  const nextProbe=(this.lastClaudeProbeAt||0)+3600000;
-  if(nextProbe>now)return {ready:false,retryAt:nextProbe};
+  const lastProbe=this.lastClaudeProbeAt||0;
+  const nextProbe=lastProbe+3600000;
+  const rejectionRecheckDue=snap?.limitReached&&retryAt&&snap.checkedAt>lastProbe;
+  if(nextProbe>now&&!rejectionRecheckDue)return {ready:false,retryAt:nextProbe};
   this.lastClaudeProbeAt=now;
   signal?.throwIfAborted();
   if(!(await this.claudeStatus()).subscription)return {ready:false,retryAt:now+3600000};
@@ -255,15 +264,16 @@ class ForemanExecutor{
      checkpoint({capacity:{codex:{checkedAt:codexSnapshot?Date.now():null,windows},claude:{checkedAt:claude?.checkedAt||null,windows:(claude?.windows||[]).slice(0,4)}}});
     }
     if(signal.aborted)throw new Error('Paused');
-    const previousHandoff=t.attempts.slice(0,-1).reverse().find(a=>a.engineeringHandoff?.codexRetryAt)?.engineeringHandoff;
+    const lastHandoffOrVerification=t.attempts.slice(0,-1).reverse().find(a=>a.engineeringHandoff?.codexRetryAt||a.phase==='verifying');
+    const previousHandoff=lastHandoffOrVerification?.phase==='verifying'?null:lastHandoffOrVerification?.engineeringHandoff;
     // A fresh live account reading supersedes a saved reset deadline (owner may reset usage).
     if(!codexSnapshot&&p.autoHandoff&&previousHandoff?.codexRetryAt>Date.now())capacity=Math.max(capacity||0,previousHandoff.codexRetryAt);
     if(capacity&&!p.autoHandoff)throw Object.assign(new Error('Waiting for confirmed Codex capacity'),{retryAt:capacity});
+    if(previousHandoff&&previousHandoff.sourceHash!==await this.sourceHash(cwd,true))throw new Error('Candidate differs from the saved handoff; inspect before resuming');
     const previous=t.attempts.slice(0,-1).reverse().find(a=>a.threadId);
     if(previous?.threadId){const state=await this.server.request('thread/read',{threadId:previous.threadId,includeTurns:true});const active=state.thread?.turns?.some(x=>x.status==='inProgress');if(active)throw new Error('Previous Codex turn is still active; reconcile before resuming');}
     if(capacity){
      const handoff=await this.handoff(cwd,p,t,previousHandoff?.summary||'Codex is waiting for capacity');
-     if(previousHandoff&&previousHandoff.sourceHash!==handoff.sourceHash)throw new Error('Candidate differs from the saved Codex handoff; inspect before resuming');
      const protectedPath=protectedVerification(p,cwd,checks);
      if([...handoff.changed,...handoff.untracked].some(protectedPath))throw new Error('Owner review required: handoff changed a verification or dependency definition');
      const sources=await this.claudeSources(cwd,p.scopeFile?{files:[p.scopeFile]}:t,p.scopeFile?{changed:[],untracked:[]}:handoff,protectedPath);
@@ -276,9 +286,21 @@ class ForemanExecutor{
      if(!(await this.claudeStatus()).subscription)throw Object.assign(new Error('Claude subscription sign-in is unavailable'),{retryAt:Math.min(capacity,Date.now()+300000),capacityDetail:'Waiting for Claude subscription sign-in or Codex capacity'});
      signal.throwIfAborted();
      checkpoint({provider:'claude',engineeringHandoff:handoff,summary:'Claude continuing the scoped candidate'});
-     const result=await this.runClaude({workingDirectory:cwd,prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
-       subscriptionOnly:true,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
-       onRateLimit:snapshot=>this.advisorLimits?.recordClaude(snapshot)});
+     let result;
+     try{
+      result=await this.runClaude({workingDirectory:cwd,prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
+        subscriptionOnly:true,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
+        onRateLimit:snapshot=>this.advisorLimits?.recordClaude(snapshot)});
+     }catch(error){
+      if(signal.aborted)throw error;
+      const rejection=error.rateLimit||(/\b(?:usage limit reached|rate limit exceeded|you(?:'ve| have) hit your limit)\b/i.test(error.message)?{limitReached:true,limitResetsAt:null,windows:[]}:null);
+      if(!rejection)throw error;
+      if(!error.rateLimit)this.advisorLimits?.recordClaude(rejection);
+      const now=Date.now();
+      const claudeRetryAt=claudeRetryDeadline({...rejection,checkedAt:now})||now+CLAUDE_UNKNOWN_LIMIT_RECHECK_MS;
+      checkpoint({engineeringHandoff:{...handoff,codexRetryAt:capacity},summary:'Claude reached its limit; handoff checkpoint saved'});
+      throw Object.assign(error,{retryAt:Math.min(capacity,claudeRetryAt),capacityDetail:'Waiting for confirmed provider capacity'});
+     }
      signal.throwIfAborted();
      if(result.content.startsWith('JUNCTION_DECISION_REQUIRED:'))throw new Error(result.content.slice(0,2000));
      if((await this.sourceHash(cwd,true))!==handoff.sourceHash)throw new Error('Worktree changed during Claude handoff; reconcile before applying the candidate');
@@ -346,7 +368,6 @@ class ForemanExecutor{
   }catch(error){
    if(signal.aborted)throw error;
    if(error.retryAt)throw error;
-   if(error.rateLimit){const gate=await this.claudeCapacity();error.retryAt=Math.min(gate.retryAt||Infinity,Date.now()+300000);error.capacityDetail='Waiting for confirmed provider capacity';throw error;}
    if(/rate.?limit|quota|usage.?limit|capacity/i.test(error.message)){let at;try{at=retryDeadline(await this.server.readRateLimits());}catch{}error.retryAt=at||Date.now()+300000;}
    else if(/timed out|connection|transport|502|503|504/i.test(error.message))error.retryAt=Date.now()+Math.min(1800000,30000*2**Math.min(t.attempts.length-1,6))*(1+Math.random()*.2);
    throw error;
