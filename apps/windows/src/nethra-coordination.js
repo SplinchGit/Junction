@@ -23,43 +23,20 @@ function pilotChoice(text){
   if(trailing.some(part=>!(/^(?:thanks|thank you)(?:,?\s+nethra)?$/i.test(part)||/^generally\s+(?:we['’]ll|we will|i)\s+prefer\s+(?:codex|claude)['’]s\s+work$/i.test(part))))return null;
   return match[1]?.toLowerCase()||'shared';
 }
-// A standing approval is the owner's one-time, bounded permission for Nethra to pick and start
-// agreed pilots without a typed reply each time. It is read from the owner's own chat message,
-// expires, caps pilots per day, and requires the owner to attest that paid credits are off.
-const STANDING_DAY=86_400_000,STANDING_MAX_PER_DAY=5,STANDING_MAX_DAYS=14;
-const standingRevoke=/^(?:please\s+)?(?:revoke|cancel|end|stop) standing approval[.!]*$/i;
-const standingLike=/^standing approval\b/i;
 const collaboratorNote=/^(?:Claude|Codex|GPT)(?: \([^)\n]{1,60}\))? note:/i;
-/** {perDay,days} for a valid grant, {error} for a malformed one, null when the text is not a grant. */
-function parseStandingApproval(text){
-  const value=String(text||'').trim();
-  if(!standingLike.test(value))return null;
-  if(!/\bcredits off\b/i.test(value))return {error:'A standing approval must say “credits off” so I know no paid usage is authorised.'};
-  const perDay=/\b(\d{1,2})\s+pilots?\s+(?:a|per)\s+day\b/i.exec(value),days=/\b(?:for\s+)?(\d{1,2})\s+days?\b/i.exec(value);
-  const parsed={perDay:perDay?Number(perDay[1]):3,days:days?Number(days[1]):7};
-  if(!(parsed.perDay>=1&&parsed.perDay<=STANDING_MAX_PER_DAY))return {error:`A standing approval allows 1 to ${STANDING_MAX_PER_DAY} pilots a day.`};
-  if(!(parsed.days>=1&&parsed.days<=STANDING_MAX_DAYS))return {error:`A standing approval lasts 1 to ${STANDING_MAX_DAYS} days.`};
-  return parsed;
-}
-const isStandingControl=text=>standingRevoke.test(String(text||'').trim())||standingLike.test(String(text||'').trim());
-/** The owner's current grant: the latest valid grant that is neither revoked nor expired. */
-function standingGrant(task,now=Date.now()){
-  let grant=null;
-  for(const input of task.ownerInputs||[]){
-    const text=String(input.text||'').trim();
-    if(standingRevoke.test(text)){grant=null;continue;}
-    const parsed=parseStandingApproval(text);
-    if(parsed&&!parsed.error&&Number.isFinite(input.at))grant={...parsed,grantedAt:input.at,expiresAt:input.at+parsed.days*STANDING_DAY};
-  }
-  return grant&&grant.expiresAt>now?grant:null;
-}
+/**
+ * The owner decides what is worked on and whether it runs unattended: a task they switched to
+ * continuous, with their own brief, proceeds through pilots inside that brief without a typed
+ * reply each time. Nethra never chooses direction; without a brief she asks.
+ */
+const runsContinuously=task=>task.continuous===true&&Boolean(ownerBrief(task));
 function ownerBrief(task){
   const answered=new Set((task.questions||[]).map(question=>question.answerRequestId).filter(Boolean));
   for(const input of [...(task.ownerInputs||[])].reverse()){
     const text=String(input.text||'').trim();
     if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
     // An engineer's signed note in the owner's chat is discussion; only the owner's own words set direction.
-    if(isStandingControl(text)||collaboratorNote.test(text))continue;
+    if(collaboratorNote.test(text))continue;
     if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||workControl.test(text)||/^retry consultation[.!]?$/i.test(text)||(input.kind==='redirect'&&emptyDirection.test(text)))continue;
     if(text)return text.slice(0,700);
   }
@@ -85,7 +62,7 @@ function decision(state){
   return {proposals,question:`${comparison}\n${choice||'No complete proposal was returned.'} Reply “retry consultation” to repair incomplete advice, or “GPT brief: …” to change direction. Full advice is in Windows task diagnostics.\n${PROVIDERS.map(p=>`${p==='codex'?'Codex':'Claude'}: ${proposals[p]?`${proposals[p].task.slice(0,130)} Test: ${proposals[p].acceptance.slice(0,130)}`:'Advice needs a bounded Improvement and Test before approval.'}`).join('\n')}`};
 }
 
-/** Provider whose proposal a standing approval may pick unattended; null when the owner must choose (disagreement or nothing usable). */
+/** Provider whose proposal a continuous task may proceed with unattended; null when the owner must choose (disagreement or nothing usable). */
 function autoPilotProvider(state){
   const proposals=Object.fromEntries(PROVIDERS.map(p=>[p,state.advisors?.[p]?.status==='completed'?proposal(state.advisors[p].advice):null]));
   const usable=PROVIDERS.filter(p=>proposals[p]);
@@ -97,11 +74,8 @@ function autoPilotProvider(state){
 async function runCoordination(task,{tools,store,checkpoint,signal,token,startWork=null,now=Date.now}){
   let current=task;
   let state={stage:'consulting',advisors:{},...task.coordination};
-  // Counters survive every rebuild of the stage record, so a new brief cannot reset the daily cap.
-  const carry=()=>({brief:state.brief,completedWork:state.completedWork,autoApprovals:state.autoApprovals});
-  const grant=standingGrant(task,now());
-  const recent=()=>(state.autoApprovals||[]).filter(at=>at>now()-STANDING_DAY);
-  const standing=()=>Boolean(grant&&recent().length<grant.perDay);
+  const carry=()=>({brief:state.brief,completedWork:state.completedWork});
+  const unattended=()=>runsContinuously(current);
   const save=async(patch,event)=>{
     signal?.throwIfAborted();
     const saved=await (checkpoint?checkpoint(patch,event):store.update(task.id,patch,event,token));
@@ -173,19 +147,19 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
       await persist({summary:receipt.status==='completed'?`Saved advice from ${provider}.`:`Waiting for ${provider}: ${receipt.reason}`},'COORDINATION_ADVISOR_RESULT');
     }
     const waiting=PROVIDERS.filter(provider=>state.advisors[provider]?.status!=='completed');
-    // A resting provider does not hold up a standing approval while the other has a bounded proposal;
+    // A resting provider does not hold up a continuous task while the other has a bounded proposal;
     // the independent review still happens before any draft is saved or started.
-    const onlyWaiting=waiting.length&&standing()&&autoPilotProvider(state);
+    const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state);
     if(waiting.length&&!onlyWaiting)return sleep(Math.min(...waiting.map(provider=>state.advisors[provider]?.retryAt||now()+HALF_HOUR)),`Waiting for ${waiting.join(' and ')} consultation.`);
     state={...state,stage:'decision',questionId:null};
     await persist({summary:'Advisor proposals saved.'},'COORDINATION_PROPOSALS_READY');
   }
   const ownerDecided=pilotChoice(answer())||/^retry consultation[.!]?$/i.test(answer()?.trim()||'');
-  if(state.stage==='decision'&&!ownerDecided&&standing()&&autoPilotProvider(state)){
-    // Supersede the open question: the owner pre-authorised this bounded choice.
+  if(state.stage==='decision'&&!ownerDecided&&unattended()&&autoPilotProvider(state)){
+    // Supersede the open question: the owner already chose continuous work inside this brief.
     const provider=autoPilotProvider(state),questions=(current.questions||[]).map(q=>q.id===state.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
-    state={...state,stage:'drafting',selected:proposal(state.advisors[provider].advice),approvedAt:now(),approvedBy:'standing',autoApprovals:[...recent(),now()]};
-    await persist({questions,summary:`Standing approval used for ${provider}’s pilot (${state.autoApprovals.length} of ${grant.perDay} today). Preparing the reviewed draft.`},'COORDINATION_PILOT_AUTO_APPROVED');
+    state={...state,stage:'drafting',selected:proposal(state.advisors[provider].advice),approvedAt:now(),approvedBy:'continuous'};
+    await persist({questions,summary:`Continuing with ${provider==='codex'?'Codex':'Claude'}’s pilot inside your brief. Preparing the reviewed draft.`},'COORDINATION_PILOT_AUTO_APPROVED');
   }
   if(state.stage==='decision'&&!state.questionId){
     return ask(decision(state).question,'decision');
@@ -221,14 +195,14 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   }
   const work=tools.workStatus?.(state.workId);
   if(!work)return sleep(now()+HALF_HOUR,'Work Activity record unavailable. Check the linked draft.');
-  // Start only a draft this same standing approval chose, under the checks the owner's typed Start applies.
-  if(work.status==='DRAFT'&&grant&&startWork&&state.approvedBy==='standing'&&work.sharedCheckout&&work.codeReviewVerdict==='READY'&&
+  // A continuous task starts its reviewed draft under the same checks the owner's typed Start applies.
+  if(work.status==='DRAFT'&&unattended()&&startWork&&work.sharedCheckout&&work.codeReviewVerdict==='READY'&&
      work.sourceObjectiveId===task.id&&work.conversationId===task.conversationId&&work.coordinationBrief===state.brief&&!store.approvals?.(task.id).some(item=>item.status==='PENDING')){
-    const actionId=createHash('sha256').update(JSON.stringify(['standing-start',task.id,state.workId])).digest('hex');
+    const actionId=createHash('sha256').update(JSON.stringify(['continuous-start',task.id,state.workId])).digest('hex');
     try{
       store.bindTaskReference?.(`work-start-${actionId}`,state.workId,task.conversationId,()=>task.id);
       const started=await startWork(state.workId,actionId);
-      return sleep(now()+60_000,`Standing approval started Codex and Claude on the reviewed pilot (${String(started?.status||'RUNNING').toLowerCase().replaceAll('_',' ')}).`);
+      return sleep(now()+60_000,`Started Codex and Claude on the reviewed pilot (${String(started?.status||'RUNNING').toLowerCase().replaceAll('_',' ')}).`);
     }catch(error){
       signal?.throwIfAborted();
       return ask(`Foreman could not start the reviewed pilot automatically: ${String(error.message).slice(0,200)} Reply “Start with Codex and Claude” when ready.`,'tracking');
@@ -243,4 +217,4 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
     work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }
-module.exports={parseStandingApproval,standingGrant,runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};
+module.exports={runsContinuously,runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};
