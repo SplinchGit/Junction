@@ -115,7 +115,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
       await persist({summary:`Consulting ${provider==='codex'?'Codex':'Claude'}.`},'COORDINATION_CONSULTING');
       let receipt;
       try{
-        const result=await tools.execute(`consult_${provider}`,{question:`${BRIEF}${state.brief?`\nOwner brief: ${state.brief}`:''}`},current,{signal,token});
+        const result=await tools.execute(`consult_${provider}`,{question:`${BRIEF}${state.brief?`\nOwner brief: ${state.brief}`:''}${state.completedWork?.length?`\nCompleted work receipts: ${JSON.stringify(state.completedWork.slice(-5))}. Propose the next unfinished improvement and avoid repeating completed work.`:''}`},current,{signal,token});
         if(!result?.advice?.trim())throw Error('Advisor returned no usable advice');
         receipt={status:'completed',advice:result.advice.slice(0,2800),model:result.model,at:now()};
       }catch(error){
@@ -160,6 +160,12 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,now=Dat
   }
   const work=tools.workStatus?.(state.workId);
   if(!work)return sleep(now()+HALF_HOUR,'Work Activity record unavailable. Check the linked draft.');
+  if(work.status==='BLOCKED')return ask(`Engineering is blocked: ${work.blocker||work.nextAction||'The last attempt failed.'} The saved work needs repair before it can continue.`, 'tracking');
+  if(work.status==='COMPLETED'){
+    const completedWork=[...(state.completedWork||[]).filter(item=>item.id!==state.workId),{id:state.workId,at:now(),summary:work.nextAction}].slice(-50);
+    state={stage:'consulting',advisors:{},brief:state.brief,completedWork};
+    return persist({status:'SLEEPING',nextWakeAt:now()+1000,summary:`${work.nextAction||'Engineering completed.'} Preparing the next bounded improvement.`},'COORDINATION_WORK_COMPLETED');
+  }
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
     work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }

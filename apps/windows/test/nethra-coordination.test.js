@@ -179,5 +179,27 @@ test('Pause outranks a due advisor retry; Resume retries only the missing adviso
  now=work.retryAt;work={status:'COMPLETED',retryAt:null,nextAction:'Review verified changes in the canonical main checkout; engineering owns the commit'};
  assert.equal(await run(),true);task=store.get(task.id);
  assert.equal(calls.filter(name=>name==='propose_code_work').length,1);assert.equal(calls.filter(name=>name.startsWith('consult_')).length,3);
- assert.match(task.summary,/engineering owns the commit/);assert.equal(task.coordination.workId,'draft-1');
+ assert.match(task.summary,/engineering owns the commit/);assert.equal(task.coordination.stage,'consulting');
+ assert.equal(task.coordination.completedWork[0].id,'draft-1');assert.equal(task.nextWakeAt,now+1000);
+ store.close();store=new NethraStore(dir,{now:()=>now});
+ assert.equal(store.get(task.id).coordination.completedWork.length,1);
+ now+=1000;assert.equal(await run(),true);
+ assert.equal(store.get(task.id).status,'WAITING_FOR_USER');
+ assert.equal(calls.filter(name=>name==='propose_code_work').length,1);
+});
+
+test('blocked engineering reports its actual failure once and leaves no polling wake',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-blocked-'));
+ const store=new NethraStore(dir);
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'blocked-chat'});
+ task=store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ store.update(task.id,{coordination:{stage:'tracking',brief:'',workId:'blocked-work',advisors:{}}});
+ const claim=store.claim('test');
+ await runCoordination(claim.task,{store,token:claim.token,tools:{workStatus:()=>({status:'BLOCKED',blocker:'Patch changes protected verification',nextAction:'Review failure'})}});
+ store.release(task.id,claim.token);
+ task=store.get(task.id);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.equal(task.nextWakeAt,null);
+ assert.match(task.questions.at(-1).question,/Patch changes protected verification/);
+ assert.equal(store.claim('test'),null);
 });
