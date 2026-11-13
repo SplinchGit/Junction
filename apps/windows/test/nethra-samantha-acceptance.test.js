@@ -40,8 +40,8 @@ test('A27: overdue wakes are journaled once and delivered as one alert', t => {
       return command;
     }
   };
-  queueMissedWakeNotification(store, queue);
-  queueMissedWakeNotification(store, queue);
+  queueMissedWakeNotification(store, queue, { date: new Date(now) });
+  queueMissedWakeNotification(store, queue, { date: new Date(now) });
   assert.equal(notifications.size, 1);
   assert.match([...notifications.values()][0].args.body, /3 scheduled tasks/);
   assert.equal(store.claim('restarted-host').task.id, overdue[1].id);

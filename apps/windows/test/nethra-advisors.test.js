@@ -81,6 +81,19 @@ test('Codex capacity retains the confirmed subscription credit snapshot',async()
   const limits=new AdvisorLimits({store:memoryStore(),now:()=>NOW,readCodex:async()=>({windows:[],credits})});
   assert.deepEqual((await limits.check('codex')).credits,credits);
 });
+test('an unavailable Codex account query defers dispatch until a bounded recheck',async()=>{
+  const limits=new AdvisorLimits({store:memoryStore(),now:()=>NOW,readCodex:async()=>{throw Error('offline');}});
+  const result=await limits.check('codex');
+  assert.equal(result.available,false);
+  assert.equal(result.nextAvailableAt,NOW+300_000);
+  assert.match(result.detail,/confirm/i);
+});
+test('a reported provider limit without a reset time waits for a bounded recheck',async()=>{
+  const limits=new AdvisorLimits({store:memoryStore(),now:()=>NOW,readCodex:async()=>({windows:[],limitReached:true})});
+  const result=await limits.check('codex');
+  assert.equal(result.available,false);
+  assert.equal(result.nextAvailableAt,NOW+300_000);
+});
 
 test('advisors run freely below the owner ceiling and rest until the blocking window resets',async()=>{
   let windows=[{name:'five_hour',usedPercent:42,resetsAt:NOW+3_600_000},{name:'seven_day',usedPercent:70,resetsAt:NOW+86_400_000}];

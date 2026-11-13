@@ -55,11 +55,15 @@ class AdvisorLimits{
     if(!['codex','claude'].includes(provider))throw new Error('Unknown advisor');
     const now=this.now(),reserve=this.reservePercent(),ceiling=100-reserve,snap=await this.snapshot(provider);
     if(!snap)return {provider,available:true,reservePercent:reserve,windows:[],checkedAt:null,source:'no Claude reply recorded yet',detail:'Limits are reported after the first consultation.'};
+    if(snap.error)return {provider,available:false,reservePercent:reserve,windows:[],credits:null,checkedAt:snap.checkedAt,source:snap.source,nextAvailableAt:now+300_000,detail:'Unable to confirm subscription capacity. Rechecking in five minutes.',error:snap.error};
     // A window past its reset time no longer constrains anything, whatever it last read.
     const windows=(snap.windows||[]).map(item=>({...item,current:item.resetsAt>now}));
     const blocking=windows.filter(item=>item.current&&item.usedPercent>=ceiling);
     // A reached limit with no full window (e.g. a spend control) re-checks at the earliest reset rather than waiting a week.
-    if(snap.limitReached&&!blocking.length){const resetsAt=snap.limitResetsAt||Math.min(...windows.filter(item=>item.current).map(item=>item.resetsAt));if(Number.isFinite(resetsAt)&&resetsAt>now)blocking.push({name:'limit',usedPercent:100,resetsAt});}
+    if(snap.limitReached&&!blocking.length){
+      const resetsAt=snap.limitResetsAt||Math.min(...windows.filter(item=>item.current).map(item=>item.resetsAt));
+      blocking.push({name:'limit',usedPercent:100,resetsAt:Number.isFinite(resetsAt)&&resetsAt>now?resetsAt:now+300_000});
+    }
     const nextAvailableAt=blocking.length?Math.max(...blocking.map(item=>item.resetsAt)):null;
     const detail=blocking.length?`Usage is at or above the ${ceiling}% the owner allows (${blocking.map(item=>`${item.name} ${item.usedPercent}%`).join(', ')}). Available again at ${new Date(nextAvailableAt).toISOString()}.`:`Below the ${ceiling}% ceiling${windows.length?` (${windows.filter(item=>item.current).map(item=>`${item.name} ${item.usedPercent}%`).join(', ')})`:''}.`;
     return {provider,available:!blocking.length,reservePercent:reserve,windows:windows.map(({current,...item})=>({...item,stale:!current})),checkedAt:snap.checkedAt,source:snap.source,nextAvailableAt,detail,...(provider==='codex'?{credits:snap.credits??null}:{}),...(snap.error?{error:snap.error}:{})};
