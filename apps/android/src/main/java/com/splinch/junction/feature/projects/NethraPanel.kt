@@ -474,6 +474,9 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         Text("Usage receipt: $it", style = MaterialTheme.typography.bodySmall)
                     }
                     (work["lastVerified"] as? Map<*, *>)?.get("summary")?.toString()?.let { Text("Last verified: $it", style = MaterialTheme.typography.bodySmall) }
+                    ((work["lastVerified"] as? Map<*, *>)?.get("evidenceRef") as? String)?.let {
+                        Text("Verification evidence: $it", style = MaterialTheme.typography.bodySmall)
+                    }
                     work["blocker"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Blocked: $it", style = MaterialTheme.typography.bodySmall) }
                     work["nextAction"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }
                     (work["retryAt"] as? Number)?.let { Text("Next provider check ${dateLabel(it)}", style = MaterialTheme.typography.bodySmall) }

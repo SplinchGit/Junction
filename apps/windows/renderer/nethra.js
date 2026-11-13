@@ -167,6 +167,7 @@
        if(work.lastProvider)section.append(el('p',`Last recorded provider: ${work.lastProvider==='claude'?'Claude':'Codex'}`));
        if(work.usageReceiptRef)section.append(el('p',`Usage receipt: ${work.usageReceiptRef}`));
        section.append(el('p',work.lastVerified?`Last verified: ${work.lastVerified.summary}${work.lastVerified.at?` (${time(work.lastVerified.at)})`:''}`:'Nothing verified yet.'));
+       if(work.lastVerified?.evidenceRef)section.append(el('p',`Verification evidence: ${work.lastVerified.evidenceRef}`));
        if(work.blocker)section.append(el('p',`Blocked: ${work.blocker}`));
        if(work.nextAction)section.append(el('p',`Next: ${work.nextAction}`));
        if(work.retryAt)section.append(el('p',`Next provider check ${time(work.retryAt)}`));

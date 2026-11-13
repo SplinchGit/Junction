@@ -31,7 +31,7 @@ function codeWorkSummary(project){
     ...(!active?.provider&&lastProvider?{lastProvider:lastProvider.provider}:{}),
     ...(typeof lastProvider?.usageReceiptRef==='string'?{usageReceiptRef:lastProvider.usageReceiptRef.slice(0,160)}:{}),
     retryAt:waiting&&Number.isFinite(project.retryAt)?project.retryAt:null,
-    lastVerified:verified?{summary:String(verified.attempt.summary||verified.title).slice(0,240),at:verified.attempt.finishedAt||null}:null,
+    lastVerified:verified?{summary:String(verified.attempt.summary||verified.title).slice(0,240),at:verified.attempt.finishedAt||null,evidenceRef:verified.attempt.headSha||verified.attempt.id||null}:null,
     blocker:project.status==='BLOCKED'?String(project.handoff||'').slice(0,240):null};
 }
 
