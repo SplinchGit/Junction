@@ -3,10 +3,20 @@ const {handleNethraChat}=require('./nethra-chat');
 const {handleTaskTurn}=require('./nethra-task-turn');
 const {handleTaskFollowup}=require('./nethra-conversation');
 const {createHash}=require('node:crypto');
-const {ownerBrief,coordinationContinue,dualProviderStart,workControl,draftStartMessage}=require('./nethra-coordination');
+const {ownerBrief,parseStandingApproval,coordinationContinue,dualProviderStart,workControl,draftStartMessage}=require('./nethra-coordination');
 
 async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',selectedLocalModel=null,api,store,findWork,startWork,ownerWork}){
   const text=String(content||'').trim();
+  const standing=parseStandingApproval(text);
+  if(standing||/^(?:please\s+)?(?:revoke|cancel|end|stop) standing approval[.!]*$/i.test(text)){
+    const task=conversationId&&store?store.list().find(item=>item.conversationId===conversationId&&item.coordinateSelfImprovement&&!['COMPLETED','CANCELLED','FAILED'].includes(item.status)):null;
+    if(!task)return 'A standing approval applies to a coordinated Codex and Claude task. Send it in that task’s chat.';
+    if(standing?.error)return `${standing.error} Example: “Standing approval: 3 pilots a day for 7 days, credits off”.`;
+    handleTaskTurn({store,conversationId,content:text,requestId});
+    return standing
+      ?`Standing approval saved: up to ${standing.perDay} pilots a day for ${standing.days} days, with credits off. I’ll pick a pilot when the proposals agree or only one provider has one, keep the independent review, start only reviewed drafts, and ask you about disagreements and blocks. Say “revoke standing approval” to end it; Pause or Stop also override it.`
+      :'Standing approval revoked. I’ll ask before choosing or starting any pilot.';
+  }
   const authorize=dualProviderStart.test(text);
   const startRequest=/^(?:please\s+)?start (?:the (?:approved )?pilot )?with codex and claude\b/i.test(text);
   if(conversationId&&findWork&&(workControl.test(text)||startRequest)){

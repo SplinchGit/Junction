@@ -203,3 +203,79 @@ test('blocked engineering reports its actual failure once and leaves no polling 
  assert.match(task.questions.at(-1).question,/Patch changes protected verification/);
  assert.equal(store.claim('test'),null);
 });
+
+test('standing approval grammar needs credits off, bounded size and duration, and revocation ends it',()=>{
+ const {parseStandingApproval,standingGrant}=require('../src/nethra-coordination');
+ assert.deepEqual(parseStandingApproval('Standing approval: 3 pilots a day for 7 days, credits off'),{perDay:3,days:7});
+ assert.equal(parseStandingApproval('Standing approval: 3 pilots a day for 7 days').error.includes('credits off'),true);
+ assert.ok(parseStandingApproval('Standing approval: 9 pilots a day, credits off').error);
+ assert.ok(parseStandingApproval('Standing approval: 2 pilots a day for 60 days, credits off').error);
+ assert.equal(parseStandingApproval('please approve codex pilot'),null);
+ const at=1_000_000,input=text=>({text,at,kind:'note'});
+ assert.equal(standingGrant({ownerInputs:[input('Standing approval: credits off')]},at+1).perDay,3);
+ assert.equal(standingGrant({ownerInputs:[input('Standing approval: credits off')]},at+8*86_400_000),null,'expires');
+ assert.equal(standingGrant({ownerInputs:[input('Standing approval: credits off'),input('revoke standing approval')]},at+1),null);
+ assert.equal(standingGrant({ownerInputs:[input('Standing approval: 2 pilots a day')]},at+1),null,'a malformed grant grants nothing');
+});
+
+test('standing approval proceeds on one provider, never overrides a disagreement, caps daily use and honours revocation',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-coordination-'));
+ let now=Date.now();
+ const store=new NethraStore(dir,{now:()=>now});
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'chat-a'});
+ store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ const calls=[],started=[];let codex='rest',work={status:'DRAFT'};
+ const claudeAdvice='Friction: stale status. Improvement: Show the active engineer. Test: Confirm the active engineer matches the current Foreman attempt.';
+ const tools={async execute(name,args){
+  calls.push(name);
+  if(name==='propose_code_work')return {workId:'w1'};
+  if(name==='consult_codex'){if(codex==='rest')throw Object.assign(new Error('limit'),{retryAt:now+3600_000});return {advice:codex==='differ'?'Friction: a. Improvement: Cancel speech on interruption. Test: Verify playback stops within 500 milliseconds of interruption.':claudeAdvice};}
+  return {advice:claudeAdvice};
+ },workStatus:()=>work};
+ const startWork=async(id,action)=>{started.push([id,action]);return {status:'RUNNING'};};
+ const run=async()=>{const due=store.get(task.id).nextWakeAt;if(due&&due>now)now=due;const claim=store.claim('test');assert.ok(claim);try{await runCoordination(claim.task,{store,tools,token:claim.token,startWork,now:()=>now});}finally{store.release(claim.task.id,claim.token);}now+=1000;};
+ // Without a grant the resting provider holds everything back.
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'SLEEPING');assert.equal(task.coordination.stage,'consulting');
+ // The owner's own message grants a bounded approval.
+ store.chatTurn(task.id,'Standing approval: 1 pilot a day for 2 days, credits off','grant',{conversationId:'chat-a'});
+ await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'tracking','proceeds on Claude alone while Codex rests');
+ assert.equal(task.coordination.approvedBy,'standing');
+ assert.deepEqual(started,[],'a draft without a READY review, matching chat and brief is never auto-started');
+ // Only a draft that passes the owner-Start checks is started, once and idempotently.
+ work={status:'DRAFT',sharedCheckout:true,codeReviewVerdict:'READY',sourceObjectiveId:task.id,conversationId:'chat-a',coordinationBrief:task.coordination.brief};
+ await run();await run();
+ assert.equal(started.length,2);assert.equal(started[0][1],started[1][1],'same action id');
+ // Completion loops to the next pilot, but the daily cap now needs the owner.
+ work={status:'COMPLETED',nextAction:'verified'};
+ await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'consulting');assert.equal(task.coordination.autoApprovals.length,1,'cap counter survives the rebuild');
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'SLEEPING','cap reached: waits for Codex rather than self-approving again');
+ // Revocation and a disagreement both return the decision to the owner.
+ store.chatTurn(task.id,'revoke standing approval','revoke',{conversationId:'chat-a'});
+ now+=2*3600_000;codex='differ';
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.match(task.questions.at(-1).question,/different proposals/);
+});
+
+test('the chat confirms a standing approval, rejects an unsafe one and keeps it out of the brief',async t=>{
+ const {handleOwnerWorkInstruction}=require('../src/owner-work-instruction');
+ const {ownerBrief,standingGrant}=require('../src/nethra-coordination');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-coordination-'));
+ const store=new NethraStore(dir);
+ t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let task=store.create({goal:'Self Improvement',allowCodeWork:true,conversationId:'chat-b'});
+ store.configure(task.id,{coordinateSelfImprovement:true},task.revision,'enable');
+ const send=content=>handleOwnerWorkInstruction({content,conversationId:'chat-b',requestId:`r-${Math.random()}`,store,api:{},ownerWork:async()=>null});
+ assert.match(await send('Standing approval: 3 pilots a day for 7 days'),/credits off/);
+ assert.equal(store.get(task.id).ownerInputs?.length||0,0,'an unsafe grant is not saved');
+ assert.match(await send('Standing approval: 2 pilots a day for 3 days, credits off'),/Standing approval saved/);
+ task=store.get(task.id);
+ assert.equal(standingGrant(task,Date.now()).perDay,2);
+ assert.equal(ownerBrief(task),'','a grant never becomes the engineering brief');
+ assert.match(await send('revoke standing approval'),/revoked/);
+ assert.equal(standingGrant(store.get(task.id),Date.now()),null);
+});
