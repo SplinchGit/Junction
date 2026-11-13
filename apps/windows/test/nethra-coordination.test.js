@@ -220,7 +220,7 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
   if(name==='consult_codex'){if(codex==='rest')throw Object.assign(new Error('limit'),{retryAt:now+3600_000});return {advice:codex==='differ'?'Friction: a. Improvement: Cancel speech on interruption. Test: Verify playback stops within 500 milliseconds of interruption.':claudeAdvice};}
   return {advice:claudeAdvice};
  },workStatus:()=>work};
- const startWork=async(id,action)=>{started.push([id,action]);return {status:'RUNNING'};};
+ const startWork=async(id,action,kind='start')=>{started.push([id,action,kind]);return {status:'RUNNING'};};
  const run=async()=>{const due=store.get(task.id).nextWakeAt;if(due&&due>now)now=due;const claim=store.claim('test');assert.ok(claim);try{await runCoordination(claim.task,{store,tools,token:claim.token,startWork,now:()=>now});}finally{store.release(claim.task.id,claim.token);}now+=1000;};
  // Continuous without the owner's own direction never self-directs: the resting provider holds it.
  assert.equal(runsContinuously(store.get(task.id)),false);
@@ -268,4 +268,12 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
  assert.equal(task.coordination.selected.task,'Show the active engineer.');
  assert.deepEqual(calls,['consult_claude','propose_code_work']);
  assert.equal(task.questions?.length||0,asked,'either engineer is accepted without asking the owner');
+ // A patch that strayed outside scope is sent back once; a second block goes to the owner.
+ work={status:'BLOCKED',blocker:'x: Owner review required: patch exceeds approved source scope or changes protected verification (test/a.test.js)'};
+ started.length=0;
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'SLEEPING');assert.equal(started.length,1);assert.equal(started[0][2],'resume');
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.equal(started.length,1,'only one automatic repair');
+ assert.match(task.questions.at(-1).question,/test\/a\.test\.js/);
 });

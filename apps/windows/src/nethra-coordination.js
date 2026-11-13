@@ -229,6 +229,15 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
       return ask(`Foreman could not start the reviewed pilot automatically: ${String(error.message).slice(0,200)} Reply “Start with Codex and Claude” when ready.`,'tracking');
     }
   }
+  // An engineer's patch that strayed outside scope is the engineer's mistake, not an owner decision:
+  // a continuous task sends it back once (the attempt's error names the path), then asks the owner.
+  if(work.status==='BLOCKED'&&unattended()&&startWork&&/patch exceeds approved source scope|requires additional file scope/i.test(work.blocker||'')&&!state.repairs?.[state.workId]){
+    state={...state,repairs:{[state.workId]:now()}};
+    try{
+      await startWork(state.workId,createHash('sha256').update(JSON.stringify(['continuous-repair',task.id,state.workId])).digest('hex'),'resume');
+      return sleep(now()+60_000,'The engineer’s patch touched a protected or out-of-scope file. I sent it back once for an in-scope patch.');
+    }catch(error){signal?.throwIfAborted();}
+  }
   if(work.status==='BLOCKED')return ask(`Engineering is blocked: ${work.blocker||work.nextAction||'The last attempt failed.'} The saved work needs repair before it can continue.`, 'tracking');
   if(work.status==='COMPLETED'){
     const completedWork=[...(state.completedWork||[]).filter(item=>item.id!==state.workId),{id:state.workId,at:now(),summary:work.nextAction}].slice(-50);
