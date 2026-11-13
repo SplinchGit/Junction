@@ -276,6 +276,9 @@ test('the chat confirms a standing approval, rejects an unsafe one and keeps it 
  task=store.get(task.id);
  assert.equal(standingGrant(task,Date.now()).perDay,2);
  assert.equal(ownerBrief(task),'','a grant never becomes the engineering brief');
+ await send('Claude (Claude Code) note: the scope-path pilot is verified on main.');
+ assert.equal(ownerBrief(store.get(task.id)),'','an engineer note is discussion, not direction');
+ assert.equal(standingGrant(store.get(task.id),Date.now()).perDay,2);
  assert.match(await send('revoke standing approval'),/revoked/);
  assert.equal(standingGrant(store.get(task.id),Date.now()),null);
 });

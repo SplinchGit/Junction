@@ -29,6 +29,7 @@ function pilotChoice(text){
 const STANDING_DAY=86_400_000,STANDING_MAX_PER_DAY=5,STANDING_MAX_DAYS=14;
 const standingRevoke=/^(?:please\s+)?(?:revoke|cancel|end|stop) standing approval[.!]*$/i;
 const standingLike=/^standing approval\b/i;
+const collaboratorNote=/^(?:Claude|Codex|GPT)(?: \([^)\n]{1,60}\))? note:/i;
 /** {perDay,days} for a valid grant, {error} for a malformed one, null when the text is not a grant. */
 function parseStandingApproval(text){
   const value=String(text||'').trim();
@@ -57,7 +58,8 @@ function ownerBrief(task){
   for(const input of [...(task.ownerInputs||[])].reverse()){
     const text=String(input.text||'').trim();
     if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
-    if(isStandingControl(text))continue;
+    // An engineer's signed note in the owner's chat is discussion; only the owner's own words set direction.
+    if(isStandingControl(text)||collaboratorNote.test(text))continue;
     if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||workControl.test(text)||/^retry consultation[.!]?$/i.test(text)||(input.kind==='redirect'&&emptyDirection.test(text)))continue;
     if(text)return text.slice(0,700);
   }

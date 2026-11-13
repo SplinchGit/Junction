@@ -143,7 +143,9 @@ class ForemanExecutor{
   }
   const files=[...String(patch).matchAll(/^\+\+\+ b\/(.+)\r?$/gm)].map(m=>m[1].trimEnd());
   const protectedPath=protectedVerification(p,cwd,checks);
-  if(!files.length||files.some(name=>!relative(name)||forbidden.test(name)||protectedPath(name)||(p.scopeFile&&name!==p.scopeFile)))throw new Error('Owner review required: patch exceeds approved source scope or changes protected verification');
+  // Name the offending relative paths (never contents) so the owner and both engineers can see what to trim.
+  const outside=files.filter(name=>!relative(name)||forbidden.test(name)||protectedPath(name)||(p.scopeFile&&name!==p.scopeFile));
+  if(!files.length||outside.length)throw new Error('Owner review required: patch exceeds approved source scope or changes protected verification'+(outside.length?` (${outside.slice(0,3).map(name=>name.replace(/[^\w.\-\/ ]/g,'?').slice(0,120)).join(', ')}${outside.length>3?`, and ${outside.length-3} more`:''})`:''));
   const sources=await this.claudeSources(cwd,{files},{changed:[],untracked:[]},protectedPath);
   if(files.some(name=>!Object.hasOwn(sources,name)))throw new Error('Patch requires additional file scope; no source changed');
   await this.applyClaudePatch(cwd,patch,sources,signal,()=>{if(!this.mayWrite(p))throw new Error('Owner direction or permission changed; no patch applied');});

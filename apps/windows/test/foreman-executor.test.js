@@ -59,6 +59,11 @@ test('shared patches reject protected files and source changes before any write'
  const patch='diff --git a/answer.test.js b/answer.test.js\n--- a/answer.test.js\n+++ b/answer.test.js\n@@ -1 +1 @@\n-before\n+weakened\n';
  await assert.rejects(e.applySharedPatch(p,root,patch,[],before),/protected verification/);
  assert.equal(fs.readFileSync(path.join(root,'answer.test.js'),'utf8'),'before\n');
+ await assert.rejects(e.applySharedPatch(p,root,patch,[],before),error=>{
+  assert.match(error.message,/\(answer\.test\.js\)$/,'names the offending relative path');
+  assert.doesNotMatch(error.message,/weakened|before|[A-Za-z]:\\/,'never contents or absolute paths');
+  return true;
+ });
  fs.writeFileSync(path.join(root,'answer.test.js'),'owner changed\n');
  await assert.rejects(e.applySharedPatch(p,root,patch,[],before),/source changed/);
  assert.equal(fs.readFileSync(path.join(root,'answer.test.js'),'utf8'),'owner changed\n');
