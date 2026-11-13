@@ -162,7 +162,10 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
       await persist({summary:`Consulting ${provider==='codex'?'Codex':'Claude'}.`},'COORDINATION_CONSULTING');
       let receipt;
       try{
-        const result=await tools.execute(`consult_${provider}`,{question:`${BRIEF}${state.brief?`\nOwner brief: ${state.brief}`:''}${state.completedWork?.length?`\nCompleted work receipts: ${JSON.stringify(state.completedWork.slice(-5))}. Propose the next unfinished improvement and avoid repeating completed work.`:''}`},current,{signal,token});
+        const receipts=(state.completedWork||[]).slice(-3).reverse().map(item=>String(item.summary||'').trim()).filter(Boolean).join(' | ');
+        const history=receipts?'\nPropose unfinished work. Recent completed work: ':'';
+        const question=`${BRIEF}${state.brief?`\nOwner brief: ${state.brief}`:''}${history}`;
+        const result=await tools.execute(`consult_${provider}`,{question:question+receipts.slice(0,Math.max(0,1200-question.length))},current,{signal,token});
         if(!result?.advice?.trim())throw Error('Advisor returned no usable advice');
         receipt={status:'completed',advice:result.advice.slice(0,2800),model:result.model,at:now()};
       }catch(error){
