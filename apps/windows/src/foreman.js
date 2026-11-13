@@ -25,6 +25,12 @@ function authorizedCapacityWait(project) {
     project.tasks.find(task=>task.status!=='COMPLETED')?.kind==='codex';
 }
 
+/** Marks the start of a real provider wait (not the one-second handoff hop). True only when a new hold begins. */
+function enterCapacityHold(project,now) {
+  if(project.capacityHoldAt||!(project.retryAt-now>60000))return false;
+  project.capacityHoldAt=now;return true;
+}
+
 function engineerOwnsCheckout(project) {
   return project.sharedCheckout===true&&Boolean(project.sourceObjectiveId);
 }
@@ -345,7 +351,7 @@ class Foreman {
     const claimDispatch=provider=>{
       if(claimed||signal.aborted||this.closed||!this.enabled.has(id))return false;
       p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
-      delete p.restoredCapacityWait;
+      delete p.restoredCapacityWait;delete p.capacityHoldAt;
       if(awaitingCapacity){
         attempt.provider=provider;attempt.activeAt=this.now();
         p.nextAction='Execute and verify the approved task';
@@ -393,14 +399,16 @@ class Foreman {
         if(retry){
           p.retryAt=Math.max(this.now()+1000,retry);
           p.nextAction=error.capacityDetail||'Recheck provider capacity on the saved schedule';
-          if(this.save(p,'WAITING',`${waitingProvider(p)}: capacity wait pending. ${p.nextAction}.`,null,null,waitIsCurrent))this.schedule(id,p.retryAt);
+          // One owner-visible entry per hold; later rechecks are journaled without alerting again.
+          const entered=enterCapacityHold(p,this.now());
+          if(this.save(p,entered?'WAITING':'WAITING_RECHECK',`${waitingProvider(p)}: capacity wait pending. ${p.nextAction}.`,null,null,waitIsCurrent))this.schedule(id,p.retryAt);
         }else{
           const blocked={...p,status:'BLOCKED',nextAction:'Review failure and Resume when resolved',handoff:`${task.title}: ${error.message}`};
           if(this.save(blocked,'BLOCKED',blocked.handoff,null,null,waitIsCurrent))this.enabled.delete(id);
         }
         return;
       }
-      if(retry){p.status=p.autoHandoff?'WAITING_CAPACITY':'WAITING_CODEX';p.retryAt=Math.max(this.now()+1000,retry);p.nextAction=error.capacityDetail||'Wait for legitimate Codex availability';this.save(p,'WAITING',error.message);this.schedule(id,p.retryAt);}
+      if(retry){p.status=p.autoHandoff?'WAITING_CAPACITY':'WAITING_CODEX';p.retryAt=Math.max(this.now()+1000,retry);p.nextAction=error.capacityDetail||'Wait for legitimate Codex availability';enterCapacityHold(p,this.now());this.save(p,'WAITING',error.message);this.schedule(id,p.retryAt);}
       else{p.status='BLOCKED';p.nextAction='Review failure and Resume when resolved';p.handoff=`${task.title}: ${error.message}`;this.enabled.delete(id);this.save(p,'BLOCKED',p.handoff);}
     }
   }

@@ -278,6 +278,9 @@ function codeWorkEvent(task,project,now=Date.now()){
   const blocked=project.status==='BLOCKED';
   if(project.sourceObjectiveId!==task.id||!project.autoHandoff)return null;
   if(!ready&&!blocked){
+    // Both providers unavailable: tell the owner once per hold, not on every recheck.
+    if(project.status==='WAITING_CAPACITY'&&project.capacityHoldAt&&!['PAUSED','CANCELLED'].includes(task.status))
+      return {id:`nethra-code-work-${task.id}-${project.id}-hold-${project.capacityHoldAt}`,body:'Development work is waiting for subscription capacity. It will recheck and continue on its own.'};
     if(!task.coordinateSelfImprovement||['PAUSED','CANCELLED'].includes(task.status)||!['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(project.status))return null;
     const interval=coordinationProgress(project,now);
     return interval?{id:`nethra-code-work-${task.id}-${project.id}-progress-${interval}`,progress:true,body:'Development work has a saved checkpoint or verification result. Open Tasks to see the next action.'}:null;

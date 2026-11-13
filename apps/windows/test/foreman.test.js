@@ -182,6 +182,22 @@ test('Stop racing a capacity recheck wins and fences the late provider result',a
  assert.equal(f.enabled.size,0);assert.equal(f.timers.size,0);
 });
 
+test('a provider hold is shown to the owner once however many rechecks it takes',async t=>{
+ const dir=fixture();let waits=0;
+ const wait=()=>Object.assign(new Error('capacity'),{retryAt:Date.now()+3600000,capacityDetail:'Waiting for confirmed provider capacity'});
+ const f=new Foreman(dir,{executor:{...executor,run:async()=>{throw wait();},runCapacityWait:async(p,task,{claimDispatch})=>{if(++waits<3)throw wait();claimDispatch('claude');return executor.run();}}});
+ t.after(()=>{f.close();fs.rmSync(dir,{recursive:true,force:true});});
+ let p=await f.create({...input,tasks:[{title:'Change it',kind:'codex',acceptance:'Checks pass'}]});
+ await f.control(p.id,'start',p.revision,'start',{autoHandoff:true});await f.idle();p=f.get(p.id);
+ assert.equal(p.status,'WAITING_CAPACITY');const hold=p.capacityHoldAt;assert.ok(hold);
+ for(const key of ['recheck-1','recheck-2']){await f.control(p.id,'retry',p.revision,key);await f.idle();p=f.get(p.id);assert.equal(p.status,'WAITING_CAPACITY');assert.equal(p.capacityHoldAt,hold);}
+ assert.equal(waits,2);
+ assert.equal(f.pendingActivity(p.id).filter(event=>event.kind==='WAITING').length,1);
+ assert.equal(f.events(p.id).filter(event=>event.kind==='WAITING_RECHECK').length,2);
+ await f.control(p.id,'retry',p.revision,'recheck-3');await f.idle();p=f.get(p.id);
+ assert.equal(p.status,'COMPLETED');assert.equal(p.capacityHoldAt,undefined);
+});
+
 test('duplicate start, recheck and wake requests dispatch the provider once',async t=>{
  const dir=fixture();let calls=0,release;
  const f=new Foreman(dir,{executor:{...executor,run:async()=>{calls++;if(calls===1)throw Object.assign(new Error('capacity'),{retryAt:Date.now()+3600000});await new Promise(resolve=>release=resolve);return executor.run();}}});

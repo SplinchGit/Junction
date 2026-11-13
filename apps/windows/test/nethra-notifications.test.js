@@ -149,6 +149,28 @@ test('a verified code candidate notifies once and is withdrawn after apply',t=>{
  assert.equal(notificationDeliveryPolicy(first,store,policy),'cancel');
 });
 
+test('a provider hold notifies once per hold and is withdrawn when work resumes',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-code-hold-'));
+ const store=new NethraStore(dir),queue=new DeviceCommandStore(dir);
+ t.after(()=>{store.close();queue.close();fs.rmSync(dir,{recursive:true,force:true});});
+ const {queueCodeWorkNotification}=require('../src/nethra-conversation-report');
+ store.setSettings({notificationDeviceId:'phone',quietHours:{enabled:false,start:'22:00',end:'07:00'}});
+ const task=store.create({goal:'Ship the change'});
+ const project={id:'work',autoHandoff:true,sourceObjectiveId:task.id,status:'WAITING_CAPACITY',capacityHoldAt:1000,retryAt:5000,updatedAt:store.now()};
+ const first=queueCodeWorkNotification(task,project,store,queue);
+ assert.match(first.args.body,/waiting for subscription capacity/);
+ // A recheck moves the retry time and the saved record, not the hold.
+ project.retryAt=9000;project.updatedAt=store.now();
+ assert.equal(queueCodeWorkNotification(task,project,store,queue).id,first.id);
+ assert.equal(queueCodeWorkNotification({...task,status:'PAUSED'},{...project,capacityHoldAt:2000},store,queue),null);
+ const policy={projects:()=>[project]};
+ assert.equal(notificationDeliveryPolicy(first,store,policy),'deliver');
+ project.status='RUNNING';delete project.capacityHoldAt;
+ assert.equal(notificationDeliveryPolicy(first,store,policy),'cancel');
+ project.status='WAITING_CAPACITY';project.capacityHoldAt=3000;
+ assert.notEqual(queueCodeWorkNotification(task,project,store,queue).id,first.id);
+});
+
 test('75 minutes of active development sends one check-in only with saved evidence; waits and pauses do not count',t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-code-checkin-'));
  const minute=60_000,start=Date.UTC(2026,10,12,12,0,0);let now=start;
