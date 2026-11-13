@@ -107,6 +107,15 @@ function postCoordinationChat(task,localData,project=null){
     const receipt=task.coordination?.advisors?.[provider];
     if(receipt?.status==='completed'&&receipt.advice)post([provider,receipt.at,receipt.advice],`**${label}${receipt.model?` (${receipt.model})`:''}**\n\n${receipt.advice}`);
   }
+  if(project?.sourceObjectiveId===task.id&&project.status==='COMPLETED'){
+    for(const step of project.tasks||[]){
+      const receipt=step.attempts?.findLast(attempt=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0));
+      if(!receipt)continue;
+      const provider=receipt.provider==='codex'?'Codex / OpenAI':receipt.provider==='claude'?'Claude / Anthropic':'Engineering';
+      const approval=project.codeReviewVerdict||'Saved work record';
+      post(['verified',project.id,step.id,receipt.id],`**Nethra · Verified engineering checkpoint**\n\n${step.title}\n\nProvider: ${provider}\nVerification: ${receipt.tests.length} checks passed${receipt.headSha?` · ${receipt.headSha.slice(0,12)}`:''}\nApproval reference: ${approval} · ${project.id}\nNext action: ${project.nextAction||'Review Work Activity'}`);
+    }
+  }
   if(project&&project.id===task.coordination?.workId){
     const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts?.at(-1);
     const provider=attempt?.provider==='claude'?'Claude / Anthropic':attempt?.provider==='codex'?'Codex / OpenAI':null;

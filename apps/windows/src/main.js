@@ -91,7 +91,7 @@ function deliverObjectiveUpdates() {
   try {
     const projects=foreman.list();
     const names=new Map(projects.map(project=>[project.id,project.name]));
-    for(const project of projects){const task=tasks.find(item=>item.id===project.sourceObjectiveId);if(task)queueCodeWorkNotification(task,project,nethraStore,deviceCommands);}
+    for(const project of projects){const task=tasks.find(item=>item.id===project.sourceObjectiveId);if(task){queueCodeWorkNotification(task,project,nethraStore,deviceCommands);if(project.status==='COMPLETED'&&postCoordinationChat(task,localData,project))changed=true;}}
     queueProjectMilestoneNotifications(nethraStore,deviceCommands,{tasks,projectName:id=>names.get(id)});
   } catch (error) { recordStartupIssue('project milestone delivery',error); }
   for (const task of tasks) {
