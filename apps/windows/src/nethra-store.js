@@ -374,8 +374,25 @@ class NethraStore {
     if(lease){this.closeInferenceIntervals(lease.token);this.accountUsage(id,this.now()-this.execution(lease.token).startedAt,lease.token);task.budget=this.get(id).budget;this.interruptChildrenInside(id,lease.token);this.db.prepare('UPDATE attention SET state=?,leaseToken=NULL WHERE leaseToken=?').run(action==='cancel'?'DONE':'PENDING',lease.token);this.db.prepare('DELETE FROM lease WHERE taskId=?').run(id);}
     return this.save(task,action.toUpperCase());
   }
-  recoverInside() {const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();if(!lease||lease.expiresAt>this.now())return 0;this.closeInferenceIntervals(lease.token);this.accountUsage(lease.taskId,this.now()-this.execution(lease.token).startedAt,lease.token);this.interruptChildrenInside(lease.taskId,lease.token);this.db.prepare('UPDATE attention SET state=\'PENDING\',leaseToken=NULL WHERE leaseToken=?').run(lease.token);this.db.prepare('DELETE FROM lease WHERE singleton=1').run();const task=this.get(lease.taskId);if(['ACTIVE','PLANNING'].includes(task.status)){task.status=task.persistent?'ACTIVE':'PAUSED';task.summary='Interrupted execution recovered from durable checkpoint';this.save(task,'RECOVERED');}return 1;}
+  recoverInside({force=false}={}) {
+    const lease=this.db.prepare('SELECT * FROM lease WHERE singleton=1').get();
+    if(!lease||(!force&&lease.expiresAt>this.now()))return 0;
+    this.closeInferenceIntervals(lease.token);
+    this.accountUsage(lease.taskId,this.now()-this.execution(lease.token).startedAt,lease.token);
+    this.interruptChildrenInside(lease.taskId,lease.token);
+    this.db.prepare("UPDATE attention SET state='PENDING',leaseToken=NULL WHERE leaseToken=?").run(lease.token);
+    this.db.prepare('DELETE FROM lease WHERE singleton=1').run();
+    const task=this.get(lease.taskId);
+    if(['ACTIVE','PLANNING'].includes(task.status)){
+      task.status=task.persistent?'ACTIVE':'PAUSED';
+      task.summary='Interrupted execution recovered from durable checkpoint';
+      this.save(task,'RECOVERED');
+    }
+    return 1;
+  }
   recoverExpired() {return this.transaction(()=>this.recoverInside());}
+  // The host may force recovery only after it acquires the Electron single-instance lock.
+  recoverAbandoned() {return this.transaction(()=>this.recoverInside({force:true}));}
   usage(taskId,at=this.now()) {const day=Math.floor(at/DAY),rows=this.db.prepare('SELECT taskId,ms FROM usage WHERE day=?').all(day);return {day,globalMs:rows.reduce((s,r)=>s+r.ms,0),taskMs:rows.find(r=>r.taskId===taskId)?.ms||0};}
   inferenceSamples(taskId,since=0,limit=100) {
     this.get(taskId);

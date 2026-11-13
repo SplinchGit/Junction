@@ -271,6 +271,7 @@ async function createWindowImpl() {
   const objectives = createObjectiveAccess({api:()=>nethraApi,store:()=>nethraStore});
   const toolRegistry = new LocalAgentToolRegistry({ researchCoordinator, createCodeDelegation, objectives, auditPath });
   nethraStore = new NethraStore(path.join(app.getPath('userData'),'nethra'));
+  nethraStore.recoverAbandoned();
   // Experiments on code changes only count samples from a Junction process started after the change.
   try { nethraStore.recordHostStart(); } catch (error) { recordStartupIssue('Nethra host start record', error); }
   const advisorLimits = new AdvisorLimits({ store: nethraStore });
