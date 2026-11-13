@@ -9,6 +9,24 @@ test('a model switch changes the wake input even with unchanged evidence',()=>{
   assert.notEqual(inputFingerprint(task,store),before);
 });
 test('a normal Nethra wake can work for twenty minutes',()=>{assert.equal(MAX_RUNTIME,20*60_000);});
+test('a new saved checkpoint permits the next wake and an unchanged checkpoint skips inference',async t=>{
+  const f=fixture(t);
+  const task=f.store.create({goal:'Continue a saved local inspection'});
+  let runs=0;
+  const scheduler=new NethraScheduler({...f,execute:async(_task,{checkpoint})=>{
+    runs++;
+    if(runs===1)checkpoint({contextCheckpoint:{activeHypothesis:'Read the second section next'}});
+    return {status:'SLEEPING'};
+  }});
+  await scheduler.tick();
+  f.advance(300_000);
+  await scheduler.tick();
+  assert.equal(runs,2);
+  f.advance(300_000);
+  await scheduler.tick();
+  assert.equal(runs,2);
+  assert.equal(f.store.events(task.id).at(-1).kind,'NO_NEW_EVIDENCE');
+});
 for(const productive of [false,true])test(`A22: ${productive?'productive work continues':'evidence alone stops after six passes'}`,async t=>{
   const f=fixture(t),task=f.store.create({goal:'Research local evidence',continuous:true});
   let pass=0;

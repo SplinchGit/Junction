@@ -24,7 +24,7 @@ function inputFingerprint(task,store){
   let approvals=[],attention=[];
   try{approvals=store.approvals(task.id).map(item=>[item.id,item.status]);}catch{}
   try{attention=store.attention(task.id).filter(item=>item.state==='CLAIMED').map(item=>item.id);}catch{}
-  return createHash('sha256').update(JSON.stringify([task.model||'qwen3:30b',task.goal,task.successCriteria,task.plan||[],task.completedSteps||[],task.pendingSteps||[],(task.evidence||[]).map(item=>JSON.stringify(item)),(task.ownerInputs||[]).length,approvals,attention])).digest('hex');
+  return createHash('sha256').update(JSON.stringify([task.model||'qwen3:30b',task.goal,task.successCriteria,task.plan||[],task.completedSteps||[],task.pendingSteps||[],task.contextCheckpoint?.activeHypothesis||null,(task.evidence||[]).map(item=>JSON.stringify(item)),(task.ownerInputs||[]).at(-1)?.requestId||null,approvals,attention])).digest('hex');
 }
 function safeFailure(error) {
   const message=String(error?.message||error||'Execution failed');
