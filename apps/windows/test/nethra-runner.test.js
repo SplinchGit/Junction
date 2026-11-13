@@ -13,6 +13,19 @@ function fixture(t) {
   const store={get:()=>task,update:(_id,patch)=>Object.assign(task,patch),approvals:()=>approvals,requestApproval:(_id,a)=>{const entry={...a,id:'approval',status:'pending'};approvals.push(entry);return entry;},getAction:k=>receipts.get(k),reserveAction:(_id,k,tool,args)=>{if(receipts.has(k))return receipts.get(k);const a={key:k,status:'reserved',tool,args};receipts.set(k,a);return a;},finishAction:(k,result)=>{const a={...receipts.get(k),status:'completed',result};receipts.set(k,a);return a;}};
   return {root,task,store,approvals};
 }
+test('the third evidence-only pass adds a direction nudge to the next seed',async t=>{
+  const f=fixture(t);
+  f.task.evidenceOnlyCycles=3;
+  let observed;
+  const runtime={withInference:fn=>fn(),chat:async(_model,messages)=>{
+    observed=messages.some(message=>message.content.includes('Several passes added evidence without completing a step'));
+    return {message:{content:'',tool_calls:[{function:{name:'request_input',arguments:{
+      reason:'OWNER_PREFERENCE',blocking:true,question:'Which finding should I use?'
+    }}}]}};
+  }};
+  await new NethraRunner({store:f.store,runtime}).execute(f.task);
+  assert.equal(observed,true);
+});
 test('tools constrain real files, reject secrets and traversal, and write drafts',async t=>{
   const f=fixture(t); fs.writeFileSync(path.join(f.root,'notes.txt'),'facts');fs.writeFileSync(path.join(f.root,'.env'),'SECRET');
   const tools=new NethraTools({store:f.store});

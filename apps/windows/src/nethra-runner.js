@@ -2,7 +2,7 @@
 const {randomUUID,createHash}=require('node:crypto');
 const path=require('node:path');
 const {NethraTools,ApprovalRequired,checkedPath,draftReceiptIsCurrent}=require('./nethra-tools');
-const {monitorWakeAt,wakeReason,MAX_RUNTIME}=require('./nethra-scheduler');
+const {monitorWakeAt,wakeReason,MAX_RUNTIME,EVIDENCE_ONLY_NUDGE}=require('./nethra-scheduler');
 const {CONTEXT_TOKENS,fitContext}=require('./model-context');
 const {evidenceLine}=require('./nethra-progress');
 const {objectiveBrief}=require('./nethra-brief');
@@ -283,6 +283,7 @@ class NethraRunner {
       // Optional orientation and raw evidence are shed before owner notes or the working checkpoint.
       seed={...approvedBriefing,latestOwnerInput:null,...seed};
       if(seed.attention.some(item=>item.kind==='DIRECTION_REVIEW'))seed.directionReview={blocking:false,note:'Report current progress and continue the next useful step. The owner can steer later; this routine check-in does not require an answer.'};
+      if(!task.coordinateSelfImprovement&&(task.evidenceOnlyCycles||0)>=EVIDENCE_ONLY_NUDGE)seed.directionReview={blocking:false,note:'Several passes added evidence without completing a step. Use the saved evidence to complete a step, revise the plan, or ask one specific question if an owner decision is needed.'};
       seed.ownerInputContinuationNote='Owner inputs are durable directions, not fresh orders on every wake. Use the current plan and workingCheckpoint.completedDrafts; do not repeat completed reports. Read and use saved outputs to advance the next pending step.';
       if(task.allowCodeWork){seed.proposalReviewBudget={};seed.codeWorkState={};}
       if(brief.recentCommits)seed.recentCommits=brief.recentCommits;

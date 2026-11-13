@@ -346,7 +346,7 @@ class NethraStore {
     this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(taskId,this.now(),'EXPERIMENT_INVALIDATED',JSON.stringify({id,reason:experiment.result.detail}));
     return experiment;
   });}
-  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const priorEvidence=task.evidence||[],nextEvidence=patch.evidence;const latest=Array.isArray(nextEvidence)?nextEvidence.at(-1):null;const freshEvidence=latest&&!latest.result?.error&&!(latest.tool==='propose_code_work'&&latest.result?.status==='REVISE')&&(nextEvidence.length>priorEvidence.length||JSON.stringify(latest)!==JSON.stringify(priorEvidence.at(-1)));const progressed=freshEvidence||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','questions','evidence','contextCheckpoint','coordination','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
+  update(id,patch,event='UPDATED',leaseToken) {return this.transaction(()=>{this.assertLease(id,leaseToken);const task=this.get(id);if(TERMINAL.has(task.status))throw new Error('Terminal Nethra task is immutable');if(patch.status&&!TRANSITIONS[task.status]?.has(patch.status))throw new Error('Illegal Nethra state transition');if(patch.revision!==undefined&&patch.revision!==task.revision)throw new Error('Nethra revision conflict');if(patch.status&&!STATES.has(patch.status))throw new Error('Invalid Nethra status');const priorEvidence=task.evidence||[],nextEvidence=patch.evidence;const latest=Array.isArray(nextEvidence)?nextEvidence.at(-1):null;const freshEvidence=latest&&!latest.result?.error&&!(latest.tool==='propose_code_work'&&latest.result?.status==='REVISE')&&(nextEvidence.length>priorEvidence.length||JSON.stringify(latest)!==JSON.stringify(priorEvidence.at(-1)));const progressed=freshEvidence||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(task.completedSteps||[]).length);const allowed=['goal','successCriteria','plan','completedSteps','pendingSteps','questions','evidence','contextCheckpoint','coordination','status','summary','nextWakeAt','lastExecutionAt','dependencies','requiredApprovals','errors','retryCount','budget','parentId','thinking','nextDirectionCheckAt','lastDirectionAt','lastMilestoneCount','lastMilestoneAt','lastMilestoneEvidenceFingerprint','lastInitiativeProgressAt','lastInitiativeAt','noProgressCycles','evidenceOnlyCycles','wakeReason','lastInferenceFingerprint','lastCycleProgressed','unchangedWakes','codexConsultDay','codexConsultCount'];for(const key of allowed)if(Object.hasOwn(patch,key))task[key]=patch[key];if(progressed)task.lastMeaningfulProgressAt=Math.max(this.now(),(task.lastDirectionAt||0)+1,(task.lastMeaningfulProgressAt||0)+1);return this.save(task,event,patch);});}
   /** Host repair after raising the shared context window. Preserve the objective checkpoint. */
   retryContextBlocked(id) {return this.transaction(()=>{
     const task=this.get(id);
@@ -490,7 +490,7 @@ class NethraStore {
     const lease=this.db.prepare('SELECT * FROM lease WHERE taskId=?').get(id);if(lease&&task.status==='WAITING_FOR_USER')throw new Error('Task is executing; wait for its checkpoint');
     if(question)task.questions=task.questions.map(item=>item.id===question.id?{...item,status:'ANSWERED',answer:text.trim(),answeredAt:this.now(),answerRequestId:requestId}:item);
     task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),requestId,conversationId:task.conversationId||null}].slice(-100);
-    if(!['PAUSED','BLOCKED'].includes(task.status)){task.summary='';task.status='ACTIVE';task.nextWakeAt=null;}task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
+    if(!['PAUSED','BLOCKED'].includes(task.status)){task.summary='';task.status='ACTIVE';task.nextWakeAt=null;}task.noProgressCycles=0;task.evidenceOnlyCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
     const result=this.save(task,'OWNER_INPUT',{text:text.trim()});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}
   /**
@@ -569,7 +569,7 @@ class NethraStore {
       this.waiveDeletedDependencies(task);
       task.questions=(task.questions||[]).map(item=>item.status==='OPEN'?{...item,status:'SUPERSEDED',supersededAt:this.now()}:item);
       task.ownerInputs=[...(task.ownerInputs||[]),{text:`${instruction?instruction+'\n':''}Objective edited. Now: ${task.goal}${task.successCriteria&&task.successCriteria!==task.goal?` (success: ${task.successCriteria})`:''}`,at:this.now(),requestId,kind:'redirect'}].slice(-100);
-      task.plan=[...(task.completedSteps||[])];task.pendingSteps=[];task.contextCheckpoint={};task.skippedDraftPaths=[];task.redirectedAt=this.now();task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;task.wakeReason=null;
+      task.plan=[...(task.completedSteps||[])];task.pendingSteps=[];task.contextCheckpoint={};task.skippedDraftPaths=[];task.redirectedAt=this.now();task.noProgressCycles=0;task.evidenceOnlyCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;task.wakeReason=null;
       if(task.status!=='PAUSED'||execution==='continue'){task.status='ACTIVE';task.nextWakeAt=null;}
       task.summary='';
       const result=this.save(task,'EDITED',{before,after:{goal:task.goal,successCriteria:task.successCriteria},supersededApprovals:superseded});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
@@ -584,7 +584,7 @@ class NethraStore {
     const task=this.get(id);if(TERMINAL.has(task.status))return task;
     task.ownerInputs=[...(task.ownerInputs||[]),{text:text.trim(),at:this.now(),kind:'note'}].slice(-100);
     if(task.status==='SLEEPING'&&task.mode!=='ONGOING'||task.status==='SLEEPING'&&task.continuous){task.nextWakeAt=Math.min(task.nextWakeAt??Infinity,this.now()+15_000);task.wakeReason={kind:'OWNER',detail:'You added a note in the task chat',at:task.nextWakeAt};}
-    task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
+    task.noProgressCycles=0;task.evidenceOnlyCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
     return this.save(task,'OWNER_NOTE',{text:text.trim().slice(0,500)});
   });}
   /** One idempotent owner turn in a task's linked chat, regardless of entry transport. */
@@ -615,7 +615,7 @@ class NethraStore {
         task.wakeReason={kind:'OWNER',detail:'You added a note in the task chat',at:task.nextWakeAt};
       }
     }
-    task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
+    task.noProgressCycles=0;task.evidenceOnlyCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;
     const result={task:this.save(task,answered?'OWNER_INPUT':'OWNER_NOTE',{text:clean.slice(0,500)}),kind:answered?'answer':'note',pendingApproval};
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));
     return result;
@@ -739,7 +739,7 @@ class NethraStore {
     this.waiveDeletedDependencies(task);
     task.questions=(task.questions||[]).map(item=>item.status==='OPEN'?{...item,status:'SUPERSEDED',supersededAt:this.now()}:item);
     task.ownerInputs=[...(task.ownerInputs||[]),{text:instruction.trim(),at:this.now(),requestId,kind:'redirect'}].slice(-100);
-    task.plan=[...(task.completedSteps||[])];task.pendingSteps=[];task.contextCheckpoint={};task.skippedDraftPaths=skippedDraftPaths;task.status='ACTIVE';task.summary='';task.nextWakeAt=null;task.wakeReason=null;task.noProgressCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;task.redirectedAt=this.now();
+    task.plan=[...(task.completedSteps||[])];task.pendingSteps=[];task.contextCheckpoint={};task.skippedDraftPaths=skippedDraftPaths;task.status='ACTIVE';task.summary='';task.nextWakeAt=null;task.wakeReason=null;task.noProgressCycles=0;task.evidenceOnlyCycles=0;task.unchangedWakes=0;task.lastCycleProgressed=null;task.redirectedAt=this.now();
     delete task.pausedFromStatus;delete task.pausedWakeAt;delete task.pausedForApproval;
     const result=this.save(task,'REDIRECTED',{text:instruction.trim(),supersededApprovals:superseded});this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));return result;
   });}

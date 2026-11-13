@@ -4,6 +4,11 @@ const dailyLimits=settings=>({taskMs:settings.objectiveDailyBudgetMs??Infinity,g
 const {randomUUID,createHash}=require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
 const MIN_WAKE=300000, MAX_WAKE=604800000, MAX_RUNTIME=20*60_000, LEASE_MS=MAX_RUNTIME+60_000;
+const EVIDENCE_ONLY_NUDGE=3, EVIDENCE_ONLY_STOP=6;
+function completedWork(store,taskId){
+  return (store.actions?.(taskId)||[]).filter(item=>item.tool==='write_draft'&&item.status==='COMPLETED').length+
+    (store.modelJobs?.(taskId)||[]).filter(item=>item.status==='COMPLETED').length;
+}
 function clampWake(at,now=Date.now(),min=MIN_WAKE,max=MAX_WAKE) {return Math.min(now+max,Math.max(now+min,Number.isFinite(at)?at:now+min));}
 const MONITOR_INTERVAL_MS=Object.freeze({QUIET:7*86_400_000,BALANCED:86_400_000,ACTIVE:6*3_600_000});
 function monitorWakeAt(task,now=Date.now()) {return now+(MONITOR_INTERVAL_MS[task.autonomy]||MONITOR_INTERVAL_MS.BALANCED);}
@@ -91,6 +96,7 @@ class NethraScheduler {
       try{return await callback();}finally{clearTimeout(timer);this.store.endInference(task.id,token);}
     };
     let removeAbort,completedCycle=false;
+    const completedWorkAtClaim=completedWork(this.store,task.id);
     const aborted=new Promise((_,reject)=>{const handler=()=>reject(controller.signal.reason);controller.signal.addEventListener('abort',handler,{once:true});removeAbort=()=>controller.signal.removeEventListener('abort',handler);});
     const checkpoint=(patch,event='CHECKPOINT')=>{if(controller.signal.aborted)throw controller.signal.reason;return this.store.update(task.id,patch,event,token);};
     try {
@@ -111,6 +117,17 @@ class NethraScheduler {
       const progressed=(live.lastMeaningfulProgressAt||0)>(task.lastMeaningfulProgressAt||0)
         ||(Array.isArray(patch.evidence)&&patch.evidence.length>(live.evidence||[]).length)
         ||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(live.completedSteps||[]).length);
+      const stepProgress=(patch.completedSteps??live.completedSteps??[]).length>(task.completedSteps||[]).length
+        ||(patch.lastMilestoneAt??live.lastMilestoneAt)!==task.lastMilestoneAt
+        ||completedWork(this.store,task.id)>completedWorkAtClaim;
+      const ownerSteered=JSON.stringify(live.ownerInputs)!==JSON.stringify(task.ownerInputs);
+      const evidenceOnly=!task.coordinateSelfImprovement&&!ownerSteered&&patch.status==='SLEEPING'&&progressed&&!stepProgress;
+      patch.evidenceOnlyCycles=evidenceOnly?(live.evidenceOnlyCycles||0)+1:stepProgress?0:(live.evidenceOnlyCycles||0);
+      const stalled=patch.evidenceOnlyCycles>=EVIDENCE_ONLY_STOP&&evidenceOnly;
+      if(stalled){
+        patch.status='WAITING_FOR_USER';
+        patch.summary='I have collected more evidence over several passes without completing a step. Which finding should I act on, or should I revise the plan?';
+      }
       const repeatedShortWake=!task.coordinateSelfImprovement&&patch.status==='SLEEPING'&&!progressed
         &&(!Number.isFinite(patch.nextWakeAt)||patch.nextWakeAt<=this.now()+settings.minWakeMs);
       patch.noProgressCycles=repeatedShortWake?(live.noProgressCycles||0)+1:0;
@@ -136,7 +153,7 @@ class NethraScheduler {
       // Attention observed during this cycle was not claimed; never sleep past it.
       const attentionDue=patch.status==='SLEEPING'?this.store.pendingAttentionDue?.(task.id):null;
       if(Number.isSafeInteger(attentionDue)&&clampWake(attentionDue,this.now(),settings.minWakeMs,settings.maxWakeMs)<patch.nextWakeAt){patch.nextWakeAt=clampWake(attentionDue,this.now(),settings.minWakeMs,settings.maxWakeMs);patch.wakeReason=wakeReason('ATTENTION','A watched source or objective event arrived during the last run',patch.nextWakeAt);}
-      this.store.update(task.id,patch,'EXECUTED',token);
+      this.store.update(task.id,patch,stalled?'EVIDENCE_ONLY_STOPPED':'EXECUTED',token);
     } catch(error) {
       if(this.store.deletion?.(task.id))return;
       const live=this.store.get(task.id);
@@ -187,4 +204,4 @@ class NethraScheduler {
   abortTask(id) {if(this.runningTaskId!==id||!this.controller)return false;this.controller.abort(Object.assign(new Error('Task deleted'),{code:'NETHRA_TASK_DELETED'}));return true;}
   async stop() {this.stopping=true;clearInterval(this.timer);this.timer=null;this.controller?.abort(new Error('Scheduler stopped'));await this.running;}
 }
-module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS,dailyLimits,MAX_RUNTIME};
+module.exports={CONTINUOUS_GAP_MS,NethraScheduler,clampWake,monitorWakeAt,wakeReason,inputFingerprint,isRoutineMonitor,PREWARM_LEAD_MS,dailyLimits,MAX_RUNTIME,EVIDENCE_ONLY_NUDGE,EVIDENCE_ONLY_STOP};
