@@ -73,6 +73,13 @@ test('the Codex limit query speaks the app-server protocol and converts reset ti
   assert.deepEqual(sent,['initialize','initialized','account/rateLimits/read']);
   assert.deepEqual(limits.windows,[{name:'five_hour',usedPercent:100,resetsAt:1792972357000},{name:'seven_day',usedPercent:16,resetsAt:1793559157000}]);
   assert.equal(limits.limitReached,true);
+  assert.equal(limits.credits,null);
+});
+
+test('Codex capacity retains the confirmed subscription credit snapshot',async()=>{
+  const credits={hasCredits:false,unlimited:false,balance:'0'};
+  const limits=new AdvisorLimits({store:memoryStore(),now:()=>NOW,readCodex:async()=>({windows:[],credits})});
+  assert.deepEqual((await limits.check('codex')).credits,credits);
 });
 
 test('advisors run freely below the owner ceiling and rest until the blocking window resets',async()=>{

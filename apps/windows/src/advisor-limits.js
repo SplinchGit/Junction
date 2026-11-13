@@ -22,8 +22,11 @@ function readCodexLimits({launch=spawn,timeoutMs=20_000}={}){
         if(message.id===1){
           if(message.error)return finish(new Error(String(message.error.message||'Codex limit check failed').slice(0,200)));
           const limits=message.result?.rateLimits||{};
+          const creditState=limits.credits;
+          const credits=creditState&&typeof creditState.hasCredits==='boolean'&&typeof creditState.unlimited==='boolean'
+            ?{hasCredits:creditState.hasCredits,unlimited:creditState.unlimited,balance:typeof creditState.balance==='string'?creditState.balance:null}:null;
           const windows=[limits.primary,limits.secondary].filter(item=>Number.isFinite(item?.usedPercent)&&Number.isFinite(item?.resetsAt)).map(item=>({name:windowName(item.windowDurationMins),usedPercent:item.usedPercent,resetsAt:item.resetsAt*1000}));
-          finish(null,{windows,limitReached:Boolean(limits.rateLimitReachedType||limits.spendControlReached),limitResetsAt:null,plan:typeof limits.planType==='string'?limits.planType.slice(0,30):null});
+          finish(null,{windows,credits,limitReached:Boolean(limits.rateLimitReachedType||limits.spendControlReached),limitResetsAt:null,plan:typeof limits.planType==='string'?limits.planType.slice(0,30):null});
         }
       }
     });
@@ -59,7 +62,7 @@ class AdvisorLimits{
     if(snap.limitReached&&!blocking.length){const resetsAt=snap.limitResetsAt||Math.min(...windows.filter(item=>item.current).map(item=>item.resetsAt));if(Number.isFinite(resetsAt)&&resetsAt>now)blocking.push({name:'limit',usedPercent:100,resetsAt});}
     const nextAvailableAt=blocking.length?Math.max(...blocking.map(item=>item.resetsAt)):null;
     const detail=blocking.length?`Usage is at or above the ${ceiling}% the owner allows (${blocking.map(item=>`${item.name} ${item.usedPercent}%`).join(', ')}). Available again at ${new Date(nextAvailableAt).toISOString()}.`:`Below the ${ceiling}% ceiling${windows.length?` (${windows.filter(item=>item.current).map(item=>`${item.name} ${item.usedPercent}%`).join(', ')})`:''}.`;
-    return {provider,available:!blocking.length,reservePercent:reserve,windows:windows.map(({current,...item})=>({...item,stale:!current})),checkedAt:snap.checkedAt,source:snap.source,nextAvailableAt,detail,...(snap.error?{error:snap.error}:{})};
+    return {provider,available:!blocking.length,reservePercent:reserve,windows:windows.map(({current,...item})=>({...item,stale:!current})),checkedAt:snap.checkedAt,source:snap.source,nextAvailableAt,detail,...(provider==='codex'?{credits:snap.credits??null}:{}),...(snap.error?{error:snap.error}:{})};
   }
 }
 
