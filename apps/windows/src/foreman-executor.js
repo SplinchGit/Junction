@@ -159,7 +159,7 @@ class ForemanExecutor{
   if((await this.git(root,['branch','--show-current'])).trim()!=='main')throw new Error('Shared engineering requires the canonical main checkout');
   const common=(await this.git(root,['rev-parse','--git-common-dir'])).trim();
   const file=path.resolve(root,common,'nethra-writer.lock');
-  const checkpoint={revision:p.revision,sourceHash:await this.sourceHash(p.repoPath,true,p.scopeKind)};
+  const checkpoint={revision:p.revision,headSha:(await this.git(root,['rev-parse','--verify','HEAD']).catch(()=>'' )).trim()||null,sourceHash:await this.sourceHash(p.repoPath,true,p.scopeKind)};
   const identity={pid:process.pid,project:p.id,nonce:crypto.randomUUID(),at:Date.now(),checkpoint};
   const claim=()=>fs.writeFileSync(file,JSON.stringify(identity),{flag:'wx'});
   try{claim();}catch(error){
@@ -174,8 +174,13 @@ class ForemanExecutor{
    try{fs.writeFileSync(reclaim,JSON.stringify(identity),{flag:'wx'});}catch{throw held;}
    try{
     const current=holder();if(current?.nonce!==stale.nonce||!crashed(current))throw held;
-    if(current.checkpoint&&(current.project!==p.id||current.checkpoint.sourceHash!==checkpoint.sourceHash)){
-     throw new Error(`The shared checkout has a writer lock with an interrupted checkpoint for ${current.project}. Review the canonical diff against the approved revision before removing the lock.`);
+    if(current.checkpoint&&(current.project!==p.id||current.checkpoint.sourceHash!==checkpoint.sourceHash||(current.checkpoint.headSha&&current.checkpoint.headSha!==checkpoint.headSha))){
+     const baseline=current.checkpoint.headSha;
+     const changed=typeof baseline==='string'&&/^[a-f0-9]{40,64}$/i.test(baseline)
+      ?(await this.git(root,['diff','--name-only','-z',baseline,'--']).catch(()=>'' )).split('\0').filter(Boolean).slice(0,8)
+      :[];
+     const files=changed.length?` Changed tracked paths: ${changed.map(name=>name.replace(/[\x00-\x1f\x7f]/g,'?').slice(0,160)).join(', ')}.`:'';
+     throw new Error(`The shared checkout has a writer lock with an interrupted checkpoint for ${current.project}. Review the canonical diff against the approved revision before removing the lock.${files}`);
     }
     fs.unlinkSync(file);claim();
    }catch(inner){if(inner===held||inner.code==='EEXIST')throw held;throw inner;}finally{fs.unlinkSync(reclaim);}
