@@ -47,7 +47,7 @@ test('A27: overdue wakes are journaled once and delivered as one alert', t => {
   assert.equal(store.claim('restarted-host').task.id, overdue[1].id);
 });
 
-for (const phase of ['reserved', 'approved', 'written', 'completed', 'checkpointed']) {
+for (const phase of ['reserved', 'approved', 'approved-written', 'written', 'completed', 'checkpointed']) {
   test(`draft recovery after ${phase} never replays the write`, async t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
     let store = new NethraStore(directory);
@@ -59,11 +59,17 @@ for (const phase of ['reserved', 'approved', 'written', 'completed', 'checkpoint
     const args = { path: path.join(task.workspace, 'draft.md'), content: 'Exact draft content' };
     const key = actionKey(task.id, 'write_draft', args);
     const lease = store.claim('previous-host');
-    if (phase === 'approved') {
+    if (phase === 'approved' || phase === 'approved-written') {
       fs.writeFileSync(args.path, 'Previous draft');
       const approval = store.requestApproval(task.id, { tool: 'write_draft', args, key, category: 'LOCAL_WRITE' }, lease.token);
       store.decideApproval(approval.id, true, 'approve-draft');
-      store.consumeApproval(approval.id, lease.token);
+      if (phase === 'approved') store.consumeApproval(approval.id, lease.token);
+      else {
+        store.finishAction = () => { throw Error('Simulated crash before receipt completion'); };
+        await assert.rejects(new NethraTools({ store }).execute('write_draft', args, task, {
+          token: lease.token, approvalId: approval.id
+        }), /Simulated crash/);
+      }
     } else if (phase === 'reserved') {
       store.reserveAction(task.id, key, 'write_draft', args, lease.token);
     } else {
@@ -80,17 +86,25 @@ for (const phase of ['reserved', 'approved', 'written', 'completed', 'checkpoint
     store.close();
     store = new NethraStore(directory);
     store.recoverAbandoned();
+    let modelContext='';
     const runner = new NethraRunner({ store, runtime: {
       withInference: fn => fn(),
-      chat: async () => ({ message: { content: '', tool_calls: [{ function: {
+      chat: async (_model,messages) => {
+        modelContext=JSON.stringify(messages);
+        return { message: { content: '', tool_calls: [{ function: {
         name: 'request_input', arguments: { reason: 'OWNER_PREFERENCE', blocking: true, question: 'What should I review next?' }
-      } }] } })
+      } }] } };
+      }
     } });
     await runner.execute(store.get(task.id));
     const uncertain = phase === 'reserved' || phase === 'approved';
     assert.equal(store.getAction(key).status, uncertain ? 'RESERVED' : 'COMPLETED');
     assert.equal(store.approvals(task.id).some(approval => approval.reviewRequired), uncertain);
-    assert.equal(store.events(task.id).filter(event => event.kind === 'ACTION_RECONCILED').length, phase === 'written' ? 1 : 0);
+    assert.equal(store.events(task.id).filter(event => event.kind === 'ACTION_RECONCILED').length, ['written','approved-written'].includes(phase) ? 1 : 0);
+    if(phase==='approved-written'){
+      assert.equal(store.approvals(task.id)[0].status,'CONSUMED');
+      assert.match(modelContext,/approvedActionsCompletedThisWake/);
+    }
     assert.equal(fs.existsSync(args.path) ? fs.readFileSync(args.path, 'utf8') : null, before);
     assert.equal(fs.existsSync(args.path) ? fs.statSync(args.path).mtimeMs : null, beforeMtime);
   });

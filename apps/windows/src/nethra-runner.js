@@ -254,6 +254,7 @@ class NethraRunner {
         const result={path:checkedPath(receipt.args.path,[task.workspace],{base:task.workspace}),sha256,bytes:Buffer.byteLength(receipt.args.content),actionKey:receipt.key,reconciled:true};
         this.store.finishAction(receipt.key,result,token);
         await persist({evidence:[...state.evidence,{tool:receipt.tool,result,...(approvalId?{approvalId}:{})}].slice(-30)},'nethra_tool_result');
+        if(approvalId)approvedNow.push({tool:receipt.tool,path:result.path,sha256,bytes:result.bytes,reconciled:true});
         return true;
       };
       for(const approval of await this.store.approvals(task.id)){
