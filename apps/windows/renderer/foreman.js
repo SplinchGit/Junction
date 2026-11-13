@@ -130,7 +130,11 @@
      const resume=element('button','Resume approved work','primary');
      resume.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'resume'}));
      card.append(resume);
-   }if(p.retryAt)card.append(element('p',`Next capacity check: ${new Date(p.retryAt).toLocaleString()}`));
+     if(p.status==='PAUSED'&&p.statusRecord?.capacityWait)card.append(stopButton(p));
+   }
+   const restoredWait=p.statusRecord?.capacityWait;
+   if(restoredWait)card.append(element('p',restoredWait.line));
+   else if(p.retryAt&&p.status!=='STOPPED')card.append(element('p',`Next capacity check: ${new Date(p.retryAt).toLocaleString()}`));
    const capacity=p.tasks.find(task=>task.id===p.activeTask)?.lastAttempt?.capacity;
    if(capacity)for(const [provider,label] of [['codex','Codex'],['claude','Claude']]){
      const item=capacity[provider];

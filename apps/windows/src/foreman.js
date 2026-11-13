@@ -54,6 +54,7 @@ class Foreman {
       const unchanged=current=>current.revision===p.revision&&current.status===status;
       if(authorizedCapacityWait(p)&&!this.enabled.size){
         p.nextAction='Recheck provider capacity on the saved schedule';
+        p.restoredCapacityWait=true;
         const restored=current=>unchanged(current)&&authorizedCapacityWait(current);
         if(this.save(p,'RECOVERED',`${waitingProvider(p)}: capacity wait restored. ${p.nextAction}.`,null,null,restored)){
           this.enabled.add(p.id);
@@ -263,6 +264,7 @@ class Foreman {
       this.enabled.delete(id);clearTimeout(this.timers.get(id));this.timers.delete(id);
       const interrupted=p.tasks.find(t=>t.status==='RUNNING');if(interrupted){interrupted.status='QUEUED';if(interrupted.attempts.length)Object.assign(interrupted.attempts.at(-1),{status:'INTERRUPTED',finishedAt:this.now()});}
       p.status=action==='stop'?'STOPPED':'PAUSED';p.pausedByObjective=action==='pause'?sourceObjectiveId||null:null;p.nextAction='Resume explicitly';
+      if(action==='stop')delete p.restoredCapacityWait;
       try{this.save(p,action.toUpperCase(),'Preserving progress and interrupting current work',{id:requestId,binding});}finally{this.jobs.get(id)?.controller.abort();}
     }
     return this.get(id);
@@ -295,6 +297,7 @@ class Foreman {
     const claimDispatch=provider=>{
       if(claimed||signal.aborted||this.closed)return false;
       p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
+      delete p.restoredCapacityWait;
       if(awaitingCapacity){
         attempt.provider=provider;attempt.activeAt=this.now();
         p.nextAction='Execute and verify the approved task';
@@ -365,4 +368,4 @@ class Foreman {
   }
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
-module.exports={Foreman,projectContext};
+module.exports={Foreman,projectContext,waitingProvider};

@@ -1,8 +1,23 @@
 "use strict";
 const crypto=require('node:crypto');
-const {projectContext}=require('./foreman');
+const {projectContext,waitingProvider}=require('./foreman');
 function documentFields(payload,allowed){if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Invalid document fields');}
-function statusRecord(p){const active=p.tasks.find(task=>task.id===p.activeTask)?.attempts.at(-1),latest=active||p.tasks.flatMap(task=>task.attempts||[]).sort((a,b)=>(a.startedAt||0)-(b.startedAt||0)).at(-1),approvalState=p.autoHandoff===true?'APPROVED':'UNAPPROVED',dispatchFence=p.status==='PAUSED'?'PAUSED':p.status==='STOPPED'?'STOPPED':approvalState==='UNAPPROVED'?'UNAPPROVED':['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)?'OPEN':p.status;return {provider:latest?.provider||null,approvalState,dispatchFence,evidenceRef:`work:${p.id}`,nextAction:p.nextAction};}
+function statusRecord(p){
+ const active=p.tasks.find(task=>task.id===p.activeTask)?.attempts.at(-1);
+ const latest=active||p.tasks.flatMap(task=>task.attempts||[]).sort((a,b)=>(a.startedAt||0)-(b.startedAt||0)).at(-1);
+ const approvalState=p.autoHandoff===true?'APPROVED':'UNAPPROVED';
+ const dispatchFence=p.status==='PAUSED'?'PAUSED':p.status==='STOPPED'?'STOPPED':approvalState==='UNAPPROVED'?'UNAPPROVED':['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)?'OPEN':p.status;
+ const record={provider:latest?.provider||null,approvalState,dispatchFence,evidenceRef:`work:${p.id}`,nextAction:p.nextAction};
+ if(p.restoredCapacityWait===true&&['WAITING_CAPACITY','PAUSED'].includes(p.status)){
+  const provider=waitingProvider(p);
+  const retry=p.retryAt?new Date(p.retryAt):null;
+  const resumeAt=retry&&Number.isFinite(retry.getTime())?retry.toISOString():null;
+  const fenced=dispatchFence!=='OPEN';
+  const line=`${provider} · resume time: ${resumeAt||'unscheduled'} · restored after restart${fenced?' · fenced':''} · next action: ${p.nextAction}`;
+  record.capacityWait={provider,resumeAt,restoredAfterRestart:true,fenced,nextAction:p.nextAction,line};
+ }
+ return record;
+}
 function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,statusRecord:statusRecord(p),autoHandoff:p.autoHandoff===true,sharedCheckout:p.sharedCheckout===true,phase:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.phase||null:null,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),engineeringHandoff:undefined,tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman,{conversationExists=()=>false,pickProjectDocument=null}={}){
