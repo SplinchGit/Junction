@@ -231,11 +231,14 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   }
   // An engineer's patch that strayed outside scope is the engineer's mistake, not an owner decision:
   // a continuous task sends it back once (the attempt's error names the path), then asks the owner.
-  if(work.status==='BLOCKED'&&unattended()&&startWork&&/patch exceeds approved source scope|requires additional file scope/i.test(work.blocker||'')&&!state.repairs?.[state.workId]){
-    state={...state,repairs:{[state.workId]:now()}};
+  const repairKind=/corrupt patch/i.test(work.blocker||'')?'malformed':/patch exceeds approved source scope|requires additional file scope/i.test(work.blocker||'')?'scope':null;
+  const repairKey=repairKind==='scope'?state.workId:`${state.workId}-${repairKind}`;
+  if(work.status==='BLOCKED'&&unattended()&&startWork&&repairKind&&!state.repairs?.[repairKey]){
+    state={...state,repairs:{...state.repairs,[repairKey]:now()}};
     try{
-      await startWork(state.workId,createHash('sha256').update(JSON.stringify(['continuous-repair',task.id,state.workId])).digest('hex'),'resume');
-      return sleep(now()+60_000,'The engineer’s patch touched a protected or out-of-scope file. I sent it back once for an in-scope patch.');
+      const actionKey=repairKind==='scope'?['continuous-repair',task.id,state.workId]:['continuous-repair',task.id,state.workId,repairKind];
+      await startWork(state.workId,createHash('sha256').update(JSON.stringify(actionKey)).digest('hex'),'resume');
+      return sleep(now()+60_000,repairKind==='malformed'?'Git rejected the malformed patch. I sent it back once for a valid patch.':'The engineer’s patch touched a protected or out-of-scope file. I sent it back once for an in-scope patch.');
     }catch(error){signal?.throwIfAborted();}
   }
   if(work.status==='BLOCKED')return ask(`Engineering is blocked: ${work.blocker||work.nextAction||'The last attempt failed.'} The saved work needs repair before it can continue.`, 'tracking');
