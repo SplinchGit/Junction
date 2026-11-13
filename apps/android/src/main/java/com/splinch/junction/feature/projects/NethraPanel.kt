@@ -466,6 +466,13 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                         else -> "Development work"
                     }
                     Text(activity, style = MaterialTheme.typography.titleSmall)
+                    when (work["lastProvider"]) {
+                        "claude" -> Text("Last recorded provider: Claude", style = MaterialTheme.typography.bodySmall)
+                        "codex" -> Text("Last recorded provider: Codex", style = MaterialTheme.typography.bodySmall)
+                    }
+                    (work["usageReceiptRef"] as? String)?.takeIf { it.isNotBlank() }?.let {
+                        Text("Usage receipt: $it", style = MaterialTheme.typography.bodySmall)
+                    }
                     (work["lastVerified"] as? Map<*, *>)?.get("summary")?.toString()?.let { Text("Last verified: $it", style = MaterialTheme.typography.bodySmall) }
                     work["blocker"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Blocked: $it", style = MaterialTheme.typography.bodySmall) }
                     work["nextAction"]?.toString()?.takeIf { it.isNotBlank() }?.let { Text("Next: $it", style = MaterialTheme.typography.bodySmall) }

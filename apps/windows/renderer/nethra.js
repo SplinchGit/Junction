@@ -164,6 +164,8 @@
        const section=el('section');section.dataset.section='code-work';
        const activity=work.status==='COMPLETED'?'Verified; awaiting engineering review':work.status==='BLOCKED'?'Blocked':work.status==='PAUSED'?'Paused':work.status==='STOPPED'?'Stopped':work.status==='DRAFT'?'Draft awaiting your Start':['WAITING_CAPACITY','WAITING_CODEX'].includes(work.status)?'Waiting for provider capacity':work.phase==='verifying'?'Verifying':work.provider==='claude'?'Claude working':work.provider==='codex'?'Codex working':'Preparing';
        section.append(el('h3',`Development work · ${activity}`));
+       if(work.lastProvider)section.append(el('p',`Last recorded provider: ${work.lastProvider==='claude'?'Claude':'Codex'}`));
+       if(work.usageReceiptRef)section.append(el('p',`Usage receipt: ${work.usageReceiptRef}`));
        section.append(el('p',work.lastVerified?`Last verified: ${work.lastVerified.summary}${work.lastVerified.at?` (${time(work.lastVerified.at)})`:''}`:'Nothing verified yet.'));
        if(work.blocker)section.append(el('p',`Blocked: ${work.blocker}`));
        if(work.nextAction)section.append(el('p',`Next: ${work.nextAction}`));
