@@ -127,7 +127,10 @@ test('changed direction fences the old approved scope and invalidates old advice
  store.note(task.id,'Prioritize voice interruption.');task=store.get(task.id);
  const project={coordinationBrief:ownerBrief(task)};
  assert.equal(allowsCoordinationWork(task,project),true);
- store.note(task.id,'Prioritize task deletion instead.');
+ store.update(task.id,{coordination:{...task.coordination,brief:project.coordinationBrief}});
+ store.note(task.id,'Please clear the blockers and continue.');
+ assert.equal(allowsCoordinationWork(store.get(task.id),project),true);
+ store.note(task.id,'GPT brief: Prioritize task deletion instead.');
  assert.equal(allowsCoordinationWork(store.get(task.id),project),false);
  store.close();store=new NethraStore(dir);
  const claim=store.claim('test');let consultations=0;

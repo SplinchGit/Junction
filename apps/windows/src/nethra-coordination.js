@@ -32,15 +32,16 @@ const collaboratorNote=/^(?:Claude|Codex|GPT)(?: \([^)\n]{1,60}\))? note:/i;
 const runsContinuously=task=>task.continuous===true&&Boolean(ownerBrief(task));
 function ownerBrief(task){
   const answered=new Set((task.questions||[]).map(question=>question.answerRequestId).filter(Boolean));
+  const savedBrief=task.coordination?.brief;
   for(const input of [...(task.ownerInputs||[])].reverse()){
     const text=String(input.text||'').trim();
     if(/^GPT brief:/i.test(text))return text.replace(/^GPT brief:\s*/i,'').slice(0,700);
     // An engineer's signed note in the owner's chat is discussion; only the owner's own words set direction.
     if(collaboratorNote.test(text)||preferenceOnly.test(text))continue;
     if(input.kind==='answer'||answered.has(input.requestId)||pilotChoice(text)||workControl.test(text)||/^retry consultation[.!]?$/i.test(text)||(input.kind==='redirect'&&emptyDirection.test(text)))continue;
-    if(text)return text.slice(0,700);
+    if(text&&(input.kind==='redirect'||savedBrief===undefined))return text.slice(0,700);
   }
-  return '';
+  return savedBrief||'';
 }
 function allowsCoordinationWork(task,project){
   if(!task.coordination)return true;
@@ -117,6 +118,10 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     const questions=(current.questions||[]).map(question=>question.id===state.questionId&&question.status==='OPEN'?{...question,status:'SUPERSEDED'}:question);
     state={...state,stage:'tracking',questionId:null};
     await persist({questions},'COORDINATION_SCOPE_RESTORED');
+    const work=tools.workStatus?.(state.workId);
+    if(startWork&&unattended()&&work?.status==='PAUSED'&&work.pausedByObjective===task.id){
+      await startWork(state.workId,`scope-restored-${task.id}-${current.revision}`,'resume');
+    }
   }
   if(state.stage==='scope_changed'){
     const work=tools.workStatus?.(state.workId);
