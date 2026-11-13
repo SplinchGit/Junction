@@ -146,12 +146,21 @@
      const record=p.statusRecord;
      const receipt=record?.latestVerification;
      const review=record?.reviewReceipt;
+     const next=record?.nextQueuedTask;
      const handoff=element('section','');
      handoff.append(element('h4','Engineering handoff'),
        element('p',`Provider: ${record?.provider||'Awaiting assignment'}`),
        element('p',review?`Reviewed revision: ${review.revision.slice(0,12)} · Diff receipt: ${review.diffHash.slice(0,12)}`:'No exact revision review on record.'),
        element('p',receipt?`Latest verification: ${receipt.checksPassed} checks passed${receipt.commit?` · ${receipt.commit.slice(0,12)}`:''}${receipt.at?` · ${new Date(receipt.at).toLocaleString()}`:''}`:'No verification receipt yet.'),
        element('p',`Next action: ${record?.nextAction||p.nextAction||'Awaiting update'}`));
+     if(next){
+       handoff.append(element('p',`Next in queue: ${next.title} · ${next.provider||'Awaiting assignment'}`));
+       if(next.approvalRef){
+         const approval=element('details','');
+         approval.append(element('summary','Reviewed approval'),element('p',`${next.approvalRef} · ${p.codeReviewVerdict}`),element('p',p.objective));
+         handoff.append(approval);
+       }
+     }
      card.append(handoff);
    }
    if(restoredWait)card.append(element('p',restoredWait.line));
