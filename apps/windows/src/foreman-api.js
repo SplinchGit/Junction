@@ -12,6 +12,10 @@ function statusRecord(p){
   .filter(attempt=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0))
   .sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0)).at(-1);
  if(verified)record.latestVerification={at:verified.finishedAt||null,checksPassed:verified.tests.length,commit:verified.headSha||null};
+ const review=p.reviewed;
+ if(review?.headSha&&review.headSha===p.verifiedSha&&review.diffHash){
+  record.reviewReceipt={revision:review.headSha,diffHash:review.diffHash};
+ }
  if(p.restoredCapacityWait===true&&['WAITING_CAPACITY','PAUSED'].includes(p.status)){
   const provider=waitingProvider(p);
   const retry=p.retryAt?new Date(p.retryAt):null;

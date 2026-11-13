@@ -136,9 +136,11 @@
    if(p.sharedCheckout){
      const record=p.statusRecord;
      const receipt=record?.latestVerification;
+     const review=record?.reviewReceipt;
      const handoff=element('section','');
      handoff.append(element('h4','Engineering handoff'),
        element('p',`Provider: ${record?.provider||'Awaiting assignment'}`),
+       element('p',review?`Reviewed revision: ${review.revision.slice(0,12)} · Diff receipt: ${review.diffHash.slice(0,12)}`:'No exact revision review on record.'),
        element('p',receipt?`Latest verification: ${receipt.checksPassed} checks passed${receipt.commit?` · ${receipt.commit.slice(0,12)}`:''}${receipt.at?` · ${new Date(receipt.at).toLocaleString()}`:''}`:'No verification receipt yet.'),
        element('p',`Next action: ${record?.nextAction||p.nextAction||'Awaiting update'}`));
      card.append(handoff);
