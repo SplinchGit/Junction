@@ -108,7 +108,16 @@
   return details;
  }
  async function refresh(){if(pending)return;pending=true;try{const [{projects},threads]=await Promise.all([window.junction.foreman('project.list'),window.junction.conversations()]);list.replaceChildren();if(!projects.length)list.append(element('p','No active work yet. Give Junction a development instruction in Chat.'));
-  for(const row of projects){const {project:p}=await window.junction.foreman('project.get',{id:row.id});const card=element('article','');card.className='delegation-card';card.append(element('h3',`${p.name} · ${p.status.replaceAll('_',' ')}`),element('strong',statusText(p)),element('p',p.repoPath||''),element('p',p.objective));
+  for(const row of projects){const {project:p,pendingActivity=[]}=await window.junction.foreman('project.get',{id:row.id});const card=element('article','');card.className='delegation-card';card.append(element('h3',`${p.name} · ${p.status.replaceAll('_',' ')}`),element('strong',statusText(p)),element('p',p.repoPath||''),element('p',p.objective));
+   if(pendingActivity.length){
+     const activity=element('section','');
+     activity.append(element('h4','Since you last reviewed'));
+     const entries=element('ol','');
+     for(const event of pendingActivity)entries.append(element('li',`${new Date(event.at).toLocaleString()} · ${event.kind.replaceAll('_',' ')} · ${event.detail}`));
+     const mark=element('button','Mark shown activity reviewed','secondary');
+     mark.onclick=()=>call(()=>window.junction.foreman('project.activity.review',{id:p.id,through:pendingActivity.at(-1).seq}));
+     activity.append(entries,mark);card.append(activity);
+   }
    if(p.sourceObjectiveId)card.append(element('p',p.sharedCheckout?'Nethra proposed this work. Codex reviewed the proposal. Choose “Start with Codex and Claude” to authorize both providers.':'Nethra proposed this work. Codex reviewed the proposal; your Start authorizes isolated implementation. Applying its verified patch is a separate choice.'));
    if(p.sharedCheckout)card.append(element('p','Codex and Claude share the original main checkout. Start authorizes scoped file edits; Nethra will not commit or push. Pause stops further dispatch.'));
    if(['WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)){const recheck=element('button','Check provider availability','secondary');recheck.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'retry'}));card.append(recheck);}

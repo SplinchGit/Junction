@@ -41,10 +41,19 @@ class ForemanApi{
    for(const t of p.tasks)if(t.lastAttempt){t.lastAttempt.error=t.lastAttempt.error?.slice(-500);t.lastAttempt.summary=t.lastAttempt.summary?.slice(-500);for(const test of t.lastAttempt.tests||[])test.output=test.output?.slice(-500);}
    const result={project:p,events};while(Buffer.byteLength(JSON.stringify(result))>55000&&events.length)events.pop();
    if(Buffer.byteLength(JSON.stringify(result))>55000)throw new Error('Project detail exceeds transport limit; inspect on Windows');
-   if(source==='desktop')p.context={...projectContext(saved),primaryConversationId:saved.conversationId||null};
+   if(source==='desktop'){
+    p.context={...projectContext(saved),primaryConversationId:saved.conversationId||null};
+    result.pendingActivity=f.pendingActivity(p.id).map(event=>({...event,detail:event.detail.slice(0,300)}));
+   }
    return result;
   }
   if(f.closed)throw new Error('Junction is quitting');
+  if(type==='project.activity.review'){
+   if(source!=='desktop')throw new Error('Review project activity on Windows');
+   documentFields(payload,['id','through']);
+   f.reviewActivity(payload.id,payload.through);
+   return {reviewed:true};
+  }
   if(['project.documents','project.document.get','project.document.import','project.document.remove'].includes(type)){
    if(source!=='desktop')throw new Error('Manage project documents on Windows');
    if(type==='project.documents'){

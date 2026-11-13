@@ -47,6 +47,7 @@ class Foreman {
     const version=this.db.prepare('PRAGMA user_version').get().user_version;
     if(version>1) throw new Error('Foreman database requires a newer Junction.');
     this.db.exec('CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL); CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY, binding TEXT NOT NULL); PRAGMA user_version=1;');
+    this.db.exec('CREATE TABLE IF NOT EXISTS activity_review(project TEXT PRIMARY KEY, seq INTEGER NOT NULL)');
     this.db.exec(`CREATE TABLE IF NOT EXISTS project_documents(
       project TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,source TEXT NOT NULL,sourceKey TEXT NOT NULL,
       name TEXT NOT NULL,sha256 TEXT NOT NULL,content TEXT NOT NULL,importedAt INTEGER NOT NULL,
@@ -92,6 +93,16 @@ class Foreman {
     return structuredClone(p);
   }
   events(id,after=0) { return this.db.prepare('SELECT * FROM events WHERE project=? AND seq>? ORDER BY seq LIMIT 50').all(id,after); }
+  pendingActivity(id) {
+    this.get(id);
+    const cursor=this.db.prepare('SELECT seq FROM activity_review WHERE project=?').get(id)?.seq||0;
+    return this.db.prepare(`SELECT seq,at,kind,detail FROM events WHERE project=? AND seq>? AND kind IN ('RESUMED','PAUSE','PAUSED','STOP','WAITING','RECOVERED','BLOCKED','VERIFIED','COMPLETED','ENGINEERING_VERIFIED','ENGINEERING_ALREADY_DELIVERED') ORDER BY seq LIMIT 50`).all(id,cursor);
+  }
+  reviewActivity(id,through) {
+    this.get(id);
+    if(!Number.isSafeInteger(through)||!this.db.prepare('SELECT 1 FROM events WHERE project=? AND seq=?').get(id,through))throw new Error('Unknown activity checkpoint');
+    this.db.prepare('INSERT INTO activity_review VALUES(?,?) ON CONFLICT(project) DO UPDATE SET seq=max(seq,excluded.seq)').run(id,through);
+  }
   listDocuments(id, query='') {
     this.get(id);
     if(typeof query!=='string'||query.length>120)throw new Error('Invalid document search');
