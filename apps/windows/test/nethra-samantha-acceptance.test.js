@@ -7,6 +7,63 @@ const os = require('node:os');
 const path = require('node:path');
 const { NethraStore } = require('../src/nethra-store');
 
+function taskFamily(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
+  const store = new NethraStore(directory);
+  t.after(() => {
+    store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  store.setSettings({ taskAgentsEnabled: true });
+  const parent = store.create({ goal: 'Parent objective' });
+  const agent = store.create({ goal: 'Child objective', parentTaskId: parent.id, priority: 1 });
+  const control = (task, action, request = task.id + action) =>
+    store.control(task.id, action, store.get(task.id).revision, request);
+  return { store, parent, agent, control };
+}
+
+test('WP3a: deleting a parent fences its agent and retains agent history', t => {
+  const { store, parent, agent } = taskFamily(t);
+  const lease = store.claim('agent-host');
+  assert.equal(lease.task.id, agent.id);
+  store.remove(parent.id, 'remove-parent');
+  store.remove(parent.id, 'remove-parent');
+  assert.equal(store.get(agent.id).status, 'CANCELLED');
+  assert.equal(store.events(agent.id).filter(event => event.kind === 'PARENT_DELETED').length, 1);
+  assert.equal(store.renew(agent.id, lease.token), false);
+  assert.equal(store.claim('other-host'), null);
+});
+
+test('WP3b: parent resume restores only agents paused by the parent', t => {
+  const { store, parent, agent, control } = taskFamily(t);
+  const manual = store.create({ goal: 'Manually paused child', parentTaskId: parent.id });
+  const overridden = store.create({ goal: 'Child paused again by owner', parentTaskId: parent.id });
+  const lease = store.claim('agent-host');
+  assert.equal(lease.task.id, agent.id);
+  control(manual, 'pause');
+  control(parent, 'pause');
+  assert.equal(store.get(agent.id).status, 'PAUSED');
+  assert.equal(store.renew(agent.id, lease.token), false);
+  control(overridden, 'pause');
+  control(parent, 'resume');
+  assert.equal(store.get(agent.id).status, 'ACTIVE');
+  assert.equal(store.get(manual.id).status, 'PAUSED');
+  assert.equal(store.get(overridden.id).status, 'PAUSED');
+});
+
+test('WP3c: cancelling a parent cancels its active and paused agents', t => {
+  const { store, parent, agent, control } = taskFamily(t);
+  const manual = store.create({ goal: 'Manually paused child', parentTaskId: parent.id });
+  control(manual, 'pause');
+  const lease = store.claim('agent-host');
+  assert.equal(lease.task.id, agent.id);
+  control(parent, 'cancel');
+  assert.equal(store.get(agent.id).status, 'CANCELLED');
+  assert.equal(store.get(manual.id).status, 'CANCELLED');
+  assert.equal(store.renew(agent.id, lease.token), false);
+  assert.equal(store.claim('other-host'), null);
+});
+
 test('WP1a: boot recovers an abandoned unexpired lease without losing the checkpoint', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
   let now = 1_000_000;

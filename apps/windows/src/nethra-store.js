@@ -139,6 +139,7 @@ class NethraStore {
       const parent=parentTaskId===undefined?null:this.get(parentTaskId);
       if(parent&&!this.settings().taskAgentsEnabled)throw new Error('Full task agents are disabled');
       if(parent?.parentId)throw new Error('Launch agents from a top-level task');
+      if(['PAUSED','CANCELLED'].includes(parent?.status))throw new Error('Cannot launch an agent from a paused or cancelled task');
       const existing=this.list();
       // The same request re-sent in the same conversation (a retry, or a resend while a reply is slow)
       // continues the active objective instead of starting a duplicate that doubles the inference queue.
@@ -344,10 +345,29 @@ class NethraStore {
     if(task.revision!==revision)throw new Error('Nethra revision conflict');
     if(TERMINAL.has(task.status))throw new Error('Task is already finished');
     if(task.parentId&&!this.settings().taskAgentsEnabled&&['resume','wake'].includes(action))throw new Error('Full task agents are disabled');
+    if(task.parentId&&['resume','wake'].includes(action)&&this.list().some(parent=>parent.id===task.parentId&&parent.status==='PAUSED'))throw new Error('Resume the parent objective first');
+    if(action==='pause')delete task.pausedByParent;
     const result=this.controlInside(task,action);
+    if(!task.parentId&&action!=='wake')this.controlAgentsInside(id,action);
     this.db.prepare('INSERT INTO requests VALUES(?,?,?)').run(requestId,binding,JSON.stringify(result));
     return result;
   });}
+  controlAgentsInside(parentId,action) {
+    for(const agent of this.list()){
+      if(agent.parentId!==parentId||TERMINAL.has(agent.status))continue;
+      if(action==='pause'){
+        if(agent.status==='PAUSED')continue;
+        agent.pausedByParent=true;
+        this.controlInside(agent,'pause');
+      }else if(action==='resume'){
+        if(agent.status!=='PAUSED'||!agent.pausedByParent)continue;
+        this.controlInside(agent,'resume');
+      }else{
+        const cancelled=this.controlInside(agent,'cancel');
+        if(action==='delete')this.save(cancelled,'PARENT_DELETED',{parentId});
+      }
+    }
+  }
   controlInside(task,action) {
     const {id}=task;
     if(action==='resume'&&['WAITING_FOR_USER','BLOCKED'].includes(task.status))throw new Error(`Cannot resume a ${task.status} objective without resolving its gate`);
@@ -366,9 +386,9 @@ class NethraStore {
       const prior=task.status==='PAUSED'?(task.pausedFromStatus||'ACTIVE'):'ACTIVE';
       task.status=approvals.some(item=>item.status==='REJECTED')?'BLOCKED':approvals.some(item=>item.status==='PENDING')?'WAITING_FOR_USER':prior==='WAITING_FOR_USER'&&!task.pausedForApproval?'WAITING_FOR_USER':prior==='BLOCKED'?'BLOCKED':prior==='SLEEPING'&&task.pausedWakeAt!=null?'SLEEPING':'ACTIVE';
       task.nextWakeAt=task.status==='SLEEPING'?task.pausedWakeAt:null;
-      delete task.pausedFromStatus;delete task.pausedWakeAt;delete task.pausedForApproval;
+      delete task.pausedFromStatus;delete task.pausedWakeAt;delete task.pausedForApproval;delete task.pausedByParent;
     } else if(action==='cancel'){
-      task.status='CANCELLED';task.nextWakeAt=null;delete task.pausedFromStatus;delete task.pausedWakeAt;delete task.pausedForApproval;
+      task.status='CANCELLED';task.nextWakeAt=null;delete task.pausedFromStatus;delete task.pausedWakeAt;delete task.pausedForApproval;delete task.pausedByParent;
     }
     const lease=this.db.prepare('SELECT * FROM lease WHERE taskId=?').get(id);
     if(lease){this.closeInferenceIntervals(lease.token);this.accountUsage(id,this.now()-this.execution(lease.token).startedAt,lease.token);task.budget=this.get(id).budget;this.interruptChildrenInside(id,lease.token);this.db.prepare('UPDATE attention SET state=?,leaseToken=NULL WHERE leaseToken=?').run(action==='cancel'?'DONE':'PENDING',lease.token);this.db.prepare('DELETE FROM lease WHERE taskId=?').run(id);}
@@ -651,6 +671,7 @@ class NethraStore {
       }
       const task=this.get(id);
       this.fenceInside(id);
+      this.controlAgentsInside(id,'delete');
       const body={deleted:true,id,goal:task.goal,conversationId:task.conversationId||null};
       this.db.prepare('INSERT INTO task_deletions VALUES(?,?)').run(id,JSON.stringify({...body,deletedAt:this.now(),workspace:task.workspace,cleanup:{workspace:'PENDING',related:'PENDING',error:null}}));
       this.db.prepare('DELETE FROM attention WHERE taskId=?').run(id);
