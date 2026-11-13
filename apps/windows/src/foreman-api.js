@@ -12,6 +12,16 @@ function statusRecord(p){
  if(interrupted){
   record.interruptedCall={provider:interrupted.provider||null,lastEvidenceAt:interrupted.lastEvidenceAt||null,nextAction:p.nextAction};
  }
+ const progress=latest?.verificationProgress;
+ if(p.approvedCommit||progress){
+  const matching=progress&&(!p.approvedCommit||p.approvedCommit===progress.canonicalCommit);
+  record.verificationProgress={
+   provider:latest?.provider||null,
+   approvedCommit:p.approvedCommit||progress?.canonicalCommit||null,
+   latestCheck:matching?progress.completed.at(-1)?.command||null:null,
+   nextAction:p.nextAction
+  };
+ }
  const next=p.tasks.find(task=>task.status!=='COMPLETED');
  if(next&&!['PAUSED','STOPPED','BLOCKED','COMPLETED'].includes(p.status)){
   const attempt=next.attempts?.at(-1);

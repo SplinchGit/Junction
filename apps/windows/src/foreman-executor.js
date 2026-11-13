@@ -258,10 +258,18 @@ class ForemanExecutor{
   return confirmed.ready?confirmed:{ready:false,retryAt:confirmed.retryAt||now+3600000};
  }
  runCapacityWait(p,t,options){return this.run(p,t,options);}
+ async currentCommit(p){
+  return (await this.git(p.repoPath,['rev-parse','HEAD'])).trim();
+ }
  async run(p,t,{signal,checkpoint,claimDispatch}){
   const release=p.sharedCheckout?await this.acquireWriter(p):null;
   let stopping;const interrupt=()=>{stopping=this.server.stop();};signal.addEventListener('abort',interrupt,{once:true});
-  try { signal.throwIfAborted();return await this.runTask(p,t,{signal,checkpoint,claimDispatch}); } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;release?.();}
+  try {
+   signal.throwIfAborted();
+   if(p.approvedCommit&&p.approvedCommit!==await this.currentCommit(p))throw new Error('The approved commit changed. Review and resume work against the current commit.');
+   signal.throwIfAborted();
+   return await this.runTask(p,t,{signal,checkpoint,claimDispatch});
+  } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;release?.();}
  }
  async runTask(p,t,{signal,checkpoint,claimDispatch}){
   const checks=validateVerification(p.verification);

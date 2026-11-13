@@ -166,6 +166,16 @@
      }
      card.append(handoff);
    }
+   const progress=p.statusRecord?.verificationProgress;
+   if(progress){
+     const details=element('section','');
+     details.append(element('h4','Saved verification'),
+       element('p',`Provider: ${progress.provider||'Awaiting assignment'}`),
+       element('p',`Approved commit: ${progress.approvedCommit||'Unavailable'}`),
+       element('p',`Latest verified check: ${progress.latestCheck?.join(' ')||'None for this commit'}`),
+       element('p',`Next action: ${progress.nextAction}`));
+     card.append(details);
+   }
    const interrupted=p.statusRecord?.interruptedCall;
    if(interrupted){
      const evidence=interrupted.lastEvidenceAt?new Date(interrupted.lastEvidenceAt).toLocaleString():'No evidence was recorded';

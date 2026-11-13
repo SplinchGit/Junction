@@ -299,7 +299,10 @@ class Foreman {
       if(autoHandoff===true)p.autoHandoff=true;
       if(Boolean(p.interruptedAttemptId)!==(action==='approveInterruptedRetry'))throw new Error('Review and approve an interrupted call explicitly before retrying');
       p.status='RUNNING';p.pausedByObjective=null;p.nextAction='Reconcile and execute next approved task';
-      this.save(p,'RESUMED',`Owner selected ${action}`,{id:requestId,binding});this.enabled.add(id);this.kick(id);
+      if(p.sharedCheckout&&this.executor.currentCommit)p.approvedCommit=await this.executor.currentCommit(p);
+      const saved=this.save(p,'RESUMED',`Owner selected ${action}`,{id:requestId,binding},null,current=>current.revision===revision&&this.mayDispatch(current));
+      if(!saved)throw new Error('Task changed before approval; refresh first');
+      this.enabled.add(id);this.kick(id);
     }else{
       this.enabled.delete(id);clearTimeout(this.timers.get(id));this.timers.delete(id);
       const interrupted=p.tasks.find(t=>t.status==='RUNNING');if(interrupted){interrupted.status='QUEUED';if(interrupted.attempts.length)Object.assign(interrupted.attempts.at(-1),{status:'INTERRUPTED',finishedAt:this.now()});}
