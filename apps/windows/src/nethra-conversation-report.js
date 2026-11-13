@@ -140,6 +140,16 @@ function postCoordinationChat(task,localData,project=null){
       const next=progress.nextCheck?.join(' ')||'Finalize verification';
       post(['verification',project.id,attempt.id,progress.binding,progress.completed.length,next,project.status,project.nextAction],`**Nethra · Verification checkpoint**\n\nProvider: ${provider||'Verification runner'}\nCandidate commit: ${progress.canonicalCommit||progress.candidateCommit}\nCompleted checks: ${progress.completed.length}\nNext pending check: ${next}\nNext action: ${project.nextAction}`);
     }
+    const handoffStep=project.tasks?.find(step=>step.id===project.activeTask)||project.tasks?.find(step=>step.status==='QUEUED');
+    const handoffProvider=handoffStep?.attempts?.at(-1)?.provider||handoffStep?.kind;
+    const handoffLabel=handoffProvider==='codex'?'Codex / OpenAI':handoffProvider==='claude'?'Claude / Anthropic':'Awaiting assignment';
+    const lastVerified=project.tasks?.flatMap(step=>step.attempts||[])
+      .filter(item=>item.status==='COMPLETED'&&item.tests?.length&&item.tests.every(test=>test.exitCode===0))
+      .sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0)).at(-1);
+    if(project.sourceObjectiveId===task.id&&handoffStep&&project.nextAction){
+      const evidence=lastVerified?.headSha||lastVerified?.id||'No verified evidence recorded';
+      post(['handoff',project.id,handoffStep.id,handoffLabel,evidence,project.nextAction],`**Nethra · Foreman handoff**\n\n${handoffStep.title}\nWork Activity: ${project.id}\nProvider: ${handoffLabel}\nLast verified evidence: ${evidence}\nNext action: ${project.nextAction}`);
+    }
     const detail=project.status==='BLOCKED'?project.handoff:project.nextAction;
     if(detail)post([project.id,project.status,attempt?.id,attempt?.phase,provider,detail,project.retryAt],`**Nethra · Work Activity**\n\n${provider?`${provider} · `:''}${project.status}\n\n${String(detail).slice(0,900)}${Number.isFinite(project.retryAt)?`\n\nNext check: ${new Date(project.retryAt).toISOString()}`:''}`);
   }
