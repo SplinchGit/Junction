@@ -124,7 +124,8 @@ class NethraScheduler {
       const modelWake=Number.isFinite(patch.nextWakeAt);
       const hasNextStep=(patch.pendingSteps??live.pendingSteps??[]).length>0;
       const continuing=!task.coordinateSelfImprovement&&patch.status==='SLEEPING'&&live.continuous===true&&progressed&&(live.mode!=='ONGOING'||hasNextStep);
-      patch.nextWakeAt=patch.status==='SLEEPING'?(continuing?this.now()+CONTINUOUS_GAP_MS:clampWake(patch.nextWakeAt,this.now(),settings.minWakeMs,settings.maxWakeMs)):null;
+      const minimumWake=task.coordinateSelfImprovement&&live.continuous?this.pollMs:settings.minWakeMs;
+      patch.nextWakeAt=patch.status==='SLEEPING'?(continuing?this.now()+CONTINUOUS_GAP_MS:clampWake(patch.nextWakeAt,this.now(),minimumWake,settings.maxWakeMs)):null;
       patch.lastInferenceFingerprint=fingerprint;patch.lastCycleProgressed=progressed;patch.unchangedWakes=progressed?0:(live.unchangedWakes||0);
       // Keep a reason the runner already recorded (schedule_wake, monitoring); otherwise this is a continuation.
       if(patch.status!=='SLEEPING')patch.wakeReason=null;

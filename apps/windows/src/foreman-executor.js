@@ -190,9 +190,9 @@ class ForemanExecutor{
   return sources;
  }
  async applyClaudePatch(cwd,patch,sources,signal,authorize=()=>{}){
-  const output=patch.trim();
-  const fenced=/^```(?:diff|patch)?\r?\n([\s\S]*?)\r?\n```$/i.exec(output);
-  let clean=(fenced?.[1]||output).trimEnd()+'\n';
+  const output=patch.trimStart().replace(/[\r\n]+$/,'');
+  const fenced=/^```(?:diff|patch)?\r?\n([\s\S]*?)\r?\n```[\t ]*$/i.exec(output);
+  let clean=(fenced?.[1]||output)+'\n';
   if(!clean.startsWith('diff --git ')||Buffer.byteLength(clean)>96000||/^(?:old mode|new mode|new file mode|deleted file mode|rename |copy |GIT binary patch)/m.test(clean))throw new Error('Claude did not return a scoped textual patch');
   const directory=fs.mkdtempSync(path.join(this.directory,'claude-patch-'));
   const file=path.join(directory,'candidate.diff');

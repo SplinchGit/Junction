@@ -75,8 +75,9 @@ test('Claude LF diff applies to a CRLF scoped file in a canonical subfolder',asy
  fs.mkdirSync(folder);execFileSync('git',['init','-b','main'],{cwd:root});
  fs.writeFileSync(path.join(folder,'answer.js'),'const answer = 1;\r\n');
  const e=new ForemanExecutor(path.join(root,'state'),{server:{}});
- await e.applyClaudePatch(folder,'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1 +1 @@\n-const answer = 1;\n+const answer = 2;\n',{'answer.js':'const answer = 1;\r\n'});
- assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'const answer = 2;\r\n');
+ fs.writeFileSync(path.join(folder,'answer.js'),'const answer = 1;\r\n\r\n');
+ await e.applyClaudePatch(folder,'diff --git a/answer.js b/answer.js\n--- a/answer.js\n+++ b/answer.js\n@@ -1,2 +1,2 @@\n-const answer = 1;\n+const answer = 2;\n \n',{'answer.js':'const answer = 1;\r\n\r\n'});
+ assert.equal(fs.readFileSync(path.join(folder,'answer.js'),'utf8'),'const answer = 2;\r\n\r\n');
 });
 test('verification only accepts explicit bounded argv; packet has owner scope and all evidence',()=>{
  assert.throws(()=>validateVerification([]),/verification/i);
