@@ -72,7 +72,7 @@ function sendCodexChat({ model, messages, memories, context, research, workingDi
   return new Promise((resolve, reject) => {
     // Codex reads stdin as additional instructions even when PROMPT is supplied.
     // Leave it closed or an app-launched turn waits forever for EOF.
-    const child = launch("codex", args, { windowsHide: true, shell: false, stdio: ['ignore','pipe','pipe'] });
+    const child = launch(codexExecutable(), args, { windowsHide: true, shell: false, stdio: ['ignore','pipe','pipe'] });
     let stdout = "", stderr = "";
     let settled=false;
     const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timeout);signal?.removeEventListener('abort',abort);error?reject(error):resolve(value);};
@@ -92,4 +92,8 @@ function sendCodexChat({ model, messages, memories, context, research, workingDi
   });
 }
 
-module.exports = { buildChatPrompt, finalMessageFromJsonl, usageFromJsonl, getCodexStatus, sendCodexChat };
+function codexExecutable() {
+  return process.env.JUNCTION_CODEX_PATH || process.env.CODEX_APP_RUNTIME_CLI_PATH || 'codex';
+}
+
+module.exports = { buildChatPrompt, finalMessageFromJsonl, usageFromJsonl, getCodexStatus, sendCodexChat, codexExecutable, COORDINATION_CODEX_MODEL: 'gpt-6.1-sol' };

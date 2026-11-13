@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { compactResearchContext } = require('./local-agent-tools');
 const { validateSearchEgress } = require('./local-agent-runtime');
-const {getCodexStatus,sendCodexChat}=require('./codex-client');
+const {getCodexStatus,sendCodexChat,COORDINATION_CODEX_MODEL}=require('./codex-client');
 const {getClaudeStatus,sendClaudeConsult}=require('./claude-client');
 const {AdvisorLimits}=require('./advisor-limits');
 const {CONTEXT_TOKENS}=require('./model-context');
@@ -183,8 +183,8 @@ class NethraTools {
       let reply;
       try{
         reply=provider==='codex'
-          ?await this.codexConsult({messages:[{role:'user',content:request}],memories:[],context:null,research:null,workingDirectory:task.workspace,model:'gpt-5.6-luna',isolated:true,signal})
-          :await this.claudeConsult({prompt:request,workingDirectory:task.workspace,model:'sonnet',signal,onRateLimit:snapshot=>this.advisorLimits.recordClaude(snapshot)});
+          ?await this.codexConsult({messages:[{role:'user',content:request}],memories:[],context:null,research:null,workingDirectory:task.workspace,model:task.coordinateSelfImprovement?COORDINATION_CODEX_MODEL:'gpt-5.6-luna',isolated:true,signal})
+          :await this.claudeConsult({prompt:request,workingDirectory:task.workspace,model:'sonnet',subscriptionOnly:true,signal,onRateLimit:snapshot=>this.advisorLimits.recordClaude(snapshot)});
       }catch(error){
         if(error.rateLimit){const after=await this.advisorLimits.check(provider);throw Object.assign(Error(`${label} usage limit reached. ${after.detail}`),{retryAt:after.nextAvailableAt});}
         throw error;

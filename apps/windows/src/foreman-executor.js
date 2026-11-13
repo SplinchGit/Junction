@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {execFile}=require('node:child_process');const {promisify}=require('node:util');
 const {CodexAppServer}=require('./codex-app-server');
+const {COORDINATION_CODEX_MODEL}=require('./codex-client');
 const {getClaudeStatus,sendClaudeConsult}=require('./claude-client');
 const exec=promisify(execFile);
 const forbidden=/(^|[\\/])(\.git|\.codex|\.env(?:\..*)?|credentials?|secrets?)([\\/]|$)/i;
@@ -315,7 +316,8 @@ class ForemanExecutor{
      checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
      try{
       const before=p.sharedCheckout?await this.sourceHash(cwd,true):null;
-      const result=await this.server.run({cwd,readOnly:p.sharedCheckout===true,prompt:engineeringPacket(p,t,{patchOnly:p.sharedCheckout===true}),signal,onTurnStarted:ids=>checkpoint(ids),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
+      const model=p.sharedCheckout?COORDINATION_CODEX_MODEL:undefined;
+      const result=await this.server.run({cwd,model,readOnly:p.sharedCheckout===true,prompt:engineeringPacket(p,t,{patchOnly:p.sharedCheckout===true}),signal,onTurnStarted:ids=>checkpoint({...ids,...(model?{model}:{})}),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
       if(p.sharedCheckout&&(!result.handoffRetryAt||result.text.trim().startsWith('diff --git ')))await this.applySharedPatch(p,cwd,result.text,checks,before,signal);
       if(result.handoffRetryAt){
        const handoff=await this.handoff(cwd,p,t,result.text);

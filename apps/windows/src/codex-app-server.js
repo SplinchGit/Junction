@@ -2,6 +2,7 @@
 
 const { spawn, execFile } = require("node:child_process");
 const readline = require("node:readline");
+const {codexExecutable}=require('./codex-client');
 
 /** Minimal supervised JSON-RPC client for the local Codex App Server. */
 class CodexAppServer {
@@ -20,7 +21,7 @@ class CodexAppServer {
     if (this.starting) return this.starting;
     if (this.process?.stdin?.writable) return;
     this.starting = new Promise((resolve, reject) => {
-      const child = this.launch("codex", ["app-server", "-c", 'approval_policy="never"', "-c", "features.apps=false", "-c", "features.hooks=false", "-c", "features.multi_agent=false", "-c", "mcp_servers={}", "-c", 'web_search="disabled"', "-c", 'shell_environment_policy.inherit="core"'], { cwd: this.cwd, windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
+      const child = this.launch(codexExecutable(), ["app-server", "-c", 'approval_policy="never"', "-c", "features.apps=false", "-c", "features.hooks=false", "-c", "features.multi_agent=false", "-c", "mcp_servers={}", "-c", 'web_search="disabled"', "-c", 'shell_environment_policy.inherit="core"'], { cwd: this.cwd, windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
       this.process = child;
       const fail = error => { this.stop(); reject(error instanceof Error ? error : new Error(String(error))); };
       child.once("error", fail);
