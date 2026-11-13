@@ -62,13 +62,26 @@ function decision(state){
   return {proposals,question:`${comparison}\n${choice||'No complete proposal was returned.'} Reply “retry consultation” to repair incomplete advice, or “GPT brief: …” to change direction. Full advice is in Windows task diagnostics.\n${PROVIDERS.map(p=>`${p==='codex'?'Codex':'Claude'}: ${proposals[p]?`${proposals[p].task.slice(0,130)} Test: ${proposals[p].acceptance.slice(0,130)}`:'Advice needs a bounded Improvement and Test before approval.'}`).join('\n')}`};
 }
 
-/** Provider whose proposal a continuous task may proceed with unattended; null when the owner must choose (disagreement or nothing usable). */
-function autoPilotProvider(state){
+/** The provider the owner last said they generally prefer, in their own words; null when they have not said. */
+function ownerPreference(task){
+  for(const input of [...(task.ownerInputs||[])].reverse()){
+    const text=String(input.text||'');
+    if(collaboratorNote.test(text.trim()))continue;
+    const match=/\bgenerally\s+(?:we['’]ll|we will|i)\s+prefer\s+(codex|claude)['’]s\s+work\b/i.exec(text);
+    if(match)return match[1].toLowerCase();
+  }
+  return null;
+}
+/**
+ * Provider whose proposal a continuous task may proceed with unattended. Differing proposals follow
+ * the owner's stated preference; with none stated the owner must choose (null).
+ */
+function autoPilotProvider(state,preferred=null){
   const proposals=Object.fromEntries(PROVIDERS.map(p=>[p,state.advisors?.[p]?.status==='completed'?proposal(state.advisors[p].advice):null]));
   const usable=PROVIDERS.filter(p=>proposals[p]);
   if(usable.length===1)return usable[0];
   if(usable.length===2&&JSON.stringify(proposals.codex)===JSON.stringify(proposals.claude))return 'codex';
-  return null;
+  return usable.length===2&&usable.includes(preferred)?preferred:null;
 }
 
 async function runCoordination(task,{tools,store,checkpoint,signal,token,startWork=null,now=Date.now}){
@@ -149,20 +162,20 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     const waiting=PROVIDERS.filter(provider=>state.advisors[provider]?.status!=='completed');
     // A resting provider does not hold up a continuous task while the other has a bounded proposal;
     // the independent review still happens before any draft is saved or started.
-    const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state);
+    const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state,ownerPreference(current));
     if(waiting.length&&!onlyWaiting)return sleep(Math.min(...waiting.map(provider=>state.advisors[provider]?.retryAt||now()+HALF_HOUR)),`Waiting for ${waiting.join(' and ')} consultation.`);
     state={...state,stage:'decision',questionId:null};
     await persist({summary:'Advisor proposals saved.'},'COORDINATION_PROPOSALS_READY');
   }
   const ownerDecided=pilotChoice(answer())||/^retry consultation[.!]?$/i.test(answer()?.trim()||'');
-  if(state.stage==='decision'&&!ownerDecided&&unattended()&&autoPilotProvider(state)){
+  if(state.stage==='decision'&&!ownerDecided&&unattended()&&autoPilotProvider(state,ownerPreference(current))){
     // Supersede the open question: the owner already chose continuous work inside this brief.
-    const provider=autoPilotProvider(state),questions=(current.questions||[]).map(q=>q.id===state.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
+    const provider=autoPilotProvider(state,ownerPreference(current)),questions=(current.questions||[]).map(q=>q.id===state.questionId&&q.status==='OPEN'?{...q,status:'SUPERSEDED'}:q);
     state={...state,stage:'drafting',selected:proposal(state.advisors[provider].advice),approvedAt:now(),approvedBy:'continuous'};
     await persist({questions,summary:`Continuing with ${provider==='codex'?'Codex':'Claude'}’s pilot inside your brief. Preparing the reviewed draft.`},'COORDINATION_PILOT_AUTO_APPROVED');
   }
   if(state.stage==='decision'&&!state.questionId){
-    return ask(decision(state).question,'decision');
+    return ask(decision(state).question+(unattended()?'\nThis task is continuous. Add “Generally we’ll prefer Codex’s work” (or Claude’s) to your reply and I’ll follow that when their proposals differ.':''),'decision');
   }
   if(state.stage==='decision'){
     if(/^retry consultation[.!]?$/i.test(answer()?.trim()||'')){
@@ -217,4 +230,4 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
     work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }
-module.exports={runsContinuously,runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};
+module.exports={runsContinuously,ownerPreference,collaboratorNote,runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};

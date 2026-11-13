@@ -250,5 +250,21 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
  task=store.configure(task.id,{continuous:true},task.revision,'on');
  codex='differ';now+=2*3600_000;
  await run();task=store.get(task.id);
- assert.equal(task.status,'WAITING_FOR_USER');assert.match(task.questions.at(-1).question,/different proposals/);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.match(task.questions.at(-1).question,/different proposals[\s\S]*Generally we’ll prefer/);
+ // An engineer's note never answers the owner's question.
+ const {handleTaskTurn}=require('../src/nethra-task-turn');
+ handleTaskTurn({store,conversationId:'chat-a',content:"Claude note: generally we'll prefer claude's work",requestId:'note-1'});
+ task=store.get(task.id);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.equal(task.questions.at(-1).status,'OPEN');
+ // The owner's stated preference settles later disagreements without another question.
+ work={status:'DRAFT'};
+ handleTaskTurn({store,conversationId:'chat-a',content:"Approve the codex pilot. Generally we'll prefer codex's work.",requestId:'choose-1'});
+ await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'tracking');assert.equal(task.coordination.selected.task,'Cancel speech on interruption.');
+ work={status:'COMPLETED',nextAction:'verified'};
+ const asked=task.questions.length;
+ await run();work={status:'DRAFT'};await run();task=store.get(task.id);
+ assert.equal(task.coordination.stage,'tracking','differing proposals follow the stated preference');
+ assert.equal(task.coordination.approvedBy,'continuous');assert.equal(task.questions.length,asked,'no new question');
+ assert.equal(task.coordination.selected.task,'Cancel speech on interruption.');
 });

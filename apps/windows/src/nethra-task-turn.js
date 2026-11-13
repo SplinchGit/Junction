@@ -1,5 +1,6 @@
 'use strict';
 const {randomUUID}=require('node:crypto');
+const {collaboratorNote}=require('./nethra-coordination');
 
 const FINISHED=new Set(['COMPLETED','CANCELLED','FAILED']);
 
@@ -9,7 +10,9 @@ function handleTaskTurn({store,conversationId,content,requestId=randomUUID()}){
   if(!matches.length)return null;
   if(matches.length>1)return `Several tasks share this chat. Which task should receive that message? ${matches.slice(0,4).map(task=>`“${String(task.goal).slice(0,100)}”`).join(', ')}.`;
   const linked=matches[0];
-  const {task,kind,pendingApproval}=store.chatTurn(linked.id,String(content||'').trim().slice(0,10000),String(requestId),{conversationId});
+  const text=String(content||'').trim().slice(0,10000);
+  // An engineer's signed note is discussion: it never answers the owner's open question.
+  const {task,kind,pendingApproval}=store.chatTurn(linked.id,text,String(requestId),{conversationId,...(collaboratorNote.test(text)?{noteOnly:true}:{})});
   const goal=`“${String(task.goal).slice(0,100)}”`;
   if(kind==='answer'&&task.coordinateSelfImprovement&&task.status==='ACTIVE')return `I saved your reply for ${goal}. I’ll apply it to the pending coordination decision.`;
   if(kind==='answer'&&!['PAUSED','BLOCKED'].includes(task.status))return `Thanks. I saved your answer for ${goal} and am continuing the task.`;
