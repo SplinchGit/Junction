@@ -99,9 +99,10 @@ class ForemanExecutor{
  }
  async command(cwd,command,signal,timeoutMs=120000,verificationEnv={}){
   if(signal?.aborted)throw new Error('Paused');await this.server.start();
+  const scratch=fs.mkdtempSync(path.join(cwd,'.foreman-test-'));
   const processId=crypto.randomUUID();const abort=()=>this.server.request('command/exec/terminate',{processId}).catch(()=>this.server.stop());
   signal?.addEventListener('abort',abort,{once:true});
-  try{if(signal?.aborted)throw new Error('Paused');const result=await this.server.request('command/exec',{processId,cwd,command,timeoutMs,sandboxPolicy:{type:'workspaceWrite',writableRoots:[cwd],networkAccess:false,excludeTmpdirEnvVar:true},env:{...verificationEnv,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',OPENAI_API_KEY:null,CODEX_API_KEY:null,GH_TOKEN:null,GITHUB_TOKEN:null}},timeoutMs+10000);if(signal?.aborted)throw new Error('Paused');return result;}finally{signal?.removeEventListener('abort',abort);}
+  try{if(signal?.aborted)throw new Error('Paused');const result=await this.server.request('command/exec',{processId,cwd,command,timeoutMs,sandboxPolicy:{type:'workspaceWrite',writableRoots:[cwd],networkAccess:false,excludeTmpdirEnvVar:true},env:{...verificationEnv,TEMP:scratch,TMP:scratch,TMPDIR:scratch,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',OPENAI_API_KEY:null,CODEX_API_KEY:null,GH_TOKEN:null,GITHUB_TOKEN:null}},timeoutMs+10000);if(signal?.aborted)throw new Error('Paused');return result;}finally{signal?.removeEventListener('abort',abort);if(!signal?.aborted)fs.rmSync(scratch,{recursive:true,force:true});}
  }
  async prepare(p,task,checkpoint,signal){
   const projectDir=path.join(this.directory,p.id);fs.mkdirSync(projectDir,{recursive:true});
