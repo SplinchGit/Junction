@@ -29,6 +29,19 @@ function engineerOwnsCheckout(project) {
   return project.sharedCheckout===true&&Boolean(project.sourceObjectiveId);
 }
 
+function proposalFingerprint(project) {
+  const tasks=project.tasks.map(({id,title,kind,acceptance,files})=>[id,title,kind,acceptance,files]);
+  return crypto.createHash('sha256').update(JSON.stringify([
+    project.objective,project.coordinationBrief,project.repoPath,project.scopeFile,
+    project.verification,project.verificationProtected,tasks
+  ])).digest('hex');
+}
+
+function needsFreshProposalReview(project) {
+  return Boolean(project.sourceObjectiveId&&project.reviewedProposal&&
+    project.reviewedProposal!==proposalFingerprint(project));
+}
+
 function waitingProvider(project) {
   return project.tasks.find(task=>task.id===project.activeTask)?.attempts.at(-1)?.provider||'Codex or Claude';
 }
@@ -228,6 +241,7 @@ class Foreman {
     if(inspected.scopeFile)for(const task of tasks)if(!task.files.length)task.files=[inspected.scopeFile];
     if(this.closed)throw new Error('Junction is quitting');
     const p={id:crypto.randomUUID(),name,objective,sharedCheckout:input.sharedCheckout===true,...(typeof input.coordinationBrief==='string'?{coordinationBrief:input.coordinationBrief.slice(0,700)}:{}),repoPath:input.repoPath,conversationId:input.conversationId||null,sourceObjectiveId:input.sourceObjectiveId||null,codeReviewVerdict:input.sourceObjectiveId&&input.codeReviewVerdict==='READY'?'READY':null,verification:inspected.verification||input.verification||[],...inspected,revision:0,status:'DRAFT',tasks,activeTask:null,roadmap:tasks.map(t=>t.title),decisions:[],questions:[],handoff:'No work started',nextAction:'Waiting for an owner instruction',retryAt:null,createdAt:this.now()};
+    if(p.codeReviewVerdict==='READY')p.reviewedProposal=proposalFingerprint(p);
     return this.save(p,'CREATED','Owner objective registered; waiting for Start');
   }
   async submit(input) {
@@ -263,6 +277,7 @@ class Foreman {
       this.save(p,'CAPACITY_RECHECK','Owner requested a fresh availability check',{id:requestId,binding});this.kick(id);return this.get(id);
     }
     if(action==='start'||action==='resume') {
+      if(needsFreshProposalReview(p))throw new Error('The queued proposal changed. Request a fresh review before starting it.');
       if(engineerOwnsCheckout(p))throw new Error('Codex or Claude must pick up this work in an engineering session.');
       if(autoHandoff!==undefined&&typeof autoHandoff!=='boolean')throw new Error('Invalid provider handoff approval');
       if(this.closed)throw new Error('Junction is quitting');
@@ -294,6 +309,11 @@ class Foreman {
   async step(id,signal) {
     let p=this.get(id);
     if(!ACTIVE.has(p.status)){this.enabled.delete(id);return;}
+    if(needsFreshProposalReview(p)){
+      this.enabled.delete(id);p.status='BLOCKED';p.retryAt=null;
+      p.nextAction='Request a fresh review of the changed proposal';p.handoff=p.nextAction;
+      this.save(p,'PROPOSAL_REVIEW_REQUIRED',p.nextAction);return;
+    }
     const awaitingCapacity=p.status==='WAITING_CAPACITY'&&p.tasks.find(t=>t.status!=='COMPLETED')?.kind==='codex';
     if(awaitingCapacity&&!authorizedCapacityWait(p)){
       this.enabled.delete(id);p.status='PAUSED';p.nextAction='Resume explicitly with provider authorization';
@@ -384,4 +404,4 @@ class Foreman {
   }
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
-module.exports={Foreman,projectContext,waitingProvider,engineerOwnsCheckout};
+module.exports={Foreman,projectContext,waitingProvider,engineerOwnsCheckout,needsFreshProposalReview};

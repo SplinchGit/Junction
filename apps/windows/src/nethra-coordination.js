@@ -226,6 +226,9 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   }
   const work=tools.workStatus?.(state.workId);
   if(!work)return sleep(now()+COORDINATION_RECHECK_MS,'Work Activity record unavailable. Check the linked draft.');
+  if(work.needsFreshReview&&['DRAFT','BLOCKED'].includes(work.status)){
+    return ask('The queued proposal changed after review. Request a fresh review of the updated work in Work Activity before engineering starts.','tracking');
+  }
   if(work.engineerOwnsCheckout&&work.status!=='COMPLETED'){
     return sleep(now()+COORDINATION_RECHECK_MS,work.status==='STOPPED'?'Engineering work was stopped.':'Work is in Work Activity for Codex or Claude to pick up in an engineering session.');
   }

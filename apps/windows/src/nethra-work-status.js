@@ -1,7 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
-const {engineerOwnsCheckout}=require('./foreman');
+const {engineerOwnsCheckout,needsFreshProposalReview}=require('./foreman');
 
 /** The objective's read-only view of durable Work Activity state. */
 function createWorkStatus(foreman){
@@ -12,7 +12,7 @@ function createWorkStatus(foreman){
       // Nethra candidates are applied only after separate owner review. Their
       // attempts deliberately have no automatic promotion receipt.
       if(Number.isSafeInteger(project.appliedAt)&&project.appliedAt>0)promoted.push(project.appliedAt);
-      return {status:project.status,engineerOwnsCheckout:engineerOwnsCheckout(project),pausedByObjective:project.pausedByObjective||null,sharedCheckout:project.sharedCheckout===true,codeReviewVerdict:project.codeReviewVerdict||null,sourceObjectiveId:project.sourceObjectiveId||null,conversationId:project.conversationId||null,coordinationBrief:project.coordinationBrief,retryAt:project.retryAt,nextAction:project.nextAction,blocker:project.status==='BLOCKED'?project.handoff:null,promotedAt:promoted.length?Math.max(...promoted):null};
+      return {status:project.status,needsFreshReview:needsFreshProposalReview(project),engineerOwnsCheckout:engineerOwnsCheckout(project),pausedByObjective:project.pausedByObjective||null,sharedCheckout:project.sharedCheckout===true,codeReviewVerdict:project.codeReviewVerdict||null,sourceObjectiveId:project.sourceObjectiveId||null,conversationId:project.conversationId||null,coordinationBrief:project.coordinationBrief,retryAt:project.retryAt,nextAction:project.nextAction,blocker:project.status==='BLOCKED'?project.handoff:null,promotedAt:promoted.length?Math.max(...promoted):null};
     }catch{return null;}
   };
 }
