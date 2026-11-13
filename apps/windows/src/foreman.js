@@ -20,7 +20,16 @@ function projectContext(project) {
 
 function documentMetadata({id,revision,name,sha256,importedAt}) { return {id,revision,name,sha256,importedAt}; }
 
-/** Durable work is not permission to execute: activation lives only in this process. */
+function authorizedCapacityWait(project) {
+  return project.status==='WAITING_CAPACITY'&&project.autoHandoff===true&&
+    project.tasks.find(task=>task.status!=='COMPLETED')?.kind==='codex';
+}
+
+function waitingProvider(project) {
+  return project.tasks.find(task=>task.id===project.activeTask)?.attempts.at(-1)?.provider||'Codex or Claude';
+}
+
+/** Only authorized capacity waits carry activation across restart. */
 class Foreman {
   constructor(directory, { executor, now = Date.now, audit = () => {}, mayDispatch = () => true } = {}) {
     this.directory = directory; this.executor = executor; this.now = now; this.audit = audit; this.mayDispatch=mayDispatch;
@@ -39,15 +48,34 @@ class Foreman {
       name TEXT NOT NULL,sha256 TEXT NOT NULL,content TEXT NOT NULL,importedAt INTEGER NOT NULL,
       PRIMARY KEY(project,id,revision)
     )`);
-    for (const p of this.list()) if (ACTIVE.has(p.status)) { p.status='PAUSED'; p.nextAction='Resume explicitly to reconcile interrupted work'; this.save(p,'RECOVERED','Application reopened; execution remains paused'); }
+    for (const p of this.list()) {
+      if(!ACTIVE.has(p.status))continue;
+      const status=p.status;
+      const unchanged=current=>current.revision===p.revision&&current.status===status;
+      if(authorizedCapacityWait(p)&&!this.enabled.size){
+        p.nextAction='Recheck provider capacity on the saved schedule';
+        const restored=current=>unchanged(current)&&authorizedCapacityWait(current);
+        if(this.save(p,'RECOVERED',`${waitingProvider(p)}: capacity wait restored. ${p.nextAction}.`,null,null,restored)){
+          this.enabled.add(p.id);
+          this.schedule(p.id,p.retryAt||this.now());
+        }
+      }else{
+        p.status='PAUSED';p.nextAction='Resume explicitly to reconcile interrupted work';
+        const detail=status==='WAITING_CAPACITY'&&p.autoHandoff!==true
+          ?`${waitingProvider(p)}: saved provider authorization is missing. ${p.nextAction}.`
+          :'Application reopened; execution remains paused';
+        this.save(p,'RECOVERED',detail,null,null,unchanged);
+      }
+    }
   }
   list() { return this.db.prepare('SELECT body FROM projects ORDER BY rowid DESC').all().map(r=>JSON.parse(r.body)); }
   find(id) { const r=this.db.prepare('SELECT body FROM projects WHERE id=?').get(id); return r?JSON.parse(r.body):null; }
   get(id) { const project=this.find(id);if(!project)throw new Error('Unknown project');return project; }
-  save(p,kind,detail,receipt=null,writeExtra=null) {
-    p.revision++; p.updatedAt=this.now();
+  save(p,kind,detail,receipt=null,writeExtra=null,guard=null) {
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      if(guard&&!guard(this.get(p.id))){this.db.exec('ROLLBACK');return null;}
+      p.revision++; p.updatedAt=this.now();
       this.db.prepare('INSERT INTO projects VALUES(?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(p.id,JSON.stringify(p));
       this.db.prepare('INSERT INTO events(project,at,kind,detail) VALUES(?,?,?,?)').run(p.id,p.updatedAt,kind,String(detail).slice(0,4000));
       writeExtra?.();
@@ -241,23 +269,59 @@ class Foreman {
   }
   kick(id) {
     if(!this.enabled.has(id)||this.jobs.has(id)||this.closed)return;
+    clearTimeout(this.timers.get(id));this.timers.delete(id);
     const controller=new AbortController();const job={controller,promise:null};this.jobs.set(id,job);
-    job.promise=this.step(id,controller.signal).catch(e=>{this.enabled.delete(id);try{const p=this.get(id);p.status='BLOCKED';p.nextAction='Resolve storage/runtime error';this.save(p,'ERROR',e.message);}catch{}}).finally(()=>{this.jobs.delete(id);if(this.enabled.has(id)&&!this.timers.has(id))this.kick(id);});
+    job.promise=this.step(id,controller.signal).catch(e=>{this.enabled.delete(id);if(controller.signal.aborted)return;try{const p=this.get(id);p.status='BLOCKED';p.nextAction='Resolve storage/runtime error';this.save(p,'ERROR',e.message);}catch{}}).finally(()=>{this.jobs.delete(id);if(this.enabled.has(id)&&!this.timers.has(id))this.kick(id);});
   }
   async step(id,signal) {
     let p=this.get(id);
+    if(!ACTIVE.has(p.status)){this.enabled.delete(id);return;}
+    const awaitingCapacity=p.status==='WAITING_CAPACITY'&&p.tasks.find(t=>t.status!=='COMPLETED')?.kind==='codex';
+    if(awaitingCapacity&&!authorizedCapacityWait(p)){
+      this.enabled.delete(id);p.status='PAUSED';p.nextAction='Resume explicitly with provider authorization';
+      this.save(p,'PAUSED','Saved provider authorization is missing');return;
+    }
     if(!this.mayDispatch(p)){
       this.enabled.delete(id);p.status='PAUSED';p.nextAction='Resume the linked Nethra task first';this.save(p,'PAUSED','Linked Nethra task is paused or stopped');return;
     }
     if(p.retryAt>this.now()){this.schedule(id,p.retryAt);return;}
     const task=p.tasks.find(t=>t.status!=='COMPLETED');
     if(!task){p.status='COMPLETED';p.activeTask=null;p.nextAction=p.sharedCheckout?'Review verified changes in the canonical main checkout; engineering owns the commit':p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Review verified changes';this.enabled.delete(id);this.save(p,'COMPLETED','All approved tasks verified');return;}
-    p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
+    const revision=p.revision;
+    const waitIsCurrent=current=>!this.closed&&!signal.aborted&&this.enabled.has(id)&&
+      current.revision===revision&&authorizedCapacityWait(current)&&this.mayDispatch(current);
     const attempt={id:crypto.randomUUID(),startedAt:this.now(),status:'RUNNING'};task.attempts.push(attempt);
-    this.save(p,'ATTEMPT',`${task.kind}: ${task.title}`);
-    const checkpoint=fields=>{if(signal.aborted||!this.enabled.has(id))return;const current=this.get(id),t=current.tasks.find(t=>t.id===task.id);const attempt=t.attempts.at(-1);if((fields.provider||fields.phase==='verifying')&&!attempt.activeAt)attempt.activeAt=this.now();if(fields.tests?.length||fields.engineeringHandoff?.sourceHash)attempt.lastEvidenceAt=this.now();Object.assign(attempt,fields);if(fields.worktree)current.worktree=fields.worktree;if(Object.hasOwn(fields,'branch'))current.branch=fields.branch;this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');};
+    let claimed=false;
+    const claimDispatch=provider=>{
+      if(claimed||signal.aborted||this.closed)return false;
+      p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
+      if(awaitingCapacity){
+        attempt.provider=provider;attempt.activeAt=this.now();
+        p.nextAction='Execute and verify the approved task';
+      }
+      const detail=awaitingCapacity?`${provider}: dispatch claimed. ${p.nextAction}.`:`${task.kind}: ${task.title}`;
+      claimed=Boolean(this.save(p,'ATTEMPT',detail,null,null,awaitingCapacity?waitIsCurrent:null));
+      return claimed&&!signal.aborted;
+    };
+    const checkpoint=fields=>{
+      if(signal.aborted||!this.enabled.has(id))return;
+      const current=claimed?this.get(id):p;
+      const a=claimed?current.tasks.find(t=>t.id===task.id).attempts.at(-1):attempt;
+      if((fields.provider||fields.phase==='verifying')&&!a.activeAt)a.activeAt=this.now();
+      if(fields.tests?.length||fields.engineeringHandoff?.sourceHash)a.lastEvidenceAt=this.now();
+      Object.assign(a,fields);
+      if(fields.worktree)current.worktree=fields.worktree;
+      if(Object.hasOwn(fields,'branch'))current.branch=fields.branch;
+      if(claimed)this.save(current,'CHECKPOINT',fields.summary||'Execution checkpoint saved');
+    };
     try {
-      const result=await this.executor.run(p,task,{signal,checkpoint});
+      const result=awaitingCapacity&&this.executor.runCapacityWait
+        ?await this.executor.runCapacityWait(p,task,{signal,checkpoint,claimDispatch})
+        :claimDispatch(waitingProvider(p))?await this.executor.run(p,task,{signal,checkpoint}):null;
+      if(!claimed){
+        if(!signal.aborted&&this.get(id).status!=='WAITING_CAPACITY')this.enabled.delete(id);
+        return;
+      }
       if(signal.aborted||!this.enabled.has(id))return;
       p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);
       if(!Array.isArray(result.tests)||!result.tests.length||result.tests.some(t=>t.exitCode!==0))throw new Error('Verification failed; candidate retained for inspection');
@@ -268,15 +332,37 @@ class Foreman {
       p.verifiedSha=result.headSha;if(result.sharedSourceHash)p.sharedSourceHash=result.sharedSourceHash;if(promoted?.sourceHash)p.sourceHash=promoted.sourceHash;p.lastBackup=promoted?.backup||p.lastBackup;p.handoff=result.summary||task.title;p.nextAction=p.sharedCheckout?'Review verified changes in the canonical main checkout; engineering owns the commit':p.sourceObjectiveId||p.autoHandoff?'Review the exact patch in Work Activity, then Apply if approved':'Next owner instruction';this.save(p,'VERIFIED',p.handoff);
     }catch(error){
       if(signal.aborted||!this.enabled.has(id))return;
-      p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});
+      p=this.get(id);const t=p.tasks.find(t=>t.id===task.id);
+      if(claimed){t.status='QUEUED';Object.assign(t.attempts.at(-1),{status:'FAILED',error:String(error.message).slice(0,4000),finishedAt:this.now()});}
       const retry=Number.isFinite(error.retryAt)?error.retryAt:null;
+      if(!claimed){
+        if(p.status!=='WAITING_CAPACITY'){this.enabled.delete(id);return;}
+        if(retry){
+          p.retryAt=Math.max(this.now()+1000,retry);
+          p.nextAction=error.capacityDetail||'Recheck provider capacity on the saved schedule';
+          if(this.save(p,'WAITING',`${waitingProvider(p)}: capacity wait pending. ${p.nextAction}.`,null,null,waitIsCurrent))this.schedule(id,p.retryAt);
+        }else{
+          const blocked={...p,status:'BLOCKED',nextAction:'Review failure and Resume when resolved',handoff:`${task.title}: ${error.message}`};
+          if(this.save(blocked,'BLOCKED',blocked.handoff,null,null,waitIsCurrent))this.enabled.delete(id);
+        }
+        return;
+      }
       if(retry){p.status=p.autoHandoff?'WAITING_CAPACITY':'WAITING_CODEX';p.retryAt=Math.max(this.now()+1000,retry);p.nextAction=error.capacityDetail||'Wait for legitimate Codex availability';this.save(p,'WAITING',error.message);this.schedule(id,p.retryAt);}
       else{p.status='BLOCKED';p.nextAction='Review failure and Resume when resolved';p.handoff=`${task.title}: ${error.message}`;this.enabled.delete(id);this.save(p,'BLOCKED',p.handoff);}
     }
   }
   schedule(id,at){clearTimeout(this.timers.get(id));const timer=setTimeout(()=>{this.timers.delete(id);this.kick(id);},Math.min(2147483647,Math.max(1,at-this.now())));timer.unref?.();this.timers.set(id,timer);}
   async idle(){await Promise.all([...this.jobs.values()].map(j=>j.promise));if(this.jobs.size)return this.idle();}
-  async shutdown(){this.closed=true;for(const id of [...this.enabled]){const p=this.get(id);await this.control(id,'pause',p.revision,crypto.randomUUID());}await this.executor.stop?.();await this.idle();await Promise.allSettled([...this.operations.values()]);}
+  async shutdown(){
+    this.closed=true;
+    for(const id of [...this.enabled]){
+      const p=this.get(id);
+      if(authorizedCapacityWait(p)){
+        this.enabled.delete(id);clearTimeout(this.timers.get(id));this.timers.delete(id);this.jobs.get(id)?.controller.abort();
+      }else await this.control(id,'pause',p.revision,crypto.randomUUID());
+    }
+    await this.executor.stop?.();await this.idle();await Promise.allSettled([...this.operations.values()]);
+  }
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
 module.exports={Foreman,projectContext};

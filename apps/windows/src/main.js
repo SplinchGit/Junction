@@ -221,10 +221,12 @@ async function createWindowImpl() {
   const foremanDirectory = path.join(app.getPath("userData"), "foreman");
   const foremanExecutor=new ForemanExecutor(path.join(foremanDirectory,"projects"),{mayWrite:project=>Boolean(foreman?.mayDispatch(project))});
   foreman = new Foreman(foremanDirectory, {executor:foremanExecutor,audit:appendAudit,mayDispatch:project=>{
-    if(!project.sourceObjectiveId||!nethraStore)return true;
-    if(nethraStore.deletion(project.sourceObjectiveId))return false;
-    const task=nethraStore.get(project.sourceObjectiveId);
-    return require('./nethra-coordination').allowsCoordinationWork(task,project);
+    if(!project.sourceObjectiveId)return true;
+    if(!nethraStore||nethraStore.deletion(project.sourceObjectiveId))return false;
+    let task;
+    try{task=nethraStore.get(project.sourceObjectiveId);}catch(error){if(error.message==='Unknown Nethra task')return false;throw error;}
+    return task.allowCodeWork===true&&!['PAUSED','CANCELLED','FAILED','COMPLETED'].includes(task.status)&&
+      require('./nethra-coordination').allowsCoordinationWork(task,project);
   }});
   foremanApi = new ForemanApi(foreman, {
     conversationExists: id => Boolean(localData.conversation(id)),
@@ -599,9 +601,10 @@ app.on("before-quit", event => {
   shutdownPromise = (async () => {
     clearInterval(outcomeSweep);
     await nethraScheduler?.stop();
-    calendarSource?.stop(); gmailSource?.stop(); nethraStore?.close(); deviceCommands?.close();
+    calendarSource?.stop(); gmailSource?.stop();
     await foreman?.shutdown();
     foreman?.close();
+    nethraStore?.close(); deviceCommands?.close();
     await delegation?.shutdown?.();
     localBrainRelay?.stop();
     await worldHostRelay?.stop();

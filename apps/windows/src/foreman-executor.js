@@ -149,7 +149,7 @@ class ForemanExecutor{
   // Name the offending relative paths (never contents) so the owner and both engineers can see what to trim.
   const outside=files.filter(name=>!relative(name)||forbidden.test(name)||protectedPath(name)||(p.scopeFile&&name!==p.scopeFile));
   if(!files.length||outside.length)throw new Error('Owner review required: patch exceeds approved source scope or changes protected verification'+(outside.length?` (${outside.slice(0,3).map(name=>name.replace(/[^\w.\-\/ ]/g,'?').slice(0,120)).join(', ')}${outside.length>3?`, and ${outside.length-3} more`:''})`:''));
-  const sources=await this.claudeSources(cwd,{files},{changed:[],untracked:[]},protectedPath);
+  const sources=await this.claudeSources(cwd,{files},{changed:[],untracked:[]},protectedPath,{maxBytes:512*1024});
   if(files.some(name=>!Object.hasOwn(sources,name)))throw new Error('Patch requires additional file scope; no source changed');
   await this.applyClaudePatch(cwd,patch,sources,signal,()=>{if(!this.mayWrite(p))throw new Error('Owner direction or permission changed; no patch applied');});
  }
@@ -177,7 +177,7 @@ class ForemanExecutor{
   }
   return ()=>{if(JSON.parse(fs.readFileSync(file,'utf8')).nonce!==identity.nonce)throw new Error('Shared checkout writer ownership changed');fs.unlinkSync(file);};
  }
- async claudeSources(cwd,t,handoff,protectedPath){
+ async claudeSources(cwd,t,handoff,protectedPath,{maxBytes=96000}={}){
   const files=[...new Set([...(t.files||[]),...handoff.changed,...handoff.untracked])];
   const sources=Object.create(null);let bytes=0;
   for(const name of files){
@@ -185,7 +185,7 @@ class ForemanExecutor{
    const file=path.join(cwd,name);
    if(!fs.existsSync(file))continue;
    const stat=fs.lstatSync(file);
-   if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(file).startsWith(cwd+path.sep)||stat.size>48000||bytes+stat.size>96000)continue;
+   if(!stat.isFile()||stat.isSymbolicLink()||!fs.realpathSync(file).startsWith(cwd+path.sep)||stat.size>48000||bytes+stat.size>maxBytes)continue;
    const buffer=fs.readFileSync(file);if(buffer.includes(0))continue;
    sources[name]=buffer.toString('utf8');bytes+=stat.size;
   }
@@ -247,12 +247,13 @@ class ForemanExecutor{
   const confirmed=await this.claudeCapacity();
   return confirmed.ready?confirmed:{ready:false,retryAt:confirmed.retryAt||now+3600000};
  }
- async run(p,t,{signal,checkpoint}){
+ runCapacityWait(p,t,options){return this.run(p,t,options);}
+ async run(p,t,{signal,checkpoint,claimDispatch}){
   const release=p.sharedCheckout?await this.acquireWriter(p):null;
   let stopping;const interrupt=()=>{stopping=this.server.stop();};signal.addEventListener('abort',interrupt,{once:true});
-  try { return await this.runTask(p,t,{signal,checkpoint}); } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;release?.();}
+  try { signal.throwIfAborted();return await this.runTask(p,t,{signal,checkpoint,claimDispatch}); } finally {signal.removeEventListener('abort',interrupt);if(stopping)await stopping;release?.();}
  }
- async runTask(p,t,{signal,checkpoint}){
+ async runTask(p,t,{signal,checkpoint,claimDispatch}){
   const checks=validateVerification(p.verification);
   const candidate=await this.prepare(p,t,checkpoint,signal);
   p={...p,worktree:candidate};
@@ -290,6 +291,7 @@ class ForemanExecutor{
      }
      if(!(await this.claudeStatus()).subscription)throw Object.assign(new Error('Claude subscription sign-in is unavailable'),{retryAt:Math.min(capacity,Date.now()+300000),capacityDetail:'Waiting for Claude subscription sign-in or Codex capacity'});
      signal.throwIfAborted();
+     if(claimDispatch&&!claimDispatch('claude'))return;
      checkpoint({provider:'claude',engineeringHandoff:handoff,summary:'Claude continuing the scoped candidate'});
      let result;
      try{
@@ -314,10 +316,12 @@ class ForemanExecutor{
     }else{
      if(p.autoHandoff&&(await this.server.request('account/read',{refreshToken:false})).account?.type!=='chatgpt')throw Object.assign(new Error('Codex subscription sign-in is unavailable'),{retryAt:Date.now()+300000,capacityDetail:'Waiting for Codex subscription sign-in'});
      signal.throwIfAborted();
-     checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
      try{
       const before=p.sharedCheckout?await this.sourceHash(cwd,true):null;
       const model=p.sharedCheckout?COORDINATION_CODEX_MODEL:undefined;
+      signal.throwIfAborted();
+      if(claimDispatch&&!claimDispatch('codex'))return;
+      checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
       const result=await this.server.run({cwd,model,readOnly:p.sharedCheckout===true,prompt:engineeringPacket(p,t,{patchOnly:p.sharedCheckout===true}),signal,onTurnStarted:ids=>checkpoint({...ids,...(model?{model}:{})}),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
       if(p.sharedCheckout&&(!result.handoffRetryAt||result.text.trim().startsWith('diff --git ')))await this.applySharedPatch(p,cwd,result.text,checks,before,signal);
       if(result.handoffRetryAt){
