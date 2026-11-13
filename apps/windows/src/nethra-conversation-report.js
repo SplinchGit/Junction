@@ -95,6 +95,27 @@ function postOutcome(task,store,localData,{settings=null,date=new Date()}={}){
  */
 function postProgress(){return false;}
 
+function postCoordinationChat(task,localData,project=null){
+  if(!task.coordinateSelfImprovement||!task.conversationId||!localData?.conversation(task.conversationId))return false;
+  const id=task.conversationId;
+  let changed=false;
+  const post=(key,content)=>{
+    const digest=createHash('sha256').update(JSON.stringify([task.id,key])).digest('hex');
+    changed=localData.addMessageOnce(id,`coordination-${digest}`,'assistant',content,'JUNCTION').created||changed;
+  };
+  for(const [provider,label] of [['codex','Codex / OpenAI'],['claude','Claude / Anthropic']]){
+    const receipt=task.coordination?.advisors?.[provider];
+    if(receipt?.status==='completed'&&receipt.advice)post([provider,receipt.at,receipt.advice],`**${label}${receipt.model?` (${receipt.model})`:''}**\n\n${receipt.advice}`);
+  }
+  if(project&&project.id===task.coordination?.workId){
+    const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts?.at(-1);
+    const provider=attempt?.provider==='claude'?'Claude / Anthropic':attempt?.provider==='codex'?'Codex / OpenAI':null;
+    const detail=project.status==='BLOCKED'?project.handoff:project.nextAction;
+    if(detail)post([project.id,project.status,attempt?.id,attempt?.phase,provider,detail,project.retryAt],`**Nethra · Work Activity**\n\n${provider?`${provider} · `:''}${project.status}\n\n${String(detail).slice(0,900)}${Number.isFinite(project.retryAt)?`\n\nNext check: ${new Date(project.retryAt).toISOString()}`:''}`);
+  }
+  return changed;
+}
+
 /** Shared host settle hook; message identities, not an in-memory summary set, deduplicate episodes. */
 function postTaskReports(task,store,localData,{date=new Date()}={}){
   if(!task.conversationId||!localData?.conversation(task.conversationId)||store.deletion?.(task.id))return false;
@@ -256,4 +277,4 @@ function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>
   return policy.quiet?'hold':'deliver';
 }
 
-module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,deliveryPolicy,outcomeText};
+module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,postCoordinationChat,deliveryPolicy,outcomeText};

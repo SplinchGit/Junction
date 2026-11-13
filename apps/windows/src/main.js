@@ -52,6 +52,7 @@ const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
 const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
+const { postCoordinationChat } = require('./nethra-conversation-report');
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
 let companion, identityStore, identity, auditPath, localData, delegation, localBrainRelay, researchClient, researchCoordinator, localAgent, lanServer, worldBridge, worldAuditStore, worldControlStore, worldChatStore, worldHostRelay, sharedFeed=[], lastSharedSync=null, sharedSyncPromise=null, sharedSyncTimer=null, mainWindow=null, windowCreation=null, isQuitting=false, shutdownPromise=null;
@@ -96,6 +97,7 @@ function deliverObjectiveUpdates() {
   for (const task of tasks) {
     try {
       queueOutcomeNotification(task,nethraStore,deviceCommands);
+      if (postCoordinationChat(task,localData,foreman.find(task.coordination?.workId||''))) changed = true;
       if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
       if (postMilestones(task, nethraStore, localData, { settings })) changed = true;
       if (postQuestions(task, nethraStore, localData, { settings })) changed = true;
@@ -446,7 +448,8 @@ async function syncSharedState(){
 function reportObjectiveOutcome(task) {
   queueOutcomeNotification(task,nethraStore,deviceCommands);
   if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
-  if(!postTaskReports(task,nethraStore,localData))return;
+  const coordinationPosted=postCoordinationChat(task,localData,foreman.find(task.coordination?.workId||''));
+  if(!postTaskReports(task,nethraStore,localData)&&!coordinationPosted)return;
   scheduleSharedSync();
   mainWindow?.webContents.send('junction:conversations-changed');
 }
