@@ -21,8 +21,12 @@ function projectContext(project) {
 function documentMetadata({id,revision,name,sha256,importedAt}) { return {id,revision,name,sha256,importedAt}; }
 
 function authorizedCapacityWait(project) {
-  return project.status==='WAITING_CAPACITY'&&project.autoHandoff===true&&
+  return !engineerOwnsCheckout(project)&&project.status==='WAITING_CAPACITY'&&project.autoHandoff===true&&
     project.tasks.find(task=>task.status!=='COMPLETED')?.kind==='codex';
+}
+
+function engineerOwnsCheckout(project) {
+  return project.sharedCheckout===true&&Boolean(project.sourceObjectiveId);
 }
 
 function waitingProvider(project) {
@@ -248,6 +252,7 @@ class Foreman {
       this.save(p,'CAPACITY_RECHECK','Owner requested a fresh availability check',{id:requestId,binding});this.kick(id);return this.get(id);
     }
     if(action==='start'||action==='resume') {
+      if(engineerOwnsCheckout(p))throw new Error('Codex or Claude must pick up this work in an engineering session.');
       if(autoHandoff!==undefined&&typeof autoHandoff!=='boolean')throw new Error('Invalid provider handoff approval');
       if(this.closed)throw new Error('Junction is quitting');
       if(!this.mayDispatch(p))throw new Error('Resume the linked Nethra task first');
@@ -368,4 +373,4 @@ class Foreman {
   }
   close(){this.closed=true;for(const t of this.timers.values())clearTimeout(t);this.timers.clear();this.enabled.clear();for(const j of this.jobs.values())j.controller.abort();this.db.close();}
 }
-module.exports={Foreman,projectContext,waitingProvider};
+module.exports={Foreman,projectContext,waitingProvider,engineerOwnsCheckout};

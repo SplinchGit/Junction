@@ -12,7 +12,9 @@ const coordinationContinue=/^continue co[- ]?ordination[.!]*$/i;
 const dualProviderStart=/^(?:please\s+)?start (?:the (?:approved )?pilot )?with codex and claude[.!]*$/i;
 const workControl=/^(?:please\s+)?(?:start|start scoped work|start with codex and claude|continue(?: co[- ]?ordination)?|resume|keep going|carry on)[.!]*$/i;
 const emptyDirection=/^(?:here|there|this|that|it|this chat|this conversation)[.!?]*$/i;
-const draftStartMessage=work=>work?.sharedCheckout
+const draftStartMessage=work=>work?.engineerOwnsCheckout
+  ?'Draft saved in Work Activity for Codex or Claude to pick up.'
+  :work?.sharedCheckout
   ?'Draft saved. Reply “Start with Codex and Claude” in this task chat to authorize engineering and handoffs.'
   :'Draft saved. Start it in Work Activity to authorize engineering.';
 function pilotChoice(text){
@@ -224,6 +226,9 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   }
   const work=tools.workStatus?.(state.workId);
   if(!work)return sleep(now()+COORDINATION_RECHECK_MS,'Work Activity record unavailable. Check the linked draft.');
+  if(work.engineerOwnsCheckout&&work.status!=='COMPLETED'){
+    return sleep(now()+COORDINATION_RECHECK_MS,work.status==='STOPPED'?'Engineering work was stopped.':'Work is in Work Activity for Codex or Claude to pick up in an engineering session.');
+  }
   // A continuous task starts its reviewed draft under the same checks the owner's typed Start applies.
   if(work.status==='DRAFT'&&unattended()&&startWork&&work.sharedCheckout&&work.codeReviewVerdict==='READY'&&
      work.sourceObjectiveId===task.id&&work.conversationId===task.conversationId&&work.coordinationBrief===state.brief&&!store.approvals?.(task.id).some(item=>item.status==='PENDING')){
