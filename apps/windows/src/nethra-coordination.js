@@ -2,7 +2,7 @@
 const {createHash}=require('node:crypto');
 const {ownerQuestion}=require('./nethra-task-contract');
 const {wakeReason}=require('./nethra-scheduler');
-const HALF_HOUR=30*60_000;
+const COORDINATION_RECHECK_MS=5*60_000;
 const PROVIDERS=['codex','claude'];
 const BRIEF='Nethra is a persistent local companion with Tasks, Android pairing, voice, notifications, project context and Foreman. Nethra schedules; Codex and Claude engineer on shared main. Independently propose one small improvement. Return exactly three plain lines: Friction: one sentence; Improvement: one sentence under 240 characters; Test: measurable acceptance in 30–400 characters. Advice only, no implementation claims.';
 
@@ -135,7 +135,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
   }
 
   if(!task.allowCodeWork||task.privateProjectWork){
-    return sleep(now()+HALF_HOUR,task.privateProjectWork?'Coordination needs a task approved for external advisors.':'Enable Codex and Claude development work in the Windows task settings.');
+    return sleep(now()+COORDINATION_RECHECK_MS,task.privateProjectWork?'Coordination needs a task approved for external advisors.':'Enable Codex and Claude development work in the Windows task settings.');
   }
   if(state.stage==='revision_needed'){
     return ask(`The approved pilot needs a clearer scope or test before I can save a draft. ${state.draftReview} Reply “GPT brief: …” with the change you want reviewed.`, 'revision_needed');
@@ -167,7 +167,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
         receipt={status:'completed',advice:result.advice.slice(0,2800),model:result.model,at:now()};
       }catch(error){
         signal?.throwIfAborted();
-        receipt={status:'waiting',reason:String(error.message).slice(0,300),retryAt:Number.isFinite(error.retryAt)?Math.max(now()+1000,error.retryAt+60_000):now()+HALF_HOUR};
+        receipt={status:'waiting',reason:String(error.message).slice(0,300),retryAt:Number.isFinite(error.retryAt)?Math.max(now()+1000,error.retryAt+60_000):now()+COORDINATION_RECHECK_MS};
       }
       state={...state,advisors:{...state.advisors,[provider]:receipt}};
       await persist({summary:receipt.status==='completed'?`Saved advice from ${provider}.`:`Waiting for ${provider}: ${receipt.reason}`},'COORDINATION_ADVISOR_RESULT');
@@ -176,7 +176,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     // A resting provider does not hold up a continuous task while the other has a bounded proposal;
     // the independent review still happens before any draft is saved or started.
     const onlyWaiting=waiting.length&&unattended()&&autoPilotProvider(state,preferred());
-    if(waiting.length&&!onlyWaiting)return sleep(Math.min(...waiting.map(provider=>state.advisors[provider]?.retryAt||now()+HALF_HOUR)),`Waiting for ${waiting.join(' and ')} consultation.`);
+    if(waiting.length&&!onlyWaiting)return sleep(Math.min(...waiting.map(provider=>state.advisors[provider]?.retryAt||now()+COORDINATION_RECHECK_MS)),`Waiting for ${waiting.join(' and ')} consultation.`);
     state={...state,stage:'decision',questionId:null};
     await persist({summary:'Advisor proposals saved.'},'COORDINATION_PROPOSALS_READY');
   }
@@ -209,7 +209,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     try{result=await tools.execute('propose_code_work',state.selected,current,{signal,token});}
     catch(error){
       signal?.throwIfAborted();
-      const at=Number.isFinite(error.retryAt)?Math.max(now()+1000,error.retryAt+60_000):now()+HALF_HOUR;
+      const at=Number.isFinite(error.retryAt)?Math.max(now()+1000,error.retryAt+60_000):now()+COORDINATION_RECHECK_MS;
       return sleep(at,`Draft pending: ${String(error.message).slice(0,200)}`);
     }
     if(!result.workId){
@@ -220,7 +220,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     await persist({summary:draftStartMessage(tools.workStatus?.(result.workId))},'COORDINATION_DRAFT_READY');
   }
   const work=tools.workStatus?.(state.workId);
-  if(!work)return sleep(now()+HALF_HOUR,'Work Activity record unavailable. Check the linked draft.');
+  if(!work)return sleep(now()+COORDINATION_RECHECK_MS,'Work Activity record unavailable. Check the linked draft.');
   // A continuous task starts its reviewed draft under the same checks the owner's typed Start applies.
   if(work.status==='DRAFT'&&unattended()&&startWork&&work.sharedCheckout&&work.codeReviewVerdict==='READY'&&
      work.sourceObjectiveId===task.id&&work.conversationId===task.conversationId&&work.coordinationBrief===state.brief&&!store.approvals?.(task.id).some(item=>item.status==='PENDING')){
@@ -252,7 +252,7 @@ async function runCoordination(task,{tools,store,checkpoint,signal,token,startWo
     state={stage:'consulting',advisors:{},...carry(),completedWork};
     return persist({status:'SLEEPING',nextWakeAt:now()+1000,summary:`${work.nextAction||'Engineering completed.'} Preparing the next bounded improvement.`},'COORDINATION_WORK_COMPLETED');
   }
-  return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+HALF_HOUR,
+  return sleep(Number.isFinite(work.retryAt)&&work.retryAt>now()?work.retryAt:now()+COORDINATION_RECHECK_MS,
     work.status==='DRAFT'?draftStartMessage(work):work.nextAction||`Work Activity: ${work.status}.`);
 }
 module.exports={runsContinuously,ownerPreference,collaboratorNote,runCoordination,selfImprovementTask,ownerBrief,allowsCoordinationWork,pilotChoice,coordinationContinue,dualProviderStart,workControl,emptyDirection,draftStartMessage};
