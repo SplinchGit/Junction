@@ -1,5 +1,7 @@
 'use strict';
 const {createHash}=require('node:crypto');
+const {existsSync}=require('node:fs');
+const {join}=require('node:path');
 const {inQuietHours,waitingFor}=require('./nethra-progress');
 const {openQuestions}=require('./nethra-task-contract');
 
@@ -117,6 +119,19 @@ function postCoordinationChat(task,localData,project=null){
     }
   }
   if(project&&project.id===task.coordination?.workId){
+    const queued=project.tasks?.find(step=>step.status==='QUEUED');
+    const approved=project.sourceObjectiveId===task.id&&project.codeReviewVerdict==='READY'
+      &&Number.isFinite(task.coordination.approvedAt)&&task.coordination.brief===project.coordinationBrief;
+    if(queued&&approved&&['DRAFT','RUNNING','WAITING_CAPACITY','WAITING_CODEX','PAUSED','STOPPED'].includes(project.status)){
+      const provider=queued.attempts?.at(-1)?.provider||queued.kind;
+      const label=provider==='codex'?'Codex / OpenAI':provider==='claude'?'Claude / Anthropic':'Awaiting assignment';
+      const latest=queued.attempts?.at(-1);
+      const evidence=latest?.headSha||project.reviewed?.diffHash||`work:${project.id}`;
+      const fenced=['PAUSED','CANCELLED'].includes(task.status)||['PAUSED','STOPPED'].includes(project.status);
+      const locked=project.sharedCheckout&&project.repoPath&&existsSync(join(project.repoPath,'.git','nethra-writer.lock'));
+      const next=fenced?'Resume explicitly':locked?'Wait for the shared writer lock to clear':project.nextAction||'Await engineering pickup';
+      post(['queue',project.id,queued.id,task.coordination.approvedAt,label,evidence,next],`**Nethra · Engineering queue receipt**\n\n${queued.title}\n\nApproval: Approved · ${new Date(task.coordination.approvedAt).toISOString()}\nProvider: ${label}\nEvidence: ${evidence}\nNext action: ${next}`);
+    }
     const attempt=project.tasks?.find(item=>item.id===project.activeTask)?.attempts?.at(-1);
     const provider=attempt?.provider==='claude'?'Claude / Anthropic':attempt?.provider==='codex'?'Codex / OpenAI':null;
     const detail=project.status==='BLOCKED'?project.handoff:project.nextAction;
