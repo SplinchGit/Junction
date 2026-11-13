@@ -67,9 +67,11 @@ function parseClaudeStream(output) {
 const ADVISOR_SYSTEM = "You are a technical advisor to Nethra, a local agent working on an owner-approved objective inside the Junction app. You have no tools and cannot see files, run code or browse. Give concise, concrete, verifiable advice in at most 250 words. Say what should be measured to confirm it. Never claim to have done anything.";
 
 /** One tool-less, settings-less, non-persisted Claude turn. The prompt travels on stdin, never a shell. */
-function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", systemPrompt = ADVISOR_SYSTEM, subscriptionOnly = false, signal, onRateLimit = () => {}, launch = spawn, executable = resolveClaudeExecutable() }) {
+function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", systemPrompt = ADVISOR_SYSTEM, subscriptionOnly = false, sessionId, resumeSessionId, signal, onRateLimit = () => {}, launch = spawn, executable = resolveClaudeExecutable() }) {
   signal?.throwIfAborted();
-  const args = ["-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--model", model, "--system-prompt", systemPrompt];
+  // Engineering turns keep a saved transcript so a later handoff resumes the same session. Still no tools.
+  const session = resumeSessionId ? ["--resume", resumeSessionId] : sessionId ? ["--session-id", sessionId] : ["--no-session-persistence"];
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--setting-sources", "", ...session, "--model", model, "--system-prompt", systemPrompt];
   return new Promise((resolve, reject) => {
     const env = subscriptionOnly ? Object.fromEntries(Object.entries(process.env).filter(([key]) =>
       !/^(ANTHROPIC_(API_KEY|AUTH_TOKEN|BASE_URL)|CLAUDE_CODE_(OAUTH_TOKEN|USE_BEDROCK|USE_VERTEX|USE_FOUNDRY))$/i.test(key))) : process.env;
@@ -90,7 +92,7 @@ function sendClaudeConsult({ prompt, workingDirectory, model = "sonnet", systemP
       if (parsed.rateLimit?.limitReached) return finish(Object.assign(new Error("Claude usage limit reached"), { rateLimit: parsed.rateLimit }));
       if (code !== 0 || parsed.isError) return finish(new Error((parsed.content || stderr.trim() || "Claude stopped before replying.").slice(0, 400)));
       if (!parsed.content) return finish(new Error("Claude completed without a reply."));
-      finish(null, { content: parsed.content, model: parsed.model || model, usage: parsed.usage, rateLimit: parsed.rateLimit });
+      finish(null, { content: parsed.content, model: parsed.model || model, usage: parsed.usage, rateLimit: parsed.rateLimit, sessionId: resumeSessionId || sessionId || null });
     });
     child.stdin.on("error", () => {});
     child.stdin.end(prompt);

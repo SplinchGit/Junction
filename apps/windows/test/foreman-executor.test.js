@@ -121,6 +121,28 @@ test('WP4b: a falling Codex credit balance blocks the attempt and is recorded',a
  assert.equal(drifted.saved.find(f=>f.capacity).capacity.codex.credits.balance,'5.00');
  assert.equal((await run(false)).saved.some(f=>f.creditDrift),false);
 });
+test('D3: a later Claude handoff resumes the saved session and falls back to a fresh one if it is gone',async()=>{
+ const repo=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-resume-'));
+ execFileSync('git',['init','-b','main'],{cwd:repo});fs.writeFileSync(path.join(repo,'a.js'),'1\n');
+ execFileSync('git',['add','--all'],{cwd:repo});execFileSync('git',['-c','user.name=Test','-c','user.email=test@localhost','commit','-m','fixture'],{cwd:repo});
+ const future=Math.floor(Date.now()/1000)+1800;
+ const calls=[],saved=[];let gone=false;
+ const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:97,resetsAt:future}}}),request:async()=>({account:{type:'chatgpt'}}),stop:async()=>{}};
+ const runClaude=async o=>{calls.push({resume:o.resumeSessionId,id:o.sessionId});if(o.resumeSessionId&&gone)throw new Error('No conversation found with session ID');return {content:'JUNCTION_DECISION_REQUIRED: stop'};};
+ const executor=new ForemanExecutor(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-resume-state-')),{server,advisorLimits:{snapshot:async()=>({checkedAt:Date.now(),windows:[{name:'five_hour',usedPercent:1,resetsAt:future*1000}]})},claudeStatus:async()=>({subscription:true}),runClaude});
+ const inspected=await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]});
+ const project={id:'p',autoHandoff:true,objective:'x',handoff:'x',decisions:[],scopeFile:'a.js',...inspected};
+ const task={id:'t',title:'x',kind:'codex',acceptance:'x',files:['a.js'],attempts:[{id:'a1'}]};
+ const options={signal:new AbortController().signal,checkpoint:f=>{saved.push(f);Object.assign(task.attempts.at(-1),f);}};
+ await assert.rejects(executor.run(project,task,options),/JUNCTION_DECISION_REQUIRED/);
+ assert.equal(calls[0].resume,undefined);assert.match(calls[0].id,/^[0-9a-f-]{36}$/);
+ task.attempts.push({id:'a2'});
+ await assert.rejects(executor.run(project,task,options),/JUNCTION_DECISION_REQUIRED/);
+ assert.equal(calls[1].resume,calls[0].id);
+ gone=true;task.attempts.push({id:'a3'});
+ await assert.rejects(executor.run(project,task,options),/JUNCTION_DECISION_REQUIRED/);
+ assert.equal(calls[2].resume,calls[0].id);assert.notEqual(calls[3].id,calls[0].id);assert.equal(calls[3].resume,undefined);
+});
 test('plain local folders are accepted without adding Git metadata to them',async()=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-'));fs.writeFileSync(path.join(folder,'scene.txt'),'home\n');
  const executor=new ForemanExecutor(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-state-')),{server:{stop:async()=>{}}});

@@ -324,9 +324,16 @@ class ForemanExecutor{
      checkpoint({provider:'claude',engineeringHandoff:handoff,summary:'Claude continuing the scoped candidate'});
      let result;
      try{
-      result=await this.runClaude({workingDirectory:cwd,prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources),
-        subscriptionOnly:true,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
+      // Resume this task's earlier Claude session when it ran in the same directory; the session is saved before the turn.
+      const earlier=t.attempts.slice(0,-1).reverse().find(a=>a.claudeSession?.cwd===cwd)?.claudeSession;
+      const call=(session)=>this.runClaude({workingDirectory:cwd,prompt:engineeringPacket(p,t,{patchOnly:true})+'\nHandoff: '+JSON.stringify(handoff)+'\nApproved editable source: '+JSON.stringify(sources)+(session.resumeSessionId?'\nThis continues your earlier session on this task. The files above are their current state; trust them over your memory.':''),
+        subscriptionOnly:true,...session,systemPrompt:'Implement the approved task as a unified Git diff only. Edit only the supplied files. You have no tools. Return JUNCTION_DECISION_REQUIRED if more files or authority are required.',signal,
         onRateLimit:snapshot=>this.advisorLimits?.recordClaude(snapshot)});
+      const fresh=()=>{const id=crypto.randomUUID();checkpoint({claudeSession:{id,cwd}});return {sessionId:id};};
+      if(earlier){checkpoint({claudeSession:earlier});try{result=await call({resumeSessionId:earlier.id});}catch(error){
+       if(signal.aborted||error.rateLimit||!/no conversation found|session/i.test(error.message))throw error;
+       result=await call(fresh());}}
+      else result=await call(fresh());
      }catch(error){
       if(signal.aborted)throw error;
       const rejection=error.rateLimit||(/\b(?:usage limit reached|rate limit exceeded|you(?:'ve| have) hit your limit)\b/i.test(error.message)?{limitReached:true,limitResetsAt:null,windows:[]}:null);

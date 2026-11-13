@@ -46,6 +46,17 @@ test('a Claude consultation has no tools, MCP servers, user settings or saved se
   assert.equal(recorded.length,1);
 });
 
+test('an engineering Claude turn saves or resumes a session and still has no tools or settings',async()=>{
+  for(const [opts,flag]of [[{sessionId:'11111111-1111-4111-8111-111111111111'},'--session-id'],[{resumeSessionId:'22222222-2222-4222-8222-222222222222'},'--resume']]){
+    const capture={};
+    const reply=await sendClaudeConsult({prompt:'p',executable:'claude.exe',...opts,launch:fakeChild([resultEvent('ok')],0,capture)});
+    assert.equal(capture.args[capture.args.indexOf(flag)+1],Object.values(opts)[0]);
+    assert.ok(!capture.args.includes('--no-session-persistence'));
+    assert.equal(capture.args[capture.args.indexOf('--tools')+1],'');
+    assert.equal(reply.sessionId,Object.values(opts)[0]);
+  }
+});
+
 test('a rejected Claude turn is reported as a usage limit and still records the window',async()=>{
   const recorded=[];
   await assert.rejects(sendClaudeConsult({prompt:'q',executable:'claude.exe',onRateLimit:item=>recorded.push(item),launch:fakeChild([rateEvent('rejected',1,0.5),{type:'result',is_error:true,result:'Usage limit reached'}],1)}),error=>error.rateLimit?.limitReached===true);
