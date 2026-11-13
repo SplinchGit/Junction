@@ -1,0 +1,317 @@
+{
+ "note": "Synthetic owner for the Project Samantha M4 memory baseline. Every fact is fictional. Facts are stated in order over one simulated week ending 13 Nov 2026. This fixture is fixed: do not edit questions or expectations to fit a result. Revision 2 (before any source change): added three corrections stated without correction wording (update-bare), because the first run showed the worded corrections were answerable from their own text.",
+ "today": "2026-11-13",
+ "facts": [
+  {
+   "id": "dentist",
+   "statedAt": "2026-11-06",
+   "category": "health",
+   "content": "My dentist is Dr Okafor at Bridge Street Dental."
+  },
+  {
+   "id": "supervisor-1",
+   "statedAt": "2026-11-06",
+   "category": "work",
+   "content": "My project supervisor is Dr Hale."
+  },
+  {
+   "id": "climbing-1",
+   "statedAt": "2026-11-06",
+   "category": "routine",
+   "content": "I go climbing on Tuesdays."
+  },
+  {
+   "id": "bank-1",
+   "statedAt": "2026-11-06",
+   "category": "money",
+   "content": "My bank is Northway Bank."
+  },
+  {
+   "id": "desk-1",
+   "statedAt": "2026-11-06",
+   "category": "work",
+   "content": "My desk is on the third floor."
+  },
+  {
+   "id": "takeaway-1",
+   "statedAt": "2026-11-06",
+   "category": "food",
+   "content": "My favourite takeaway is Saffron House."
+  },
+  {
+   "id": "key",
+   "statedAt": "2026-11-07",
+   "category": "home",
+   "content": "The spare key is kept with my neighbour Priya at number 14."
+  },
+  {
+   "id": "allergy",
+   "statedAt": "2026-11-07",
+   "category": "health",
+   "content": "I am allergic to penicillin."
+  },
+  {
+   "id": "deadline-1",
+   "statedAt": "2026-11-07",
+   "category": "work",
+   "content": "The Larkfield report deadline is 4 December."
+  },
+  {
+   "id": "car-1",
+   "statedAt": "2026-11-08",
+   "category": "car",
+   "content": "My car is a blue Skoda Fabia."
+  },
+  {
+   "id": "sister",
+   "statedAt": "2026-11-08",
+   "category": "family",
+   "content": "My sister Maren lives in Leeds."
+  },
+  {
+   "id": "birthday",
+   "statedAt": "2026-11-08",
+   "category": "family",
+   "content": "Maren's birthday is 9 March."
+  },
+  {
+   "id": "gym",
+   "statedAt": "2026-11-09",
+   "category": "money",
+   "content": "My gym membership costs 32 pounds a month."
+  },
+  {
+   "id": "supervisor-2",
+   "statedAt": "2026-11-09",
+   "category": "work",
+   "supersedes": "supervisor-1",
+   "content": "Dr Hale has left. My project supervisor is Dr Imani Brandt."
+  },
+  {
+   "id": "climbing-2",
+   "statedAt": "2026-11-10",
+   "category": "routine",
+   "supersedes": "climbing-1",
+   "content": "I moved my climbing session to Thursdays."
+  },
+  {
+   "id": "phone",
+   "statedAt": "2026-11-10",
+   "category": "money",
+   "content": "My phone contract costs 18 pounds a month."
+  },
+  {
+   "id": "partner",
+   "statedAt": "2026-11-11",
+   "category": "family",
+   "content": "Maren's partner is called Tobias."
+  },
+  {
+   "id": "deadline-2",
+   "statedAt": "2026-11-11",
+   "category": "work",
+   "supersedes": "deadline-1",
+   "content": "The Larkfield report deadline moved to 11 December."
+  },
+  {
+   "id": "flight",
+   "statedAt": "2026-11-12",
+   "category": "travel",
+   "content": "I am flying to Lisbon on 18 December from Manchester."
+  },
+  {
+   "id": "car-2",
+   "statedAt": "2026-11-12",
+   "category": "car",
+   "supersedes": "car-1",
+   "content": "I sold the Skoda. My car is a grey Toyota Yaris."
+  },
+  {
+   "id": "bank-2",
+   "statedAt": "2026-11-12",
+   "category": "money",
+   "supersedes": "bank-1",
+   "content": "My bank is Calder Union."
+  },
+  {
+   "id": "desk-2",
+   "statedAt": "2026-11-13",
+   "category": "work",
+   "supersedes": "desk-1",
+   "content": "My desk is on the first floor."
+  },
+  {
+   "id": "takeaway-2",
+   "statedAt": "2026-11-13",
+   "category": "food",
+   "supersedes": "takeaway-1",
+   "content": "My favourite takeaway is Golden Wok."
+  }
+ ],
+ "questions": [
+  {
+   "id": "E1",
+   "ability": "extraction",
+   "question": "Who is my dentist?",
+   "expect": [
+    "Okafor"
+   ]
+  },
+  {
+   "id": "E2",
+   "ability": "extraction",
+   "question": "Which neighbour has my spare key?",
+   "expect": [
+    "Priya"
+   ]
+  },
+  {
+   "id": "E3",
+   "ability": "extraction",
+   "question": "What medicine am I allergic to?",
+   "expect": [
+    "penicillin"
+   ]
+  },
+  {
+   "id": "M1",
+   "ability": "multi-session",
+   "question": "Which city does my sister live in, and when is her birthday?",
+   "expect": [
+    "Leeds",
+    "9(th)? (of )?March|March 9"
+   ]
+  },
+  {
+   "id": "M2",
+   "ability": "multi-session",
+   "question": "What do my gym membership and my phone contract cost together each month?",
+   "expect": [
+    "\\b50\\b"
+   ]
+  },
+  {
+   "id": "M3",
+   "ability": "multi-session",
+   "question": "What is the name of my sister's partner?",
+   "expect": [
+    "Tobias"
+   ]
+  },
+  {
+   "id": "T1",
+   "ability": "time",
+   "question": "On what date did I tell you about my penicillin allergy?",
+   "expect": [
+    "7(th)? (of )?Nov|Nov(ember)? 7|2026-11-07"
+   ]
+  },
+  {
+   "id": "T2",
+   "ability": "time",
+   "question": "What was the Larkfield report deadline before it moved, and on what date did I tell you it had moved?",
+   "expect": [
+    "4(th)? (of )?Dec|Dec(ember)? 4",
+    "11(th)? (of )?Nov|Nov(ember)? 11|2026-11-11"
+   ]
+  },
+  {
+   "id": "T3",
+   "ability": "time",
+   "question": "How many days ago did I tell you I had changed my climbing day?",
+   "expect": [
+    "\\b(3|three)\\b"
+   ]
+  },
+  {
+   "id": "U1",
+   "ability": "update",
+   "question": "Who is my project supervisor?",
+   "expect": [
+    "Brandt"
+   ],
+   "reject": [
+    "supervisor is Dr\\.? Hale\\b(?! has left)"
+   ]
+  },
+  {
+   "id": "U2",
+   "ability": "update",
+   "question": "Which day of the week do I go climbing?",
+   "expect": [
+    "Thursday"
+   ]
+  },
+  {
+   "id": "U3",
+   "ability": "update",
+   "question": "What car do I drive?",
+   "expect": [
+    "Yaris"
+   ],
+   "reject": [
+    "drive a (blue )?Skoda"
+   ]
+  },
+  {
+   "id": "U4",
+   "ability": "update-bare",
+   "question": "Which bank am I with?",
+   "expect": [
+    "Calder Union"
+   ],
+   "reject": [
+    "with Northway"
+   ]
+  },
+  {
+   "id": "U5",
+   "ability": "update-bare",
+   "question": "Which floor is my desk on?",
+   "expect": [
+    "first"
+   ],
+   "reject": [
+    "on the third floor(?!.*(previous|earlier|before|used to|moved|was))"
+   ]
+  },
+  {
+   "id": "U6",
+   "ability": "update-bare",
+   "question": "What is my favourite takeaway?",
+   "expect": [
+    "Golden Wok"
+   ],
+   "reject": [
+    "is Saffron House"
+   ]
+  },
+  {
+   "id": "A1",
+   "ability": "abstain",
+   "question": "What is my blood type?",
+   "abstain": true,
+   "reject": [
+    "\\b(AB|A|B|O)\\s?(\\+|-|positive|negative)"
+   ]
+  },
+  {
+   "id": "A2",
+   "ability": "abstain",
+   "question": "What is my sister's phone number?",
+   "abstain": true,
+   "reject": [
+    "\\d{5,}"
+   ]
+  },
+  {
+   "id": "A3",
+   "ability": "abstain",
+   "question": "Which airline am I flying with to Lisbon?",
+   "abstain": true,
+   "reject": [
+    "\\b(TAP|Ryanair|easyJet|British Airways|Jet2)\\b(?!.*(don't|do not|haven't|not sure|might|could|may))"
+   ]
+  }
+ ]
+}
