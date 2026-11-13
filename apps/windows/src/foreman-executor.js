@@ -25,6 +25,15 @@ function retryDeadline(value,now=Date.now()){
  for(const g of groups){const reached=Boolean(g.rateLimitReachedType);for(const w of [g.primary,g.secondary].filter(Boolean)){if(!Number.isFinite(w.usedPercent)){unknown=true;continue;}const reset=Number.isFinite(w.resetsAt)?w.resetsAt*1000:null;if(w.usedPercent>=95||reached){if(reset!==null&&reset+60000>now)deadlines.push(reset+60000);else unknown=true;}else if(reset!==null&&reset<=now)unknown=true;}if(reached&&!g.primary&&!g.secondary)unknown=true;}
  return deadlines.length?Math.max(...deadlines,unknown?now+300000:0):unknown?now+300000:null;
 }
+function creditState(snapshot){
+ const c=snapshot?.rateLimits?.credits;
+ return c&&typeof c.hasCredits==='boolean'&&typeof c.unlimited==='boolean'?{hasCredits:c.hasCredits,unlimited:c.unlimited,balance:typeof c.balance==='string'?c.balance:null}:null;
+}
+// Purchased-credit balance as a number, or null when absent, unlimited or unparseable.
+function creditBalance(snapshot){
+ const c=creditState(snapshot);if(!c||c.unlimited||c.balance===null)return null;
+ const n=Number(c.balance);return Number.isFinite(n)?n:null;
+}
 const CLAUDE_UNKNOWN_LIMIT_RECHECK_MS=30*60*1000;
 function claudeRetryDeadline(snapshot){
  const resets=(snapshot?.windows||[]).filter(window=>window.usedPercent>=95).map(window=>window.resetsAt);
@@ -282,11 +291,12 @@ class ForemanExecutor{
    if(t.kind!=='verify'&&!savedVerification){
     let capacity,codexSnapshot;
     try{codexSnapshot=await this.server.readRateLimits();capacity=retryDeadline(codexSnapshot);}catch{capacity=Date.now()+300000;}
+    const creditsBefore=creditBalance(codexSnapshot);
     if(p.autoHandoff){
      const groups=codexSnapshot?.rateLimitsByLimitId?Object.values(codexSnapshot.rateLimitsByLimitId):[codexSnapshot?.rateLimits];
      const windows=groups.flatMap(group=>[group?.primary,group?.secondary]).filter(w=>Number.isFinite(w?.usedPercent)&&Number.isFinite(w?.resetsAt)).slice(0,4).map(w=>({usedPercent:w.usedPercent,resetsAt:w.resetsAt*1000,minutes:w.windowDurationMins}));
      const claude=await this.advisorLimits?.snapshot('claude');
-     checkpoint({capacity:{codex:{checkedAt:codexSnapshot?Date.now():null,windows},claude:{checkedAt:claude?.checkedAt||null,windows:(claude?.windows||[]).slice(0,4)}}});
+     checkpoint({capacity:{codex:{checkedAt:codexSnapshot?Date.now():null,windows,credits:creditState(codexSnapshot)},claude:{checkedAt:claude?.checkedAt||null,windows:(claude?.windows||[]).slice(0,4)}}});
     }
     if(signal.aborted)throw new Error('Paused');
     const lastHandoffOrVerification=t.attempts.slice(0,-1).reverse().find(a=>a.engineeringHandoff?.codexRetryAt||a.phase==='verifying');
@@ -342,6 +352,8 @@ class ForemanExecutor{
       if(claimDispatch&&!claimDispatch('codex'))return;
       checkpoint({provider:'codex',summary:'Codex implementing the approved task'});
       const result=await this.server.run({cwd,model,readOnly:p.sharedCheckout===true,prompt:engineeringPacket(p,t,{patchOnly:p.sharedCheckout===true}),signal,onTurnStarted:ids=>checkpoint({...ids,...(model?{model}:{})}),handoffAtCapacity:p.autoHandoff?retryDeadline:undefined});
+      // Subscription-only: a falling purchased-credit balance means this turn billed credits. Record it and stop.
+      await this.checkCreditDrift(creditsBefore,checkpoint);
       if(p.sharedCheckout&&(!result.handoffRetryAt||result.text.trim().startsWith('diff --git ')))await this.applySharedPatch(p,cwd,result.text,checks,before,signal);
       if(result.handoffRetryAt){
        const handoff=await this.handoff(cwd,p,t,result.text);
@@ -419,6 +431,13 @@ class ForemanExecutor{
    else if(/timed out|connection|transport|502|503|504/i.test(error.message))error.retryAt=Date.now()+Math.min(1800000,30000*2**Math.min(t.attempts.length-1,6))*(1+Math.random()*.2);
    throw error;
   }
+ }
+ async checkCreditDrift(before,checkpoint){
+  if(before===null)return;
+  let after;try{after=creditBalance(await this.server.readRateLimits());}catch{return;}
+  if(after===null||after>=before)return;
+  checkpoint({creditDrift:{before,after,at:Date.now()}});
+  throw new Error(`Codex credit balance fell from ${before} to ${after} during this attempt. Review the account before resuming.`);
  }
  stop(){return this.server.stop();}
 }

@@ -101,6 +101,26 @@ test('candidate cannot weaken an explicitly protected verification input',async(
  const task={id:'t',title:'Fix implementation',kind:'codex',acceptance:'Test passes without changing it',files:['answer.js'],attempts:[{id:'a'}]};
  await assert.rejects(executor.run(project,task,{signal:new AbortController().signal,checkpoint(){}}),/changed verification/i);
 });
+test('WP4b: a falling Codex credit balance blocks the attempt and is recorded',async()=>{
+ const repo=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-credit-'));
+ execFileSync('git',['init','-b','main'],{cwd:repo});fs.writeFileSync(path.join(repo,'a.js'),'1\n');
+ execFileSync('git',['add','--all'],{cwd:repo});execFileSync('git',['-c','user.name=Test','-c','user.email=test@localhost','commit','-m','fixture'],{cwd:repo});
+ const run=async(drop)=>{
+  let ran=false;const saved=[];
+  const server={readRateLimits:async()=>({rateLimits:{primary:{usedPercent:0},credits:{hasCredits:true,unlimited:false,balance:ran&&drop?'4.50':'5.00'}}}),request:async()=>({account:{type:'chatgpt'}}),run:async()=>{ran=true;return {text:'done'};},stop:async()=>{}};
+  const executor=new ForemanExecutor(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-credit-state-')),{server,advisorLimits:{snapshot:async()=>({checkedAt:Date.now(),windows:[]})}});
+  const inspected=await executor.inspect({repoPath:repo,verification:[{command:['node','--version']}]});
+  const project={id:'p',autoHandoff:true,objective:'x',handoff:'x',decisions:[],...inspected};
+  const task={id:'t',title:'x',kind:'codex',acceptance:'x',files:['a.js'],attempts:[{id:'a'}]};
+  const outcome=await executor.run(project,task,{signal:new AbortController().signal,checkpoint:f=>saved.push(f)}).then(()=>null,e=>e);
+  return {outcome,saved};
+ };
+ const drifted=await run(true);
+ assert.match(drifted.outcome?.message,/credit balance fell from 5 to 4.5/);assert.equal(drifted.outcome.retryAt,undefined);
+ assert.deepEqual(drifted.saved.find(f=>f.creditDrift).creditDrift.before,5);
+ assert.equal(drifted.saved.find(f=>f.capacity).capacity.codex.credits.balance,'5.00');
+ assert.equal((await run(false)).saved.some(f=>f.creditDrift),false);
+});
 test('plain local folders are accepted without adding Git metadata to them',async()=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-'));fs.writeFileSync(path.join(folder,'scene.txt'),'home\n');
  const executor=new ForemanExecutor(fs.mkdtempSync(path.join(os.tmpdir(),'foreman-folder-state-')),{server:{stop:async()=>{}}});
