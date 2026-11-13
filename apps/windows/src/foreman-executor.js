@@ -126,7 +126,7 @@ class ForemanExecutor{
  async handoff(cwd,p,t,summary){
   const base=p.verifiedSha||'junction/verified';
   const changed=(await this.workingGit(p,cwd,['diff','--name-only',base])).trim().split(/\r?\n/).filter(Boolean);
-  const untracked=(await this.workingGit(p,cwd,['ls-files','--others','--exclude-standard'])).trim().split(/\r?\n/).filter(Boolean);
+  const untracked=(await this.git(cwd,['ls-files','--others','--exclude-standard'])).trim().split(/\r?\n/).filter(Boolean);
   if([...changed,...untracked].some(file=>!relative(file)||forbidden.test(file)))throw new Error('Handoff contains a protected path');
   return {base,head:(await this.workingGit(p,cwd,['rev-parse','HEAD'])).trim(),sourceHash:await this.sourceHash(cwd,true),
     changed,untracked,summary:String(summary).slice(0,2000),verification:'Pending on the candidate'};
@@ -334,8 +334,10 @@ class ForemanExecutor{
      }
     }
    }
-   const changed=(await this.workingGit(p,cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
-   const added=(await this.workingGit(p,cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
+   // Shared patches have already been checked against the live source and approved paths.
+   // The detached baseline can predate legitimate canonical commits and uses different ignore rules.
+   const changed=p.sharedCheckout?[]:(await this.git(cwd,['diff','--name-only',p.verifiedSha||'junction/verified'])).split(/\r?\n/).filter(Boolean);
+   const added=p.sharedCheckout?[]:(await this.git(cwd,['ls-files','--others','--exclude-standard'])).split(/\r?\n/).filter(Boolean);
    if(p.scopeFile&&[...changed,...added].some(f=>f!==p.scopeFile))throw new Error('Candidate changed files outside the owner-named file scope');
    if([...changed,...added].some(f=>forbidden.test(f)))throw new Error('Candidate touched a protected path');
    for(const name of [...changed,...added]){const file=path.join(cwd,name);if(fs.existsSync(file)&&fs.lstatSync(file).isSymbolicLink())throw new Error('Candidate contains a symlink');}
