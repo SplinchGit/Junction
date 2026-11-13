@@ -276,7 +276,11 @@ test('a continuous task with the owner brief proceeds on one provider, starts on
  started.length=0;
  await run();task=store.get(task.id);
  assert.equal(task.status,'SLEEPING');assert.equal(started.length,1);assert.equal(started[0][2],'resume');
+ work={status:'BLOCKED',blocker:'error: src/foreman-executor.js: patch does not apply'};
  await run();task=store.get(task.id);
- assert.equal(task.status,'WAITING_FOR_USER');assert.equal(started.length,1,'only one automatic repair');
- assert.match(task.questions.at(-1).question,/test\/a\.test\.js/);
+ assert.equal(task.status,'SLEEPING');assert.equal(started.length,2);
+ assert.notEqual(started[0][1],started[1][1]);
+ await run();task=store.get(task.id);
+ assert.equal(task.status,'WAITING_FOR_USER');assert.equal(started.length,2,'only one automatic repair per failure type');
+ assert.match(task.questions.at(-1).question,/patch does not apply/);
 });
