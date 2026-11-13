@@ -1,7 +1,7 @@
 "use strict";
 const {randomUUID,createHash}=require('node:crypto');
 const path=require('node:path');
-const {NethraTools,ApprovalRequired,draftReceiptIsCurrent}=require('./nethra-tools');
+const {NethraTools,ApprovalRequired,checkedPath,draftReceiptIsCurrent}=require('./nethra-tools');
 const {monitorWakeAt,wakeReason,MAX_RUNTIME}=require('./nethra-scheduler');
 const {CONTEXT_TOKENS,fitContext}=require('./model-context');
 const {evidenceLine}=require('./nethra-progress');
@@ -246,8 +246,19 @@ class NethraRunner {
       // Approval consumption and action reservation are both durable. A reserved
       // action after a crash is held for review rather than replayed blindly.
       const approvedNow=[];
+      const reconcileDraft=async(receipt,approvalId)=>{
+        if(receipt?.status!=='RESERVED'||receipt.tool!=='write_draft'||typeof receipt.args?.content!=='string')return false;
+        const sha256=createHash('sha256').update(receipt.args.content).digest('hex');
+        if(!draftReceiptIsCurrent({...receipt,status:'COMPLETED',result:{sha256}},task))return false;
+        check();
+        const result={path:checkedPath(receipt.args.path,[task.workspace],{base:task.workspace}),sha256,bytes:Buffer.byteLength(receipt.args.content),actionKey:receipt.key,reconciled:true};
+        this.store.finishAction(receipt.key,result,token);
+        await persist({evidence:[...state.evidence,{tool:receipt.tool,result,...(approvalId?{approvalId}:{})}].slice(-30)},'nethra_tool_result');
+        return true;
+      };
       for(const approval of await this.store.approvals(task.id)){
         if(approval.status==='CONSUMED'&&this.store.getAction(approval.key)?.status!=='COMPLETED'){
+          if(await reconcileDraft(this.store.getAction(approval.key),approval.id))continue;
           const review=this.store.reviewInterruptedApproval(approval.id,token);
           return await persist({status:'WAITING_FOR_USER',summary:review.reviewReason,nextWakeAt:null},'nethra_action_review');
         }
@@ -259,6 +270,7 @@ class NethraRunner {
       }
       for(const receipt of this.store.actions?.(task.id)||[]){
         if(receipt.status!=='RESERVED'||receipt.tool!=='write_draft')continue;
+        if(await reconcileDraft(receipt))continue;
         const review=this.store.reviewInterruptedAction(task.id,receipt.key,token);
         return await persist({status:'WAITING_FOR_USER',summary:review.reviewReason,nextWakeAt:null},'nethra_action_review');
       }

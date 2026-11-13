@@ -781,7 +781,17 @@ class NethraStore {
   reserveAction(taskId,key,tool,args,token) {return this.transaction(()=>this.reserveActionInside(taskId,key,tool,args,token));}
   getAction(key) {const row=this.db.prepare('SELECT body FROM actions WHERE actionKey=?').get(key);return row?JSON.parse(row.body):null;}
   actions(taskId) {return this.db.prepare('SELECT body FROM actions').all().map(row=>JSON.parse(row.body)).filter(action=>action.taskId===taskId);}
-  finishAction(key,result,token) {return this.transaction(()=>{const receipt=this.getAction(key);if(!receipt)throw new Error('Unknown action');this.assertRunnable(receipt.taskId,token);if(receipt.status==='COMPLETED')return receipt;receipt.status='COMPLETED';receipt.result=result;receipt.finishedAt=this.now();this.db.prepare('UPDATE actions SET body=? WHERE actionKey=?').run(JSON.stringify(receipt),key);return receipt;});}
+  finishAction(key,result,token) {return this.transaction(()=>{
+    const receipt=this.getAction(key);
+    if(!receipt)throw new Error('Unknown action');
+    this.assertRunnable(receipt.taskId,token);
+    if(receipt.status==='COMPLETED')return receipt;
+    receipt.status='COMPLETED';receipt.result=result;receipt.finishedAt=this.now();
+    this.db.prepare('UPDATE actions SET body=? WHERE actionKey=?').run(JSON.stringify(receipt),key);
+    if(result.reconciled===true)this.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)')
+      .run(receipt.taskId,receipt.finishedAt,'ACTION_RECONCILED',JSON.stringify({key,path:result.path,sha256:result.sha256}));
+    return receipt;
+  });}
   children(parentId) {return this.db.prepare('SELECT body FROM children WHERE parentId=? ORDER BY rowid').all(parentId).map(row=>JSON.parse(row.body));}
   recentAgents(parentId) {
     return this.db.prepare(`SELECT body FROM tasks WHERE json_extract(body,'$.parentId')=?

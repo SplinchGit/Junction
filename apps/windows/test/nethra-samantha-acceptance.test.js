@@ -6,6 +6,57 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { NethraStore } = require('../src/nethra-store');
+const { NethraRunner } = require('../src/nethra-runner');
+const { NethraTools, actionKey } = require('../src/nethra-tools');
+
+for (const phase of ['reserved', 'approved', 'written', 'completed', 'checkpointed']) {
+  test(`draft recovery after ${phase} never replays the write`, async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
+    let store = new NethraStore(directory);
+    t.after(() => {
+      store.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const task = store.create({ goal: 'Prepare draft.md' });
+    const args = { path: path.join(task.workspace, 'draft.md'), content: 'Exact draft content' };
+    const key = actionKey(task.id, 'write_draft', args);
+    const lease = store.claim('previous-host');
+    if (phase === 'approved') {
+      fs.writeFileSync(args.path, 'Previous draft');
+      const approval = store.requestApproval(task.id, { tool: 'write_draft', args, key, category: 'LOCAL_WRITE' }, lease.token);
+      store.decideApproval(approval.id, true, 'approve-draft');
+      store.consumeApproval(approval.id, lease.token);
+    } else if (phase === 'reserved') {
+      store.reserveAction(task.id, key, 'write_draft', args, lease.token);
+    } else {
+      if (phase === 'written') store.finishAction = () => { throw Error('Simulated crash before receipt completion'); };
+      const write = new NethraTools({ store }).execute('write_draft', args, task, { token: lease.token });
+      if (phase === 'written') await assert.rejects(write, /Simulated crash/);
+      else {
+        const result = await write;
+        if (phase === 'checkpointed') store.update(task.id, { evidence: [{ tool: 'write_draft', result }] }, 'CHECKPOINT', lease.token);
+      }
+    }
+    const before = fs.existsSync(args.path) ? fs.readFileSync(args.path, 'utf8') : null;
+    const beforeMtime = fs.existsSync(args.path) ? fs.statSync(args.path).mtimeMs : null;
+    store.close();
+    store = new NethraStore(directory);
+    store.recoverAbandoned();
+    const runner = new NethraRunner({ store, runtime: {
+      withInference: fn => fn(),
+      chat: async () => ({ message: { content: '', tool_calls: [{ function: {
+        name: 'request_input', arguments: { reason: 'OWNER_PREFERENCE', blocking: true, question: 'What should I review next?' }
+      } }] } })
+    } });
+    await runner.execute(store.get(task.id));
+    const uncertain = phase === 'reserved' || phase === 'approved';
+    assert.equal(store.getAction(key).status, uncertain ? 'RESERVED' : 'COMPLETED');
+    assert.equal(store.approvals(task.id).some(approval => approval.reviewRequired), uncertain);
+    assert.equal(store.events(task.id).filter(event => event.kind === 'ACTION_RECONCILED').length, phase === 'written' ? 1 : 0);
+    assert.equal(fs.existsSync(args.path) ? fs.readFileSync(args.path, 'utf8') : null, before);
+    assert.equal(fs.existsSync(args.path) ? fs.statSync(args.path).mtimeMs : null, beforeMtime);
+  });
+}
 
 function taskFamily(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nethra-samantha-'));
