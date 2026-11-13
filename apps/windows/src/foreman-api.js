@@ -8,6 +8,10 @@ function statusRecord(p){
  const approvalState=p.autoHandoff===true?'APPROVED':'UNAPPROVED';
  const dispatchFence=p.status==='PAUSED'?'PAUSED':p.status==='STOPPED'?'STOPPED':approvalState==='UNAPPROVED'?'UNAPPROVED':['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)?'OPEN':p.status;
  const record={provider:latest?.provider||null,approvalState,dispatchFence,evidenceRef:`work:${p.id}`,nextAction:p.nextAction};
+ const interrupted=p.interruptedAttemptId&&p.tasks.flatMap(task=>task.attempts||[]).find(attempt=>attempt.id===p.interruptedAttemptId);
+ if(interrupted){
+  record.interruptedCall={provider:interrupted.provider||null,lastEvidenceAt:interrupted.lastEvidenceAt||null,nextAction:p.nextAction};
+ }
  const next=p.tasks.find(task=>task.status!=='COMPLETED');
  if(next&&!['PAUSED','STOPPED','BLOCKED','COMPLETED'].includes(p.status)){
   const attempt=next.attempts?.at(-1);

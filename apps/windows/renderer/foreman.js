@@ -122,7 +122,7 @@
    if(p.sharedCheckout)card.append(element('p','Codex and Claude share the original main checkout. Start authorizes scoped file edits; Nethra will not commit or push. Pause stops further dispatch.'));
    if(['WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)){const recheck=element('button','Check provider availability','secondary');recheck.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'retry'}));card.append(recheck);}
    if(p.status==='DRAFT'){const start=element('button','Start scoped work','primary');const needsAcceptance=p.sourceObjectiveId&&p.tasks.some(task=>!task.acceptance||task.acceptance.trim().length<30);const needsReview=p.sourceObjectiveId&&p.codeReviewVerdict!=='READY';if(needsAcceptance||needsReview){start.disabled=true;card.append(element('p',needsAcceptance?'Nethra must give measurable acceptance criteria before this draft can start. Ask her to prepare a revised proposal.':'Codex requested a revision or has not marked this exact proposal ready. Ask Nethra to prepare a revised proposal.'));}start.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'start'}));card.append(start);}
-   if(!p.autoHandoff&&['DRAFT','PAUSED','STOPPED','BLOCKED'].includes(p.status)){
+   if(!p.autoHandoff&&!p.statusRecord?.interruptedCall&&['DRAFT','PAUSED','STOPPED','BLOCKED'].includes(p.status)){
      const handoff=element('button','Start with Codex and Claude','secondary');
      handoff.disabled=Boolean(p.sourceObjectiveId&&p.codeReviewVerdict!=='READY');
      handoff.onclick=()=>{if(window.confirm(p.sharedCheckout?'Approve Codex and Claude to take turns editing this scope in the shared main checkout? Neither Nethra nor this action commits or pushes.':'Approve Codex and Claude to work on this scope and hand off automatically? The candidate stays isolated until you review and apply it.'))call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:p.status==='DRAFT'?'start':'resume',autoHandoff:true}));};
@@ -136,8 +136,11 @@
      pause.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'pause'}));
      actions.append(pause,stopButton(p));card.append(actions);
    }else if(['PAUSED','STOPPED','BLOCKED'].includes(p.status)){
-     const resume=element('button','Resume approved work','primary');
-     resume.onclick=()=>call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:'resume'}));
+     const resume=element('button',p.statusRecord?.interruptedCall?'Review and approve retry':'Resume approved work','primary');
+     resume.onclick=()=>{
+       if(p.statusRecord?.interruptedCall&&!window.confirm('The interrupted provider call has no completion receipt. Retrying may duplicate work. Approve a retry?'))return;
+       call(()=>window.junction.foreman('task.control',{id:p.id,revision:p.revision,action:p.statusRecord?.interruptedCall?'approveInterruptedRetry':'resume'}));
+     };
      card.append(resume);
      if(p.status==='PAUSED'&&p.statusRecord?.capacityWait)card.append(stopButton(p));
    }
@@ -162,6 +165,11 @@
        }
      }
      card.append(handoff);
+   }
+   const interrupted=p.statusRecord?.interruptedCall;
+   if(interrupted){
+     const evidence=interrupted.lastEvidenceAt?new Date(interrupted.lastEvidenceAt).toLocaleString():'No evidence was recorded';
+     card.append(element('p',`Interrupted provider call · ${interrupted.provider||'Provider not recorded'} · Last evidence: ${evidence} · ${interrupted.nextAction}`));
    }
    if(restoredWait)card.append(element('p',restoredWait.line));
    else if(p.retryAt&&p.status!=='STOPPED')card.append(element('p',`Next capacity check: ${new Date(p.retryAt).toLocaleString()}`));

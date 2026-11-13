@@ -80,6 +80,14 @@ class Foreman {
         }
       }else{
         p.status='PAUSED';p.nextAction='Resume explicitly to reconcile interrupted work';
+        const task=p.tasks.find(item=>item.id===p.activeTask&&item.status==='RUNNING');
+        const attempt=task?.attempts.at(-1);
+        if(attempt?.status==='RUNNING'){
+          attempt.status='INTERRUPTED';
+          task.status='QUEUED';
+          p.interruptedAttemptId=attempt.id;
+          p.nextAction='Review and approve retry';
+        }
         const detail=status==='WAITING_CAPACITY'&&p.autoHandoff!==true
           ?`${waitingProvider(p)}: saved provider authorization is missing. ${p.nextAction}.`
           :'Application reopened; execution remains paused';
@@ -268,7 +276,7 @@ class Foreman {
     const p=this.get(id);
     if(sourceObjectiveId!==undefined&&sourceObjectiveId!==p.sourceObjectiveId)throw new Error('Invalid linked objective control');
     if(!Number.isSafeInteger(revision)||p.revision!==revision)throw new Error('Stale task revision; refresh first');
-    if(!['start','resume','pause','stop','retry'].includes(action))throw new Error('Invalid task control');
+    if(!['start','resume','pause','stop','retry','approveInterruptedRetry'].includes(action))throw new Error('Invalid task control');
     if(action==='retry'){
       if(this.closed||!['WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)||!this.enabled.has(id))throw new Error('Only an active capacity wait can be rechecked; Resume paused work explicitly');
       if(!this.mayDispatch(p))throw new Error('Resume the linked Nethra task first');
@@ -276,7 +284,7 @@ class Foreman {
       clearTimeout(this.timers.get(id));this.timers.delete(id);
       this.save(p,'CAPACITY_RECHECK','Owner requested a fresh availability check',{id:requestId,binding});this.kick(id);return this.get(id);
     }
-    if(action==='start'||action==='resume') {
+    if(['start','resume','approveInterruptedRetry'].includes(action)) {
       if(needsFreshProposalReview(p))throw new Error('The queued proposal changed. Request a fresh review before starting it.');
       if(engineerOwnsCheckout(p))throw new Error('Codex or Claude must pick up this work in an engineering session.');
       if(autoHandoff!==undefined&&typeof autoHandoff!=='boolean')throw new Error('Invalid provider handoff approval');
@@ -289,6 +297,7 @@ class Foreman {
       if(this.enabled.size)throw new Error('Pause the active project before starting another');
       if(autoHandoff===false&&p.autoHandoff)throw new Error('Create a new draft to change an approved provider handoff scope');
       if(autoHandoff===true)p.autoHandoff=true;
+      if(Boolean(p.interruptedAttemptId)!==(action==='approveInterruptedRetry'))throw new Error('Review and approve an interrupted call explicitly before retrying');
       p.status='RUNNING';p.pausedByObjective=null;p.nextAction='Reconcile and execute next approved task';
       this.save(p,'RESUMED',`Owner selected ${action}`,{id:requestId,binding});this.enabled.add(id);this.kick(id);
     }else{
@@ -331,7 +340,7 @@ class Foreman {
     const attempt={id:crypto.randomUUID(),startedAt:this.now(),status:'RUNNING'};task.attempts.push(attempt);
     let claimed=false;
     const claimDispatch=provider=>{
-      if(claimed||signal.aborted||this.closed)return false;
+      if(claimed||signal.aborted||this.closed||!this.enabled.has(id))return false;
       p.activeTask=task.id;p.status='RUNNING';p.retryAt=null;task.status='RUNNING';
       delete p.restoredCapacityWait;
       if(awaitingCapacity){
@@ -339,7 +348,9 @@ class Foreman {
         p.nextAction='Execute and verify the approved task';
       }
       const detail=awaitingCapacity?`${provider}: dispatch claimed. ${p.nextAction}.`:`${task.kind}: ${task.title}`;
-      claimed=Boolean(this.save(p,'ATTEMPT',detail,null,null,awaitingCapacity?waitIsCurrent:null));
+      delete p.interruptedAttemptId;
+      const currentDispatch=current=>current.revision===revision&&ACTIVE.has(current.status)&&this.mayDispatch(current);
+      claimed=Boolean(this.save(p,'ATTEMPT',detail,null,null,awaitingCapacity?waitIsCurrent:currentDispatch));
       return claimed&&!signal.aborted;
     };
     const checkpoint=fields=>{
