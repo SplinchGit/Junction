@@ -24,7 +24,7 @@ function fixture(t,{approval=true}={}){
   return {store,task,history,turn};
 }
 
-test('chat controls preserve the approved pilot and explain how to start both engineers',async t=>{
+test('chat controls preserve the approved pilot and explain provider pickup',async t=>{
   const {store,task}=fixture(t,{approval:false});
   store.note(task.id,'GPT brief: Keep the engineering handoff on shared main.');
   store.configure(task.id,{allowCodeWork:true},store.get(task.id).revision,'enable-code');
@@ -34,7 +34,7 @@ test('chat controls preserve the approved pilot and explain how to start both en
   const work={id:'approved-draft',sourceObjectiveId:task.id,status:'DRAFT',sharedCheckout:true,nextAction:'Waiting for owner'};
   const turn=(content,requestId)=>handleOwnerWorkInstruction({content,requestId,conversationId:'task-chat',source:'android',api:new NethraApi({store,runtime:{}}),store,findWork:id=>id===work.id?work:null,ownerWork:async()=>assert.fail('escaped to ordinary coding router')});
   for(const [index,content] of ['Start','Continue co-ordination','CONTINUE!','Start'].entries()){
-    assert.match(await turn(content,'draft-control-'+index),/Start with Codex and Claude/);
+    assert.match(await turn(content,'draft-control-'+index),/Codex or Claude to pick up/);
     assert.equal(ownerBrief(store.get(task.id)),brief);
   }
   assert.match(await turn('Redirect that task to here','deictic-redirect'),/new direction/i);
@@ -68,7 +68,7 @@ test('a persisted phantom scope change recovers the same draft without another c
   assert.match(result.summary,/Start with Codex and Claude/);
 });
 
-test('explicit chat authorization starts the exact reviewed draft once through Foreman',async t=>{
+test('chat leaves reviewed shared drafts queued for provider pickup',async t=>{
   const {store,task}=fixture(t,{approval:false});
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nethra-chat-foreman-'));
   let executions=0;
@@ -88,16 +88,15 @@ test('explicit chat authorization starts the exact reviewed draft once through F
   assert.equal(foreman.get(work.id).status,'DRAFT');
   await turn('Start with Codex and Claude only after I review it','conditional-start');
   assert.equal(foreman.get(work.id).status,'DRAFT');
-  assert.match(await turn('Start with Codex and Claude','explicit-start'),/authoriz/i);
+  assert.match(await turn('Start with Codex and Claude','explicit-start'),/pick up/i);
   await foreman.idle();
   await turn('Start with Codex and Claude','explicit-start');
-  assert.equal(foreman.get(work.id).autoHandoff,true);
-  assert.equal(foreman.get(work.id).status,'COMPLETED');
-  assert.equal(executions,1);
+  assert.equal(foreman.get(work.id).status,'DRAFT');
+  assert.equal(executions,0);
   assert.equal(ownerBrief(store.get(task.id)),brief);
   const replacement=await foreman.create({...work,tasks:work.tasks.map(item=>({title:item.title,kind:item.kind,acceptance:item.acceptance}))});
   store.update(task.id,{coordination:{stage:'tracking',workId:replacement.id,brief}},'REPLACEMENT_DRAFT');
-  assert.match(await turn('Start with Codex and Claude','explicit-start'),/could not start/i);
+  assert.match(await turn('Start with Codex and Claude','explicit-start'),/pick up/i);
   assert.equal(foreman.get(replacement.id).status,'DRAFT');
 });
 

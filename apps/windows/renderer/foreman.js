@@ -133,6 +133,16 @@
      if(p.status==='PAUSED'&&p.statusRecord?.capacityWait)card.append(stopButton(p));
    }
    const restoredWait=p.statusRecord?.capacityWait;
+   if(p.sharedCheckout){
+     const record=p.statusRecord;
+     const receipt=record?.latestVerification;
+     const handoff=element('section','');
+     handoff.append(element('h4','Engineering handoff'),
+       element('p',`Provider: ${record?.provider||'Awaiting assignment'}`),
+       element('p',receipt?`Latest verification: ${receipt.checksPassed} checks passed${receipt.commit?` · ${receipt.commit.slice(0,12)}`:''}${receipt.at?` · ${new Date(receipt.at).toLocaleString()}`:''}`:'No verification receipt yet.'),
+       element('p',`Next action: ${record?.nextAction||p.nextAction||'Awaiting update'}`));
+     card.append(handoff);
+   }
    if(restoredWait)card.append(element('p',restoredWait.line));
    else if(p.retryAt&&p.status!=='STOPPED')card.append(element('p',`Next capacity check: ${new Date(p.retryAt).toLocaleString()}`));
    const capacity=p.tasks.find(task=>task.id===p.activeTask)?.lastAttempt?.capacity;

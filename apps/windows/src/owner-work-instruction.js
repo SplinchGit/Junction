@@ -3,6 +3,7 @@ const {handleNethraChat}=require('./nethra-chat');
 const {handleTaskTurn}=require('./nethra-task-turn');
 const {handleTaskFollowup}=require('./nethra-conversation');
 const {createHash}=require('node:crypto');
+const {engineerOwnsCheckout}=require('./foreman');
 const {ownerBrief,coordinationContinue,dualProviderStart,workControl,draftStartMessage}=require('./nethra-coordination');
 
 const statusQuestion=/\b(?:where (?:did we get to|are we (?:at|up to))|what(?:['’]s| is) (?:the (?:latest|status)|blocking (?:this|us))|how(?:['’]s| is) (?:it|the (?:task|project|work)) going)\b/i;
@@ -46,6 +47,7 @@ async function handleOwnerWorkInstruction({content,conversationId,requestId,hist
               :'Your brief changed. In Work Activity, stop the previous draft or work, then reply “continue coordination”.';
           }
           if(work.status==='DRAFT'){
+            if(engineerOwnsCheckout(work))return draftStartMessage({engineerOwnsCheckout:true});
             if(!authorize||!startWork||!requestId)return draftStartMessage(work);
             if(!work.sharedCheckout||work.codeReviewVerdict!=='READY'||work.conversationId!==conversationId||work.coordinationBrief!==state.brief){
               return 'This draft needs a matching Codex READY review before it can start from this chat.';

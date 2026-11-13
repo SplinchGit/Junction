@@ -8,6 +8,10 @@ function statusRecord(p){
  const approvalState=p.autoHandoff===true?'APPROVED':'UNAPPROVED';
  const dispatchFence=p.status==='PAUSED'?'PAUSED':p.status==='STOPPED'?'STOPPED':approvalState==='UNAPPROVED'?'UNAPPROVED':['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)?'OPEN':p.status;
  const record={provider:latest?.provider||null,approvalState,dispatchFence,evidenceRef:`work:${p.id}`,nextAction:p.nextAction};
+ const verified=p.tasks.flatMap(task=>task.attempts||[])
+  .filter(attempt=>attempt.status==='COMPLETED'&&attempt.tests?.length&&attempt.tests.every(test=>test.exitCode===0))
+  .sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0)).at(-1);
+ if(verified)record.latestVerification={at:verified.finishedAt||null,checksPassed:verified.tests.length,commit:verified.headSha||null};
  if(p.restoredCapacityWait===true&&['WAITING_CAPACITY','PAUSED'].includes(p.status)){
   const provider=waitingProvider(p);
   const retry=p.retryAt?new Date(p.retryAt):null;
