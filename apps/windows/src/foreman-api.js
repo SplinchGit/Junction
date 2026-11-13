@@ -2,14 +2,15 @@
 const crypto=require('node:crypto');
 const {projectContext}=require('./foreman');
 function documentFields(payload,allowed){if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!allowed.includes(key)))throw new Error('Invalid document fields');}
-function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,autoHandoff:p.autoHandoff===true,sharedCheckout:p.sharedCheckout===true,phase:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.phase||null:null,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),engineeringHandoff:undefined,tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
+function statusRecord(p){const active=p.tasks.find(task=>task.id===p.activeTask)?.attempts.at(-1),latest=active||p.tasks.flatMap(task=>task.attempts||[]).sort((a,b)=>(a.startedAt||0)-(b.startedAt||0)).at(-1),approvalState=p.autoHandoff===true?'APPROVED':'UNAPPROVED',dispatchFence=p.status==='PAUSED'?'PAUSED':p.status==='STOPPED'?'STOPPED':approvalState==='UNAPPROVED'?'UNAPPROVED':['RUNNING','WAITING_CAPACITY','WAITING_CODEX'].includes(p.status)?'OPEN':p.status;return {provider:latest?.provider||null,approvalState,dispatchFence,evidenceRef:`work:${p.id}`,nextAction:p.nextAction};}
+function summary(p){return {id:p.id,name:p.name,repoPath:p.repoPath,scopeKind:p.scopeKind||'git',sourceObjectiveId:p.sourceObjectiveId||null,codeReviewVerdict:p.codeReviewVerdict||null,objective:p.objective.slice(0,6000),status:p.status,statusRecord:statusRecord(p),autoHandoff:p.autoHandoff===true,sharedCheckout:p.sharedCheckout===true,phase:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.phase||null:null,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,retryAt:p.retryAt,nextAction:p.nextAction,activeTask:p.activeTask,handoff:p.handoff.slice(-2000),verifiedSha:p.verifiedSha||null,reviewed:p.reviewed||null,appliedAt:p.appliedAt||null,worktree:p.worktree||null,lastBackup:p.lastBackup||null,tasks:p.tasks.map(t=>({id:t.id,title:t.title,kind:t.kind,status:t.status,acceptance:t.acceptance.slice(0,600),lastAttempt:t.attempts.length?{...t.attempts.at(-1),engineeringHandoff:undefined,tests:t.attempts.at(-1).tests?.map(x=>({exitCode:x.exitCode,command:x.command,output:x.output?.slice(-1500)})),error:t.attempts.at(-1).error?.slice(-2000)}:null}))};}
 class ForemanApi{
  constructor(foreman,{conversationExists=()=>false,pickProjectDocument=null}={}){
   this.foreman=foreman;this.conversationExists=conversationExists;this.pickProjectDocument=pickProjectDocument;this.imports=new Map();
  }
  async dispatch(type,payload={},requestId=crypto.randomUUID(),source='desktop'){
   const f=this.foreman;if(!f)throw new Error('Project runtime is unavailable');
-  if(type==='project.list')return {projects:f.list().map(p=>({id:p.id,name:p.name,status:p.status,provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,objective:p.objective.slice(0,500),nextAction:p.nextAction}))};
+  if(type==='project.list')return {projects:f.list().map(p=>({id:p.id,name:p.name,status:p.status,statusRecord:statusRecord(p),provider:p.activeTask?p.tasks.find(t=>t.id===p.activeTask)?.attempts.at(-1)?.provider||null:null,revision:p.revision,objective:p.objective.slice(0,500),nextAction:p.nextAction}))};
   if(type==='project.get'){
    const saved=f.get(payload.id),p=summary(saved);const events=f.events(p.id,Number.isSafeInteger(payload.after)?payload.after:0).map(e=>({...e,detail:e.detail.slice(0,500)}));
    // LAN frames stay bounded; detailed execution evidence remains in durable storage.
@@ -87,4 +88,4 @@ class ForemanApi{
   throw new Error('Unsupported project operation');
  }
 }
-module.exports={ForemanApi,summary};
+module.exports={ForemanApi,summary,statusRecord};
