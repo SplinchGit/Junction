@@ -76,6 +76,26 @@ test('runaway thinking is stopped at the budget and the model answers from its r
   assert.equal(result.eval_count,4+256);
 });
 
+test('an 80B turn that spends its whole output allowance thinking is asked once for its answer',async()=>{
+  const model='junction-qwen3-next-thinking:80b-q4km',bodies=[];
+  const replies=[{message:{role:'assistant',content:'',thinking:'The newer entry is the current one.'},done:true,done_reason:'length',eval_count:2048,eval_duration:9e9},
+    {message:{role:'assistant',content:'Thursdays.'},done:true,eval_count:6,eval_duration:1e9}];
+  const fetchImpl=async(url,options={})=>{
+    if(String(url).endsWith('/api/ps'))return {ok:true,json:async()=>({models:[]})};
+    const body=JSON.parse(options.body);bodies.push(body);const reply=replies[Math.min(bodies.length,replies.length)-1];
+    return body.stream?{ok:true,status:200,body:(async function*(){yield Buffer.from(JSON.stringify(reply)+'\n');})()}:{ok:true,status:200,json:async()=>reply};
+  };
+  const agent=new LocalAgentRuntime({toolRegistry:new LocalAgentToolRegistry({researchCoordinator:{run:async()=>({sources:[]})}}),fetchImpl});
+  const result=await agent.chatOnce(model,[{role:'user',content:'Which day do I climb?'}],[],null,null,null,{thinking:true});
+  assert.equal(bodies.length,2);
+  assert.match(bodies[1].messages.at(-1).thinking,/newer entry is the current one/);
+  assert.equal(result.message.content,'Thursdays.');assert.equal(result.eval_count,2054);
+  // The recovery happens once: a second empty reply is returned as it is.
+  bodies.length=0;replies[1]=replies[0];
+  const empty=await agent.chatOnce(model,[{role:'user',content:'Which day do I climb?'}],[],null,null,null,{thinking:true});
+  assert.equal(bodies.length,2);assert.equal(empty.message.content,'');
+});
+
 test('a reply that starts answering within budget is never cut',async()=>{
   const {agent,bodies}=streamingRuntime([...thinkingEvents(100),{message:{content:'Fine.'}},{done:true,eval_count:101,message:{}}]);
   const result=await agent.chatOnce('qwen3:30b',[{role:'user',content:'hi'}],[],null,()=>{},null,{thinking:true,onThinking:()=>{},thinkingBudget:256});

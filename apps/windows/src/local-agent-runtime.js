@@ -216,8 +216,16 @@ class LocalAgentRuntime {
     const warmer = this.warmerFor(model) || this.warmer;
     warmer.inferenceStarted();
     let ok = false;
-    try { const payload = await this.chatOnceInner(model, messages, tools, signal, onText, format, options); ok = true; return payload; }
+    let payload;
+    try { payload = await this.chatOnceInner(model, messages, tools, signal, onText, format, options); ok = true; }
     finally { warmer.inferenceFinished({ ok, model }); }
+    // A thinking model can spend its whole output allowance reasoning and never reach an answer.
+    // Close that reasoning and ask once for the answer, the same way a reached thinking budget does.
+    const reasoning = String(payload.message?.thinking || "");
+    if (options.rawMeasurement || options.afterThinking || String(payload.message?.content || "").trim() || payload.message?.tool_calls?.length || !reasoning.trim()) return payload;
+    const spent = Number(payload.eval_count || 0);
+    const continued = await this.answerFromThinking(model, messages, tools, signal, onText, format, { ...options, afterThinking: true, num_predict: spent + 768 }, reasoning, spent, Number(payload.eval_duration || 0) / 1e6);
+    return { ...continued, prompt_eval_count: Number(payload.prompt_eval_count || 0) + Number(continued.prompt_eval_count || 0) };
   }
   async chatOnceInner(model, messages, tools, signal, onText = null, format = null, options = {}) {
     // The installed Qwen3 30B tag is the 2507 thinking-only variant. With
