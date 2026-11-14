@@ -79,7 +79,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-private data class TaskOpenRequest(val taskId: String, val token: Int, val approvalId: String?, val reply: Boolean, val invitationQuestionId: String?, val invitationCommandId: String?)
+private data class NotificationReply(val delivery: String, val host: String)
+private data class TaskOpenRequest(val taskId: String, val token: Int, val approvalId: String?, val reply: Boolean, val invitationQuestionId: String?, val invitationCommandId: String?, val notification: NotificationReply?)
 
 class MainActivity : ComponentActivity() {
     private val voiceOpenRequests = MutableStateFlow(0)
@@ -297,7 +298,8 @@ class MainActivity : ComponentActivity() {
                 intent?.getStringExtra(EXTRA_APPROVAL_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
                 intent?.getBooleanExtra(EXTRA_REPLY_TO_TASK, false) == true,
                 intent?.getStringExtra(EXTRA_INVITATION_QUESTION_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
-                intent?.getStringExtra(EXTRA_INVITATION_COMMAND_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) })
+                intent?.getStringExtra(EXTRA_INVITATION_COMMAND_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
+                if (delivery != null && host != null) NotificationReply(delivery, host) else null)
         } else if (intent?.getBooleanExtra(EXTRA_OPEN_VOICE, false) == true) {
             voiceOpenRequests.value = voiceOpenRequests.value + 1
         } else if (intent?.getBooleanExtra(EXTRA_OPEN_CHAT, false) == true) {
@@ -379,6 +381,7 @@ private fun JunctionApp(
     var selectedWorkspace by remember { mutableStateOf(JunctionWorkspace.CHAT) }
     var handledReplyToken by remember { mutableIntStateOf(0) }
     var invitationSessionId by remember { mutableStateOf<String?>(null) }
+    var notificationReply by remember { mutableStateOf<Pair<String, NotificationReply>?>(null) }
     var objectivesRequest by rememberSaveable { mutableIntStateOf(0) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val sessionSummaries by chatManager.sessionSummaries.collectAsState(initial = emptyList())
@@ -500,6 +503,13 @@ private fun JunctionApp(
                         objectivesRequest = objectivesRequest,
                         invitationSessionId = invitationSessionId,
                         onInvitationConsumed = { invitationSessionId = null },
+                        onSuccessfulTextTurn = { sessionId ->
+                            notificationReply?.takeIf { it.first == sessionId }?.let { pending ->
+                                com.splinch.junction.data.sync.lan.DeviceCommandSync(context)
+                                    .recordNotificationReplied(pending.second.delivery, pending.second.host)
+                                notificationReply = null
+                            }
+                        },
                         modifier = Modifier.padding(padding)
                     )
                     JunctionWorkspace.BUILD -> WorkspaceScreen(
@@ -562,12 +572,21 @@ private fun JunctionApp(
                         openInitialTaskChat = taskRequest?.let { it.reply && it.approvalId == null && it.token != handledReplyToken } == true,
                         onInitialTaskChatConsumed = { handledReplyToken = taskRequest?.token ?: 0 },
                         onOpenChat = { id -> scope.launch {
+                            notificationReply = null
                             chatManager.switchToSession(id)
                             invitationSessionId = null
                             selectedTab = JunctionTab.CHAT
                             selectedWorkspace = JunctionWorkspace.CHAT
                         } },
+                        onInitialChatOpened = { id -> scope.launch {
+                            chatManager.switchToSession(id)
+                            notificationReply = taskRequest?.notification?.let { id to it }
+                            invitationSessionId = null
+                            selectedTab = JunctionTab.CHAT
+                            selectedWorkspace = JunctionWorkspace.CHAT
+                        } },
                         onInvitationChatOpened = { id -> scope.launch {
+                            notificationReply = taskRequest?.notification?.let { id to it }
                             chatManager.switchToSession(id)
                             invitationSessionId = id
                             selectedTab = JunctionTab.CHAT

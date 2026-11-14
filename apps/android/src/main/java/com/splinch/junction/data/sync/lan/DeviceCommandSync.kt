@@ -81,6 +81,9 @@ class DeviceCommandSync(context: Context) {
     fun recordNotificationOpened(id: String, instanceId: String) =
         recordNotificationOutcome(id, instanceId, "OPENED")
 
+    fun recordNotificationReplied(id: String, instanceId: String) =
+        recordNotificationOutcome(id, instanceId, "REPLIED")
+
     private fun recordNotificationOutcome(id: String, instanceId: String, outcome: String) = synchronized(ACTION_LOCK) {
         val entries = notificationOutcomes()
         val entry = entries.optJSONObject(id) ?: return@synchronized

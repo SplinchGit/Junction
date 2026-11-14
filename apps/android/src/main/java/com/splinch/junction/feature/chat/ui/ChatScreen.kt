@@ -154,7 +154,8 @@ fun ChatScreen(
     objectivesRequest: Int = 0,
     modifier: Modifier = Modifier,
     invitationSessionId: String? = null,
-    onInvitationConsumed: () -> Unit = {}
+    onInvitationConsumed: () -> Unit = {},
+    onSuccessfulTextTurn: (String) -> Unit = {}
 ) {
     val messages by chatManager.messages.collectAsState()
     val streaming by chatManager.streamingAssistant.collectAsState()
@@ -582,7 +583,16 @@ fun ChatScreen(
                 val trimmed = input.trim()
                 if (sendEnabled) {
                     val imagePath = pendingImagePath
-                    scope.launch { chatManager.sendUserMessage(trimmed, imagePath, forceResearch = forceResearch) }
+                    val replySession = currentSessionId
+                    scope.launch {
+                        if (chatManager.sessionId.value == replySession) {
+                            chatManager.sendUserMessage(trimmed, imagePath, forceResearch = forceResearch) { outcome ->
+                                if (outcome.errorMessage == null && !outcome.assistantText.isNullOrBlank()) {
+                                    onSuccessfulTextTurn(replySession)
+                                }
+                            }
+                        }
+                    }
                     input = ""
                     forceResearch = false
                     pendingImagePath = null

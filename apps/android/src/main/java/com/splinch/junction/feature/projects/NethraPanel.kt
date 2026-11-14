@@ -31,7 +31,7 @@ import java.util.Date
 
 /** The phone controls durable objectives on its paired Windows host. */
 @Composable
-fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, initialTaskId: String? = null, initialApprovalId: String? = null, conversationId: String? = null, onInitialGoalConsumed: () -> Unit = {}, onOpenChat: (String) -> Unit = {}, requestTask: (suspend (String, Map<String, Any?>) -> Map<String, Any?>)? = null, openInitialTaskChat: Boolean = false, onInitialTaskChatConsumed: () -> Unit = {}, initialInvitationQuestionId: String? = null, initialInvitationCommandId: String? = null, onInvitationChatOpened: (String) -> Unit = onOpenChat) {
+fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, initialTaskId: String? = null, initialApprovalId: String? = null, conversationId: String? = null, onInitialGoalConsumed: () -> Unit = {}, onOpenChat: (String) -> Unit = {}, requestTask: (suspend (String, Map<String, Any?>) -> Map<String, Any?>)? = null, openInitialTaskChat: Boolean = false, onInitialTaskChatConsumed: () -> Unit = {}, initialInvitationQuestionId: String? = null, initialInvitationCommandId: String? = null, onInvitationChatOpened: (String) -> Unit = onOpenChat, onInitialChatOpened: (String) -> Unit = onOpenChat) {
     val context = LocalContext.current
     val client = remember(context) { NethraClient(context) }
     suspend fun request(type: String, payload: Map<String, Any?> = emptyMap()): Map<String, Any?> = requestTask?.invoke(type, payload) ?: client.request(type, payload)
@@ -161,7 +161,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             } finally { busy = false }
         }
     }
-    fun openTaskChat(id: String, invitationQuestionId: String? = null, invitationCommandId: String? = null) {
+    fun openTaskChat(id: String, invitationQuestionId: String? = null, invitationCommandId: String? = null, initial: Boolean = false) {
         if (busy) return
         scope.launch {
             busy = true
@@ -181,7 +181,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 val app = context.applicationContext as JunctionApplication
                 if (app.container.database.chatDao().getSessionById(taskConversationId) == null) app.container.pairedConversationSyncManager.syncNow()
                 check(app.container.database.chatDao().getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
-                if (invitationQuestionId != null) onInvitationChatOpened(taskConversationId) else onOpenChat(taskConversationId)
+                if (invitationQuestionId != null) onInvitationChatOpened(taskConversationId) else if (initial) onInitialChatOpened(taskConversationId) else onOpenChat(taskConversationId)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
             finally { busy = false }
@@ -190,7 +190,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     LaunchedEffect(openInitialTaskChat, initialTaskId) {
         if (openInitialTaskChat && initialTaskId != null) {
             onInitialTaskChatConsumed()
-            openTaskChat(initialTaskId, initialInvitationQuestionId, initialInvitationCommandId)
+            openTaskChat(initialTaskId, initialInvitationQuestionId, initialInvitationCommandId, initial = true)
         }
     }
     LaunchedEffect(Unit) {
