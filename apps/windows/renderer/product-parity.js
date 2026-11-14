@@ -17,7 +17,48 @@ product("provider-id").addEventListener("change",async event=>{if(product("provi
 function updateSetup(provider){let banner=document.querySelector(".setup-banner");if(provider.id&&(provider.keyPresent||provider.usesSubscription)){banner?.remove();return}if(!banner){banner=document.createElement("div");banner.className="setup-banner";banner.setAttribute("role","status");const copy=document.createElement("div"),strong=document.createElement("strong"),span=document.createElement("span"),button=document.createElement("button");strong.textContent="Let’s set up your AI";span.textContent="Choose Codex on this PC to use your ChatGPT subscription, or choose an API provider and enter its encrypted key.";copy.append(strong,span);button.className="primary";button.textContent="Get started";button.onclick=()=>{showView("settings");setTimeout(()=>product("provider-id").focus(),0)};banner.append(copy,button);document.querySelector(".conversation").prepend(banner)}}
 const usageCard=document.createElement("article");usageCard.className="usage-card";usageCard.innerHTML='<div><h2>Model usage</h2><p>Local estimates from requests sent by this PC. Provider billing remains authoritative.</p></div><div id="usage-summary" class="usage-summary"><div><strong>0</strong><span>Requests</span></div><div><strong>0</strong><span>Tokens</span></div><div><strong>$0.0000</strong><span>Estimated</span></div></div>';providerCard.after(usageCard);
 const auditUsage=document.createElement("section");auditUsage.className="audit-usage";auditUsage.innerHTML='<div class="section-heading"><div><h2>Model usage</h2><p>A compact total for requests made from this PC.</p></div></div><div id="audit-usage-summary" class="usage-summary"><div><strong>0</strong><span>Requests</span></div><div><strong>0</strong><span>Tokens</span></div><div><strong>$0.0000</strong><span>Estimated</span></div></div>';product("audit-list").after(auditUsage);
-async function loadUsage(){const rows=await window.junction.usage(),requests=rows.length,tokens=rows.reduce((n,x)=>n+Number(x.inputTokens||0)+Number(x.outputTokens||0),0),usd=rows.reduce((n,x)=>n+Number(x.estimatedUsd||0),0);for(const container of [usageCard,product("audit-usage-summary")]){const boxes=container?.querySelectorAll("strong")||[];if(boxes[0])boxes[0].textContent=String(requests);if(boxes[1])boxes[1].textContent=tokens.toLocaleString();if(boxes[2])boxes[2].textContent=`$${usd.toFixed(4)}`}}
+const usageHistory=document.createElement("details");
+const usageHistoryLabel=document.createElement("summary");
+usageHistoryLabel.textContent="Daily usage history";
+const usageDays=document.createElement("ul");
+usageHistory.append(usageHistoryLabel,usageDays);
+usageCard.append(usageHistory);
+
+async function loadUsage(){
+  const rows=await window.junction.usage();
+  const days=new Map();
+  let tokens=0,usd=0;
+  for(const row of rows){
+    const count=Number(row.inputTokens||0)+Number(row.outputTokens||0);
+    tokens+=count;
+    usd+=Number(row.estimatedUsd||0);
+    if(!Number.isFinite(row.createdAt))continue;
+    const date=new Date(row.createdAt);
+    if(Number.isNaN(date.getTime()))continue;
+    const key=date.toISOString().slice(0,10);
+    const day=days.get(key)||{requests:0,tokens:0};
+    day.requests++;
+    day.tokens+=count;
+    days.set(key,day);
+  }
+  const items=[...days].sort(([left],[right])=>right.localeCompare(left)).map(([date,day])=>{
+    const item=document.createElement("li");
+    item.textContent=date+" UTC · "+day.requests.toLocaleString()+" requests · "+day.tokens.toLocaleString()+" tokens";
+    return item;
+  });
+  if(!items.length){
+    const item=document.createElement("li");
+    item.textContent="No saved usage yet.";
+    items.push(item);
+  }
+  usageDays.replaceChildren(...items);
+  for(const container of [usageCard,product("audit-usage-summary")]){
+    const boxes=container?.querySelectorAll(".usage-summary strong")||[];
+    if(boxes[0])boxes[0].textContent=String(rows.length);
+    if(boxes[1])boxes[1].textContent=tokens.toLocaleString();
+    if(boxes[2])boxes[2].textContent="$"+usd.toFixed(4);
+  }
+}
 const memoryToolbar=document.createElement("div");memoryToolbar.className="memory-toolbar";const memorySearch=document.createElement("input"),memoryCount=document.createElement("span");memorySearch.placeholder="Search remembered facts";memorySearch.setAttribute("aria-label","Search remembered facts");memoryCount.className="memory-count";memoryCount.setAttribute("role","status");memoryToolbar.append(memorySearch,memoryCount);product("memory-list").before(memoryToolbar);async function updateMemoryMeta(){const rows=await window.junction.memories();memoryCount.textContent=`${rows.length} / 200 facts`;const query=memorySearch.value.trim().toLowerCase();let visible=0;document.querySelectorAll(".memory-row").forEach(row=>{row.hidden=Boolean(query&&!row.textContent.toLowerCase().includes(query));if(!row.hidden)visible++});memoryCard.classList.toggle("memory-no-match",Boolean(query&&!visible))}memorySearch.oninput=updateMemoryMeta;memoryCard.addEventListener("click",()=>setTimeout(updateMemoryMeta,50));
 const feedView=product("view-feed"),feedBody=feedView.querySelector(".empty");feedBody.outerHTML='<div class="feed-toolbar" role="group" aria-label="Filter Feed"><button class="filter-chip active" data-feed-filter="all" aria-pressed="true">All activity</button><button class="filter-chip" data-feed-filter="success" aria-pressed="false">Completed</button><button class="filter-chip" data-feed-filter="failure" aria-pressed="false">Needs attention</button></div><div class="notice feed-notice"><strong>Your Junction · local plus shared</strong><span>Local companion activity appears immediately. Shared Feed items are read-only and refresh only through account sync.</span></div><div id="feed-list" class="feed-list" aria-live="polite"><div class="skeleton"></div><div class="skeleton"></div></div>';
 let feedFilter="all";function applySharedFeedFilter(){product("feed-list").querySelectorAll(".shared-feed").forEach(card=>card.hidden=feedFilter!=="all")}async function loadFeed(){const rows=await window.junction.audit(),filtered=rows.filter(row=>feedFilter==="all"||(feedFilter==="success"?row.outcome==="success":row.outcome==="failure"));const list=product("feed-list");if(!filtered.length)list.innerHTML='<div class="empty-audit local-feed-empty">No matching local activity.</div>';else list.replaceChildren(...filtered.map(row=>{const card=document.createElement("article");card.className="feed-event";const icon=document.createElement("i");icon.textContent=row.outcome==="failure"?"!":"✓";const copy=document.createElement("div"),title=document.createElement("strong"),meta=document.createElement("span"),time=document.createElement("time");title.textContent=row.event==="proposal_created"?"Nethra evaluated PC context":row.outcome==="failure"?"PC context needed attention":"PC context inspection completed";meta.textContent=`${row.capability||"Local policy"} · ${row.decision||"blocked"}`;time.textContent=new Date(row.timestamp).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});copy.append(title,meta);card.append(icon,copy,time);return card}));if(typeof loadSharedFeed==="function"){await loadSharedFeed();if(list.querySelector(".shared-feed")&&feedFilter==="all")list.querySelector(".local-feed-empty")?.remove()}applySharedFeedFilter()}new MutationObserver(applySharedFeedFilter).observe(product("feed-list"),{childList:true});document.querySelectorAll("[data-feed-filter]").forEach(button=>button.onclick=()=>{feedFilter=button.dataset.feedFilter;document.querySelectorAll("[data-feed-filter]").forEach(x=>{const active=x===button;x.classList.toggle("active",active);x.setAttribute("aria-pressed",String(active))});loadFeed()});
