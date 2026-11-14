@@ -11,7 +11,9 @@ const { registerDevice } = require("./firebase-sync");
 const { LocalDataStore } = require("./local-data");
 const { sendChat } = require("./provider-client");
 const { getCodexStatus, sendCodexChat } = require("./codex-client");
-const { getClaudeStatus } = require("./claude-client");
+const { getClaudeStatus, sendClaudeConsult } = require("./claude-client");
+const { runMemoryTraces, TRACE_SCHEMA } = require("./memory-trace");
+const { NEXT_80B_THINKING_Q4_MODEL } = require("./nethra-models");
 const { AdvisorLimits } = require("./advisor-limits");
 const { providers, estimate, credentialProviderId } = require("./model-catalog");
 const { SharedStateClient } = require("./shared-state");
@@ -277,12 +279,14 @@ async function createWindowImpl() {
   try { nethraStore.recordHostStart(); } catch (error) { recordStartupIssue('Nethra host start record', error); }
   const advisorLimits = new AdvisorLimits({ store: nethraStore });
   foremanExecutor.advisorLimits=advisorLimits;
+  memoryAdvisorLimits=advisorLimits;
   const workStatus = createWorkStatus(foreman);
   const advisorStatus = async () => { const describe = async (provider, status) => ({ ...status, limits: status.ready ? await advisorLimits.check(provider).catch(error => ({ error: String(error.message).slice(0, 200) })) : null }); const [codex, claude] = await Promise.all([getCodexStatus(), getClaudeStatus()]); return { reservePercent: advisorLimits.reservePercent(), codex: await describe('codex', codex), claude: await describe('claude', claude) }; };
   // Idle retention is the owner's setting; chat, World and warm-up all use the same keep_alive.
   const modelProfile = path.join(app.getPath('userData'), 'nethra', 'model-profile.json');
   localAgent = new LocalAgentRuntime({ reviewReply: (content, request) => correctTaskClaims(content, taskForConversation(request.conversationId)), toolRegistry, retention: () => nethraStore.settings().idleRetention, profile: { load: () => JSON.parse(fs.readFileSync(modelProfile, 'utf8')), save: value => fs.writeFileSync(modelProfile, JSON.stringify(value)) } });
   localAgent.warmer.onChange(state => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('junction:model-state', state); });
+  setTimeout(scheduleMemoryTrace, 120_000).unref?.();
   presence = new PresenceTracker({ lanClients: () => lanServer?.authenticatedClients?.() || 0, relayStatus: () => localBrainRelay ? { enabled: true, error: localBrainRelay.lastError || null } : null });
   appearanceStore = new AppearanceStore(path.join(app.getPath('userData'), 'appearance.json'));
   // Light/dark choice drives the renderer's existing prefers-color-scheme rules.
@@ -446,7 +450,7 @@ async function reconcilePendingDeregistration(){
 
 async function syncSharedState(){
   if(sharedSyncPromise)return sharedSyncPromise;
-  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};mainWindow?.webContents.send("junction:conversations-changed");return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
+  sharedSyncPromise=(async()=>{if(!identity.syncEnabled)throw new Error("Enable account sync on this PC first.");const session=await freshSession();bindOwner(session);const client=new SharedStateClient({projectId:process.env.JUNCTION_FIREBASE_PROJECT_ID,session,deviceId:identity.deviceId});const result=await client.sync(localData);scheduleMemoryTrace();sharedFeed=result.feed;lastSharedSync={at:Date.now(),...result};mainWindow?.webContents.send("junction:conversations-changed");return lastSharedSync})().finally(()=>{sharedSyncPromise=null});return sharedSyncPromise
 }
 /** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
 function reportObjectiveOutcome(task) {
@@ -456,6 +460,24 @@ function reportObjectiveOutcome(task) {
   if(!postTaskReports(task,nethraStore,localData)&&!coordinationPosted)return;
   scheduleSharedSync();
   mainWindow?.webContents.send('junction:conversations-changed');
+}
+let memoryTracePromise=null,memoryAdvisorLimits=null;
+/** When the owner states a fact, the local 80B model retires any earlier fact it replaces; Claude on the subscription settles what it is unsure of. */
+function scheduleMemoryTrace(){
+  if(memoryTracePromise||!localData?.pendingMemoryTraces().length||!localAgent)return;
+  const local=async({system,prompt})=>(await localAgent.withInference(async()=>{
+    const signal=AbortSignal.timeout(900_000);
+    await localAgent.prepareModel(NEXT_80B_THINKING_Q4_MODEL,signal);
+    return localAgent.chat(NEXT_80B_THINKING_Q4_MODEL,[{role:"system",content:system},{role:"user",content:prompt}],[],signal,null,TRACE_SCHEMA,{thinking:true});
+  },undefined,{priority:"background"})).message?.content;
+  const frontier=async({system,prompt})=>{
+    if(!(await getClaudeStatus()).subscription)throw new Error("Claude subscription sign-in is unavailable");
+    const limits=await memoryAdvisorLimits?.check("claude");
+    if(limits&&!limits.available)throw new Error("Claude subscription capacity is unavailable");
+    return (await sendClaudeConsult({prompt,systemPrompt:system,subscriptionOnly:true,onRateLimit:snapshot=>memoryAdvisorLimits?.recordClaude(snapshot)})).content;
+  };
+  memoryTracePromise=runMemoryTraces({store:localData,local,frontier,onTrace:()=>mainWindow?.webContents.send("junction:memories-changed")})
+    .catch(()=>{}).finally(()=>{memoryTracePromise=null;});
 }
 function scheduleSharedSync(){clearTimeout(sharedSyncTimer);if(!identity?.syncEnabled||!identityStore?.getSession())return;sharedSyncTimer=setTimeout(()=>{syncSharedState().catch(()=>{})},1200)}
 
@@ -561,7 +583,8 @@ ipcMain.handle("junction:send-message", async (_event, request) => {
 });
 ipcMain.handle("junction:cancel-agent", (_event, runId) => { const controller=activeAgentRuns.get(String(runId||"")); if(!controller)return {cancelled:false};controller.abort();return {cancelled:true}; });
 ipcMain.handle("junction:memories", () => localData.memories());
-ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();return result});
+ipcMain.handle("junction:add-memory", (_event, value) => {const result=localData.addMemory(value.content,value.category);scheduleSharedSync();scheduleMemoryTrace();return result});
+ipcMain.handle("junction:restore-memory", (_event, id) => localData.restoreMemory(id));
 ipcMain.handle("junction:delete-memory", (_event, id) => {localData.deleteMemory(id);scheduleSharedSync()});
 ipcMain.handle("junction:provider", () => { const config=localData.provider(),credentialId=credentialProviderId(config.id); return {...config,keyPresent:config.id==="local"||Boolean(credentialId&&identityStore.getProviderKey(credentialId)),usesSubscription:config.id==="codex"}; });
 ipcMain.handle("junction:set-provider", (_event, value) => { const config=localData.setProvider(value),credentialId=credentialProviderId(config.id); if(credentialId&&String(value.apiKey||"").trim()) identityStore.setProviderKey(credentialId,String(value.apiKey).trim()); return {...config,keyPresent:config.id==="local"||Boolean(credentialId&&identityStore.getProviderKey(credentialId)),usesSubscription:config.id==="codex"}; });
