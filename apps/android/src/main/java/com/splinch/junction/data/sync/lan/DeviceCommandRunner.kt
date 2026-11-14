@@ -18,7 +18,9 @@ class DeviceCommandRunner(context: Context, private val client: NethraClient) {
     private val context = context.applicationContext
 
     suspend fun execute(command: DeviceCommandVerifier.Command): JSONObject = when (command.kind) {
-        "NETHRA_NOTIFICATION" -> com.splinch.junction.feature.scheduler.NotificationHelper.showTaskOutcome(context, command.args, command.id, command.notificationActions, command.instanceId)
+        "NETHRA_NOTIFICATION" -> com.splinch.junction.feature.scheduler.NotificationHelper.showTaskOutcome(
+            context, command.args, command.id, command.notificationActions, command.instanceId, command.notificationOutcomes
+        )
         "STATUS" -> status()
         "SMOKE_TEST" -> smokeTest()
         "COLLECT_LOGS" -> logs(command.args.optInt("lines", 200).coerceIn(1, 500))

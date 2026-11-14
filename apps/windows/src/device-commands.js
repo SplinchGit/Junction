@@ -99,7 +99,7 @@ class DeviceCommandStore {
         }
         if(command.state==='DELIVERED'&&(command.deliveredTo!==deviceId||this.now()-command.deliveredAt<REDELIVER_MS))continue;
         if(!command.envelope){
-          const body=JSON.stringify({v:1,id:command.id,instanceId:signer.instanceId,deviceId,kind:command.kind,args:command.args,tier:command.tier,requestedBy:command.requestedBy,createdAt:command.createdAt,expiresAt:command.expiresAt,nonce:command.nonce,...(command.kind==='NETHRA_NOTIFICATION'?{notificationActions:1}:{})});
+          const body=JSON.stringify({v:1,id:command.id,instanceId:signer.instanceId,deviceId,kind:command.kind,args:command.args,tier:command.tier,requestedBy:command.requestedBy,createdAt:command.createdAt,expiresAt:command.expiresAt,nonce:command.nonce,...(command.kind==='NETHRA_NOTIFICATION'?{notificationActions:1,notificationOutcomes:1}:{})});
           command.envelope={body,signature:signer.sign(Buffer.from(body,'utf8')),spki:signer.spki};
         }
         Object.assign(command,{state:'DELIVERED',deliveredTo:deviceId,deliveredAt:this.now()});
@@ -122,6 +122,15 @@ class DeviceCommandStore {
     return this.transaction(()=>{
       const command=this.row(id);if(!command)throw new Error('Unknown device command');
       if(command.deliveredTo!==deviceId)throw new Error('Device command was not delivered to this device');
+      if(result&&Object.hasOwn(result,'notificationOutcome')){
+        const outcome=result.notificationOutcome;
+        if(command.kind!=='NETHRA_NOTIFICATION'||state!=='SUCCEEDED'||!['OPENED','REPLIED','DISMISSED','IGNORED'].includes(outcome))throw new Error('Invalid notification outcome');
+        if(command.state==='CANCELLED')return command;
+        command.notificationOutcomes??={};
+        if(Object.hasOwn(command.notificationOutcomes,outcome))return command;
+        command.notificationOutcomes[outcome]=this.now();
+        return this.write(command);
+      }
       if(result&&Object.hasOwn(result,'notificationAction')){
         const action=result.notificationAction;
         const allowed=['SNOOZE','DISMISS'].includes(action)||(action==='ANSWER'&&command.args.voiceInvite===true);

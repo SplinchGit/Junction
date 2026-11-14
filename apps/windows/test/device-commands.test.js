@@ -39,6 +39,23 @@ test('commands queued without a key are signed by the host and verify against th
   assert.equal(verify(envelope,'0'.repeat(64),new Set(),f.now()),'pin');
 });
 
+test('notification outcomes survive retries and leave owner actions independent',t=>{
+  const f=fixture(t),store=f.open({signer:f.signer});
+  const {id}=store.enqueueNotification({requestId:'notice',taskId:'task',deviceId:'phone',
+    args:{eventId:'notice',taskId:'task',title:'Task update',body:'Review progress'}});
+  store.pull('phone',{notificationPolicy:()=> 'deliver'});
+  const report=(notificationOutcome,device='phone')=>store.result(device,{id,state:'SUCCEEDED',result:{notificationOutcome}});
+  assert.throws(()=>report('OPENED','other'),/not delivered/);
+  const opened=report('OPENED');
+  f.advance(1000);
+  assert.deepEqual(report('OPENED').notificationOutcomes,opened.notificationOutcomes);
+  assert.deepEqual(Object.keys(report('REPLIED').notificationOutcomes),['OPENED','REPLIED']);
+  assert.equal(store.get(id).ownerAction,undefined);
+  assert.equal(store.get(id).state,'DELIVERED');
+  store.result('phone',{id,state:'SUCCEEDED',result:{alertPosted:true}});
+  assert.deepEqual(f.open().get(id).notificationOutcomes,{OPENED:f.now()-1000,REPLIED:f.now()});
+});
+
 test('enqueue is idempotent per request and rejects unknown kinds, arguments and requesters',t=>{
   const f=fixture(t),store=f.open();
   const a=store.enqueue({kind:'COLLECT_LOGS',args:{lines:50},requestedBy:'codex',requestId:'same'});

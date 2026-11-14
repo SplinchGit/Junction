@@ -275,7 +275,7 @@ class NethraApi {
       if(type==='nethra.device.result'){if(!DEVICE_ID.test(payload.deviceId||''))throw new Error('Invalid device');const command=d.result(payload.deviceId,{id:payload.id,state:payload.state,result:payload.result??null},{notificationPolicy:command=>require('./nethra-conversation-report').notificationDeliveryPolicy(command,this.store,{projects:this.listProjects})});
         // A result for an objective's check wakes that objective; the result itself stays untrusted data.
         if(command.taskId&&command.kind!=='NETHRA_NOTIFICATION')try{new NethraAttention(s,{now:s.now}).observe({taskId:command.taskId,source:'device',sourceId:command.id,revision:command.state,evidenceRef:`device:${command.id}`,priority:2});}catch(error){if(!/Unknown Nethra task/.test(error.message))throw error;}
-        return {id:command.id,state:command.state,ownerAction:command.ownerAction||null};}
+        return {id:command.id,state:command.state,ownerAction:command.ownerAction||null,notificationOutcomes:command.notificationOutcomes||null};}
       if(source!=='desktop')throw new Error('Device commands are issued from the Windows host');
       if(type==='nethra.device.enqueue')return {command:d.enqueue({kind:payload.kind,args:payload.args||{},requestedBy:payload.requestedBy||'owner',deviceId:payload.deviceId||'*',ttlMs:payload.ttlMs,requestId})};
       return {commands:d.list(payload.limit||20)};

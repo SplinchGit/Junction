@@ -28,7 +28,8 @@ object DeviceCommandVerifier {
         val createdAt: Long,
         val expiresAt: Long,
         val notificationActions: Boolean = false,
-        val instanceId: String = ""
+        val instanceId: String = "",
+        val notificationOutcomes: Boolean = false
     )
 
     sealed class Outcome {
@@ -78,7 +79,8 @@ object DeviceCommandVerifier {
             seen(id) -> Outcome.Refused(id, "command already handled")
             else -> Outcome.Accepted(Command(id, kind, KINDS.getValue(kind), json.optString("requestedBy"), json.optJSONObject("args") ?: JSONObject(), createdAt, expiresAt,
                 notificationActions = kind == "NETHRA_NOTIFICATION" && json.optInt("notificationActions") == 1,
-                instanceId = expectedInstanceId))
+                instanceId = expectedInstanceId,
+                notificationOutcomes = kind == "NETHRA_NOTIFICATION" && json.optInt("notificationOutcomes") == 1))
         }
     }
 

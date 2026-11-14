@@ -38,6 +38,7 @@ class DeviceCommandSync(context: Context) {
         prune(now)
         val actionFailure = flushNotificationActions(pairing.instanceId)
         flush()
+        flushNotificationOutcomes(pairing.instanceId, now)
         val deviceId = identity.deviceId()
         @Suppress("UNCHECKED_CAST")
         val envelopes = client.request("nethra.device.pull", mapOf("deviceId" to deviceId))["commands"] as? List<Map<String, Any?>> ?: emptyList()
@@ -69,6 +70,60 @@ class DeviceCommandSync(context: Context) {
         handled
     }
 
+    fun recordNotificationPosted(id: String, instanceId: String) = synchronized(ACTION_LOCK) {
+        val entries = notificationOutcomes()
+        if (!entries.has(id)) {
+            entries.put(id, JSONObject().put("instanceId", instanceId).put("postedAt", System.currentTimeMillis()))
+            saveNotificationOutcomes(entries)
+        }
+    }
+
+    fun recordNotificationOpened(id: String, instanceId: String) =
+        recordNotificationOutcome(id, instanceId, "OPENED")
+
+    private fun recordNotificationOutcome(id: String, instanceId: String, outcome: String) = synchronized(ACTION_LOCK) {
+        val entries = notificationOutcomes()
+        val entry = entries.optJSONObject(id) ?: return@synchronized
+        if (entry.optString("instanceId") != instanceId || entry.has(outcome)) return@synchronized
+        entry.put(outcome, false)
+        saveNotificationOutcomes(entries)
+    }
+
+    private suspend fun flushNotificationOutcomes(instanceId: String, now: Long) {
+        val pending = synchronized(ACTION_LOCK) {
+            val entries = notificationOutcomes()
+            val choices = notificationActions()
+            entries.keys().asSequence().toList().forEach { id ->
+                val entry = entries.getJSONObject(id)
+                val age = now - entry.getLong("postedAt")
+                if (entry.optString("instanceId") != instanceId || age > 14 * 24 * 3_600_000L) entries.remove(id)
+                else if (age >= 24 * 3_600_000L && !choices.has(id) && OUTCOMES.none(entry::has)) entry.put("IGNORED", false)
+            }
+            saveNotificationOutcomes(entries)
+            entries.keys().asSequence().flatMap { id ->
+                val entry = entries.getJSONObject(id)
+                OUTCOMES.asSequence().filter { entry.has(it) && !entry.optBoolean(it) }.map { id to it }
+            }.take(20).toList()
+        }
+        for ((id, outcome) in pending) {
+            val response = captureDeviceCommandResult {
+                client.request("nethra.device.result", mapOf("deviceId" to identity.deviceId(), "id" to id,
+                    "state" to "SUCCEEDED", "result" to mapOf("notificationOutcome" to outcome)))
+            }.getOrNull() ?: continue
+            if (!(response["notificationOutcomes"] is Map<*, *> || response["state"] == "CANCELLED")) continue
+            synchronized(ACTION_LOCK) {
+                val entries = notificationOutcomes()
+                entries.optJSONObject(id)?.put(outcome, true)
+                saveNotificationOutcomes(entries)
+            }
+        }
+    }
+
+    private fun notificationOutcomes() = JSONObject(prefs.getString("notification_outcomes_v1", "{}")!!)
+    private fun saveNotificationOutcomes(value: JSONObject) {
+        check(prefs.edit().putString("notification_outcomes_v1", value.toString()).commit())
+    }
+
     /** The receiver only commits a choice; it never waits for the network mutex or starts audio. */
     fun queueNotificationAction(id: String, eventId: String, instanceId: String, action: String): Boolean = synchronized(ACTION_LOCK) {
         require(id.matches(Regex("[0-9a-fA-F-]{36}")) && eventId.length in 1..160 && instanceId.length in 1..160)
@@ -79,6 +134,7 @@ class DeviceCommandSync(context: Context) {
         all.put(id, JSONObject().put("id", id).put("eventId", eventId).put("instanceId", instanceId)
             .put("action", action).put("createdAt", now).put("keepUntil", now + RETAIN_MS).put("reported", false))
         saveNotificationActions(all)
+        if (action == "DISMISS") recordNotificationOutcome(id, instanceId, "DISMISSED")
         true
     }
 
@@ -196,6 +252,7 @@ class DeviceCommandSync(context: Context) {
     companion object {
         private val LOCK = Mutex()
         private val ACTION_LOCK = Any()
+        private val OUTCOMES = listOf("OPENED", "REPLIED", "DISMISSED", "IGNORED")
         private const val SEEN = "seen_v1"
         private const val RESULTS = "results_v1"
         private const val CONSENTS = "consents_v1"

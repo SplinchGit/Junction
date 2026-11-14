@@ -81,7 +81,7 @@ object NotificationHelper {
     }
 
     /** Persist in the existing feed before alerting. Retries preserve read/dismiss state. */
-    suspend fun showTaskOutcome(context: Context, args: org.json.JSONObject, commandId: String? = null, allowOwnerActions: Boolean = false, instanceId: String? = null): org.json.JSONObject {
+    suspend fun showTaskOutcome(context: Context, args: org.json.JSONObject, commandId: String? = null, allowOwnerActions: Boolean = false, instanceId: String? = null, trackOutcomes: Boolean = false): org.json.JSONObject {
         val eventId = args.getString("eventId")
         val taskId = args.getString("taskId")
         require(eventId.length in 1..160 && taskId.length in 1..160)
@@ -100,10 +100,21 @@ object NotificationHelper {
         createChannels(context)
         val manager = androidx.core.app.NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return org.json.JSONObject().put("historySaved", true).put("alertPosted", false).put("reason", "notifications_disabled")
-        val open = PendingIntent.getActivity(context, 0, taskIntent(context, taskId, approvalId), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
+            return org.json.JSONObject().put("historySaved", true).put("alertPosted", false).put("reason", "channel_disabled")
+        }
+        fun trackOpen(intent: Intent): Intent = intent.apply {
+            if (trackOutcomes && !commandId.isNullOrBlank() && !instanceId.isNullOrBlank()) {
+                data = data?.buildUpon()?.appendQueryParameter("delivery", commandId)?.build()
+                putExtra(MainActivity.EXTRA_NOTIFICATION_DELIVERY, commandId)
+                putExtra(MainActivity.EXTRA_NOTIFICATION_HOST, instanceId)
+            }
+        }
+        val open = PendingIntent.getActivity(context, 0, trackOpen(taskIntent(context, taskId, approvalId)), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val invitation = args.optString("questionId").takeIf { approvalId == null && !commandId.isNullOrBlank() && args.optBoolean("voiceInvite") && it.matches(Regex("[A-Za-z0-9_-]{1,160}")) }
         val reply = approvalId == null && args.optBoolean("reply")
-        val primaryAction = if (reply || invitation != null) PendingIntent.getActivity(context, 0, taskIntent(context, taskId, reply = true, invitationQuestionId = invitation, invitationCommandId = commandId.takeIf { invitation != null }), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else open
+        val primaryAction = if (reply || invitation != null) PendingIntent.getActivity(context, 0, trackOpen(taskIntent(context, taskId, reply = true, invitationQuestionId = invitation, invitationCommandId = commandId.takeIf { invitation != null })), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else open
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_junction).setContentTitle(title).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setContentIntent(open)
@@ -117,6 +128,9 @@ object NotificationHelper {
                 .addAction(R.drawable.ic_junction, if (invitation != null) "Decline" else "Dismiss", dismiss).setDeleteIntent(dismiss)
         }
         manager.notify(eventId, 0, builder.build())
+        if (trackOutcomes && !commandId.isNullOrBlank() && !instanceId.isNullOrBlank()) {
+            com.splinch.junction.data.sync.lan.DeviceCommandSync(context).recordNotificationPosted(commandId, instanceId)
+        }
         return org.json.JSONObject().put("historySaved", true).put("alertPosted", true)
     }
 

@@ -288,6 +288,11 @@ class MainActivity : ComponentActivity() {
         }
         val taskId = intent?.getStringExtra(EXTRA_TASK_ID)?.takeIf { it.isNotBlank() && it.length <= 160 }
         if (taskId != null) {
+            val delivery = intent?.getStringExtra(EXTRA_NOTIFICATION_DELIVERY)
+            val host = intent?.getStringExtra(EXTRA_NOTIFICATION_HOST)
+            if (delivery != null && host != null) {
+                com.splinch.junction.data.sync.lan.DeviceCommandSync(this).recordNotificationOpened(delivery, host)
+            }
             taskOpenRequests.value = TaskOpenRequest(taskId, (taskOpenRequests.value?.token ?: 0) + 1,
                 intent?.getStringExtra(EXTRA_APPROVAL_ID)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,160}")) },
                 intent?.getBooleanExtra(EXTRA_REPLY_TO_TASK, false) == true,
@@ -301,6 +306,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_NOTIFICATION_DELIVERY = "extra_notification_delivery"
+        const val EXTRA_NOTIFICATION_HOST = "extra_notification_host"
         private const val PREWARM_INTERVAL_MS = 10 * 60_000L
         private var lastPrewarmAt = -PREWARM_INTERVAL_MS
         const val EXTRA_INVITATION_COMMAND_ID = "extra_nethra_invitation_command_id"
