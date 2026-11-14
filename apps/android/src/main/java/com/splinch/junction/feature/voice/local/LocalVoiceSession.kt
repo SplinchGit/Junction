@@ -76,6 +76,7 @@ class LocalVoiceSession(
 
     /** Tags for utterances in flight, keyed by utterance ID, so completion can be attributed. */
     private val utteranceTags = mutableMapOf<String, String>()
+    private var interruptedReply: Boolean? = null
 
     /** Speech to play once the current reply finishes, instead of re-arming the mic. */
     private var queuedSpeech: Pair<String, String?>? = null
@@ -97,6 +98,7 @@ class LocalVoiceSession(
     }
 
     fun stop() = onSession {
+        interruptedReply = null
         started = false
         handsFree.stop()
         floor.release()
@@ -115,6 +117,7 @@ class LocalVoiceSession(
      * closes when they close it, or on an unrecoverable recogniser failure.
      */
     fun startListening(mode: HandsFreeLoop.Mode = HandsFreeLoop.Mode.CALL) = onSession {
+        interruptedReply = null
         // Also drops any reply still waiting on the speech engine to start: the owner is
         // talking now, so something they interrupted must not surface afterwards.
         engine.stopSpeaking()
@@ -125,6 +128,7 @@ class LocalVoiceSession(
     }
 
     fun stopListening() = onSession {
+        interruptedReply = null
         handsFree.stop()
         floor.release()
         floorWatchJob?.cancel()
@@ -211,6 +215,7 @@ class LocalVoiceSession(
     }
 
     override fun onHeard(text: String) = onSession {
+        interruptedReply = null
         listener.onListeningStateChanged(false)
         // The floor is Junction's now, and on a deadline: a reply that never comes hands
         // the line back rather than ending the conversation.
@@ -222,11 +227,13 @@ class LocalVoiceSession(
     }
 
     override fun onNothingHeard() = onSession {
+        traceEmptyInterruption()
         listener.onListeningStateChanged(false)
         applyDecision(handsFree.onSilentTurn())
     }
 
     override fun onRecogniserFailed(kind: RecogniserFailure, message: String?) = onSession {
+        traceEmptyInterruption()
         listener.onListeningStateChanged(false)
         VoiceTrace.recogniserFailure(kind)
         when (kind) {
@@ -291,12 +298,18 @@ class LocalVoiceSession(
 
     override fun onOwnerCutIn() = onSession {
         if (!handsFree.isActive) return@onSession
+        interruptedReply = floor.holder == CallFloor.Holder.JUNCTION_SPEAKING
         engine.stopSpeaking()
         // The owner is talking; a queued disclosure was not heard and must not play later.
         queuedSpeech = null
         utteranceTags.clear()
         // Straight back to the owner, with no re-arm delay: they are mid-sentence.
         applyDecision(handsFree.onBargeIn())
+    }
+
+    private fun traceEmptyInterruption() {
+        interruptedReply?.let(VoiceTrace::bargeInWithoutTranscript)
+        interruptedReply = null
     }
 
     // ── Turn plumbing ───────────────────────────────────────────────────────

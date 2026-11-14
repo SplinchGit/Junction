@@ -92,6 +92,9 @@ object VoiceTrace {
     /** The owner cut in mid-reply; playback stops and the recogniser takes the mic. */
     fun bargeIn() = stage("bargein")
 
+    fun bargeInWithoutTranscript(replyInterrupted: Boolean) =
+        stage("bargein_no_transcript", "reply_interrupted=$replyInterrupted")
+
     /** Barge-in can't run here, so the reply is uninterruptible. [reason] is why. */
     fun bargeInUnavailable(reason: String) = stage("bargein_unavailable", "reason=$reason")
 
