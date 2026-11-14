@@ -9,6 +9,42 @@ test('a model switch changes the wake input even with unchanged evidence',()=>{
   assert.notEqual(inputFingerprint(task,store),before);
 });
 test('a normal Nethra wake can work for twenty minutes',()=>{assert.equal(MAX_RUNTIME,20*60_000);});
+test('retry incidents group equivalent failures and close after a successful wake',async t=>{
+  const f=fixture(t),task=f.store.create({goal:'Check local data'});
+  const {queueRetryIncidentNotification,notificationDeliveryPolicy}=require('../src/nethra-conversation-report');
+  f.store.setSettings({notificationDeviceId:'phone',quietHours:{enabled:false,start:'22:00',end:'07:00'}});
+  const queued=new Map();
+  const queue={enqueueNotification:command=>queued.set(command.requestId,command)};
+  let failure='Model unavailable';
+  const scheduler=new NethraScheduler({...f,execute:async()=>{
+    if(failure)throw Error(failure);
+    return {status:'SLEEPING'};
+  }});
+  async function wake(){
+    await scheduler.tick();
+    const current=f.store.get(task.id);
+    queueRetryIncidentNotification(current,f.store,queue,{date:new Date(f.now())});
+    f.advance(current.nextWakeAt-f.now());
+  }
+  await wake();
+  const first=[...queued.values()][0];
+  assert.ok(first);
+  assert.equal(notificationDeliveryPolicy(first,f.store,{date:new Date(f.now())}),'deliver');
+  failure=' model   UNAVAILABLE ';
+  await wake();
+  assert.equal(queued.size,1);
+  f.advance(86_400_000);
+  queueRetryIncidentNotification(f.store.get(task.id),f.store,queue,{date:new Date(f.now())});
+  assert.equal(queued.size,2);
+  failure='Source unavailable';
+  await wake();
+  assert.equal(queued.size,3);
+  assert.equal(notificationDeliveryPolicy(first,f.store,{date:new Date(f.now())}),'cancel');
+  failure=null;
+  await wake();
+  assert.equal(f.store.get(task.id).retryIncident,null);
+  assert.equal(notificationDeliveryPolicy([...queued.values()].at(-1),f.store,{date:new Date(f.now())}),'cancel');
+});
 test('a new saved checkpoint permits the next wake and an unchanged checkpoint skips inference',async t=>{
   const f=fixture(t);
   const task=f.store.create({goal:'Continue a saved local inspection'});

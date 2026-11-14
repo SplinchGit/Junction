@@ -54,7 +54,7 @@ const { DeviceCommandStore, tlsSigner } = require("./device-commands");
 const { CalendarSource, SecretVault } = require("./calendar-source");
 const { GmailSource } = require("./gmail-source");
 const { NethraAttention } = require("./nethra-attention");
-const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueMissedWakeNotification, queueOutcomeNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
+const { queueCodeWorkNotification, queueProjectMilestoneNotifications, queueMilestoneNotification, queueMissedWakeNotification, queueOutcomeNotification, queueRetryIncidentNotification, postTaskReports, postMilestones, postOutcome, postProgress, postQuestions } = require("./nethra-conversation-report");
 const { postCoordinationChat } = require('./nethra-conversation-report');
 let calendarSource = null, gmailSource = null, presence = null, appearanceStore = null, outcomeSweep = null;
 
@@ -105,6 +105,7 @@ function deliverObjectiveUpdates() {
   for (const task of tasks) {
     try {
       queueOutcomeNotification(task,nethraStore,deviceCommands);
+      queueRetryIncidentNotification(task,nethraStore,deviceCommands);
       if (postCoordinationChat(task,localData,foreman.find(task.coordination?.workId||''))) changed = true;
       if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
       if (postMilestones(task, nethraStore, localData, { settings })) changed = true;
@@ -460,6 +461,7 @@ async function syncSharedState(){
 /** Nethra reports an objective's outcome in the conversation that started it (synced to the phone). */
 function reportObjectiveOutcome(task) {
   queueOutcomeNotification(task,nethraStore,deviceCommands);
+  queueRetryIncidentNotification(task,nethraStore,deviceCommands);
   if(!task.projectId)queueMilestoneNotification(task,nethraStore,deviceCommands);
   const coordinationPosted=postCoordinationChat(task,localData,foreman.find(task.coordination?.workId||''));
   if(!postTaskReports(task,nethraStore,localData)&&!coordinationPosted)return;

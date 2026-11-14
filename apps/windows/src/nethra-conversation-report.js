@@ -296,11 +296,29 @@ function queueCodeWorkNotification(task,project,store,queue,{date=new Date()}={}
   return queue.enqueueNotification({requestId:event.id,taskId:task.id,deviceId:settings.notificationDeviceId,
     args:{eventId:event.id,taskId:task.id,title:'Nethra — development work',body:event.body}});
 }
+function retryIncidentEvent(task,now){
+  const incident=task.retryIncident;
+  if(task.status!=='SLEEPING'||task.wakeReason?.kind!=='RETRY'||!incident)return null;
+  const window=Math.floor((now-incident.startedAt)/86_400_000);
+  return `nethra-retry-${task.id}-${incident.id}-${window}`;
+}
+function queueRetryIncidentNotification(task,store,queue,{date=new Date()}={}){
+  const settings=store.settings();
+  if(!queue||!settings.notificationDeviceId||!deliveryPolicy(settings,date).milestones||!projectAllowsNotification(settings,task,true))return null;
+  const eventId=retryIncidentEvent(task,store.now());
+  if(!eventId)return null;
+  return queue.enqueueNotification({requestId:eventId,taskId:task.id,deviceId:settings.notificationDeviceId,
+    args:{eventId,taskId:task.id,title:'Nethra will retry a task',body:'A work pass failed. Nethra has scheduled a retry. Open Tasks to see when it will try again.'}});
+}
 function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>[]}={}){
   const settings=store.settings(),policy=deliveryPolicy(settings,date);
   if(!policy.outcomes||settings.notificationDeviceId!==command.deviceId||store.deletion(command.taskId))return 'cancel';
   const task=store.get(command.taskId);
   const eventId=command.notificationSourceEventId||command.args.eventId;
+  if(eventId.startsWith(`nethra-retry-${task.id}-`)){
+    if(!policy.milestones||!projectAllowsNotification(settings,task,true)||eventId!==retryIncidentEvent(task,store.now()))return 'cancel';
+    return policy.quiet?'hold':'deliver';
+  }
   if(eventId.startsWith(`nethra-code-work-${task.id}-`)){
     if(!projectAllowsNotification(settings,task)||!projects().some(project=>{const event=codeWorkEvent(task,project,store.now());return project.updatedAt>=(settings.notificationDeviceSince||0)&&event?.id===eventId&&(!event.progress||policy.milestones);}))return 'cancel';
     return policy.quiet?'hold':'deliver';
@@ -338,4 +356,4 @@ function notificationDeliveryPolicy(command,store,{date=new Date(),projects=()=>
   return policy.quiet?'hold':'deliver';
 }
 
-module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueMissedWakeNotification,queueOutcomeNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,postCoordinationChat,deliveryPolicy,outcomeText};
+module.exports={queueCodeWorkNotification,invitationQuestion,queueProjectMilestoneNotifications,notificationDeliveryPolicy,queueMilestoneNotification,queueMissedWakeNotification,queueOutcomeNotification,queueRetryIncidentNotification,postTaskReports,postMilestones,postOutcome,postProgress,postQuestions,postCoordinationChat,deliveryPolicy,outcomeText};

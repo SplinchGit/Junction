@@ -115,6 +115,7 @@ class NethraScheduler {
       if(['ACTIVE','PLANNING','CREATED'].includes(patch.status))patch.status='SLEEPING';
       if(!task.persistent&&patch.status==='SLEEPING')patch.status='PAUSED';
       patch.retryCount=0;
+      if(live.retryIncident)patch.retryIncident=null;
       const progressed=(live.lastMeaningfulProgressAt||0)>(task.lastMeaningfulProgressAt||0)
         ||(Array.isArray(patch.evidence)&&patch.evidence.length>(live.evidence||[]).length)
         ||(Array.isArray(patch.completedSteps)&&patch.completedSteps.length>(live.completedSteps||[]).length);
@@ -180,7 +181,9 @@ class NethraScheduler {
         const exhausted=retryCount>=5;
         const wake=exhausted?null:clampWake(this.now()+MIN_WAKE*2**Math.min(retryCount-1,10),this.now(),settings.minWakeMs,settings.maxWakeMs);
         const summary=exhausted?'Nethra could not complete five consecutive wake attempts. Please check the local model or source, then tell me to retry.':abortReason?safeFailure(abortReason):failure;
-        this.store.update(task.id,{status:exhausted?'WAITING_FOR_USER':task.persistent?'SLEEPING':'PAUSED',errors,retryCount,summary,nextWakeAt:wake,wakeReason:wake&&task.persistent?wakeReason('RETRY',`Retry ${retryCount} of 4 after: ${failure.slice(0,160)}`,wake):null},exhausted?'RETRY_EXHAUSTED':controller.signal.aborted?'INTERRUPTED':'RETRY_SCHEDULED',token);
+        const key=createHash('sha256').update(failure.trim().replace(/\s+/g,' ').toLowerCase()).digest('hex');
+        const retryIncident=live.retryIncident?.key===key?live.retryIncident:{key,id:randomUUID(),startedAt:this.now()};
+        this.store.update(task.id,{status:exhausted?'WAITING_FOR_USER':task.persistent?'SLEEPING':'PAUSED',errors,retryCount,retryIncident,summary,nextWakeAt:wake,wakeReason:wake&&task.persistent?wakeReason('RETRY',`Retry ${retryCount} of 4 after: ${failure.slice(0,160)}`,wake):null},exhausted?'RETRY_EXHAUSTED':controller.signal.aborted?'INTERRUPTED':'RETRY_SCHEDULED',token);
       }catch(fenced){if(!/lease/i.test(fenced.message))throw fenced;}
     } finally {
       clearInterval(heartbeat);clearTimeout(deadline);removeAbort();

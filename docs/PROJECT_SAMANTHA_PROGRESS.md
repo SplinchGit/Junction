@@ -20,6 +20,8 @@ M1 and M2 have not passed their complete exit criteria. The M3 account inspectio
 
 ## Installed build
 
+M5 retry alerts now group equivalent failures per task. A changed error starts a new incident, and an ongoing incident can alert again after 24 hours. The grouped alert follows All mode and quiet hours. A successful wake makes the old alert ineligible. Policy changes based on phone observations remain pending.
+
 M5 notification observation now has a paired host receipt and Android recording for opening, dismissing, and reaching 24 hours without interaction. A typed reply is attributed when the notification opens its task chat and a text turn completes there with a response. Voice replies remain outside this measurement. The two-week observation period starts after the matching host and phone builds are deployed and verified together.
 
 The running host was replaced with nethra-agent-chat-20261022 after confirming that no objective lease or engineering project was active. The desktop shortcut and recovery scheduled task target that runtime. The app recorded a fresh host start and opened its LAN listeners.
