@@ -323,6 +323,13 @@
  document.querySelectorAll('[data-view="tasks"]').forEach(button=>button.addEventListener('click',()=>{section.classList.add('open');refresh();}));
  document.querySelectorAll('.nav[data-view]:not([data-view="tasks"])').forEach(button=>button.addEventListener('click',()=>section.classList.remove('open')));
  api('nethra.status',{warm:false}).then(s=>{showSettings(s.settings);modelStatus.textContent=`${s.model} · Windows host · ${s.capabilities.thinking?'native thinking supported':'thinking support unavailable'} · one inference at a time${s.modelState?` · ${s.modelState.state}`:''}`;showCalendar(s.sources.calendar);showGmail(s.sources.gmail);}).catch(e=>{modelStatus.textContent=e.message;});
- api('nethra.reunion',{since:Date.now()-86400000}).then(result=>{reunionBody.replaceChildren(el('p',`${result.objectives.length} saved objective(s) · ${result.pendingApprovals} approval(s) waiting`));for(const event of result.events.slice(0,8))reunionBody.append(el('p',`${time(event.at)} · ${event.kind} · ${event.taskId.slice(0,8)}`));}).catch(e=>{reunionBody.textContent=e.message;});
+ // Host-written from the journal since the owner's last message; no model text.
+ const loadReunion=()=>api('nethra.reunion',{}).then(result=>{
+  reunionBody.replaceChildren(el('p',`Since you last wrote, ${time(result.since)}`));
+  if(!result.digest.lines.length)reunionBody.append(el('p','Nothing has happened on your tasks since then.'));
+  for(const fact of result.digest.lines)reunionBody.append(el('p',`${time(fact.at)} · ${fact.line}`));
+  if(result.digest.nextWake)reunionBody.append(el('p',`Next scheduled wake: ${time(result.digest.nextWake.at)} · ${result.digest.nextWake.goal}`));
+ }).catch(e=>{reunionBody.textContent=e.message;});
+ loadReunion();reunion.addEventListener('toggle',()=>{if(reunion.open)loadReunion();});
  setInterval(()=>{if(page.classList.contains('active')&&!page.querySelector('textarea:focus,input:focus,select:focus,.task-editor:not([hidden]),.task-agent-assignment[open]'))refresh();else if(document.getElementById('view-chat').classList.contains('active'))refreshBadge();},5000);refreshBadge();
 })();

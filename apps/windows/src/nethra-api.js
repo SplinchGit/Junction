@@ -1,6 +1,7 @@
 "use strict";
 const crypto = require('node:crypto');
 const {NethraAttention}=require('./nethra-attention');
+const {sinceLastSpoke,ownerLastSpokeAt}=require('./nethra-digest');
 const {progressView}=require('./nethra-progress');
 const {performanceReport}=require('./nethra-performance');
 const {isSupportedLocalModel}=require('./model-catalog');
@@ -62,10 +63,12 @@ class NethraApi {
       return result;
     }
     if(type==='nethra.reunion'){
-      const since=payload.since??0;
+      // With no start time, the digest runs from the owner's last message in any conversation.
+      const since=payload.since??ownerLastSpokeAt(this.localData)??Math.max(0,Date.now()-86_400_000);
       if(!Number.isSafeInteger(since)||since<0||since>Date.now())throw new Error('Invalid reunion start time');
       const objectives=s.list().slice(0,100);
-      return {modelInvoked:false,asOf:Date.now(),objectives:objectives.map(task=>({id:task.id,status:task.status,summary:String(task.summary||'').slice(0,300),nextWakeAt:task.nextWakeAt})),pendingApprovals:objectives.reduce((count,task)=>count+s.approvals(task.id).filter(item=>item.status==='PENDING').length,0),events:s.recentEvents(since,30).map(event=>({seq:event.seq,taskId:event.taskId,at:event.at,kind:event.kind,detail:JSON.stringify(event.detail).slice(0,300)}))};
+      const digest=sinceLastSpoke({store:s,since});
+      return {modelInvoked:false,asOf:Date.now(),since,digest:{lines:digest.facts.slice(0,12).map(fact=>({kind:fact.kind,taskId:fact.taskId,at:fact.at,line:fact.line})),nextWake:digest.nextWake},objectives:objectives.map(task=>({id:task.id,status:task.status,summary:String(task.summary||'').slice(0,300),nextWakeAt:task.nextWakeAt})),pendingApprovals:objectives.reduce((count,task)=>count+s.approvals(task.id).filter(item=>item.status==='PENDING').length,0),events:s.recentEvents(since,30).map(event=>({seq:event.seq,taskId:event.taskId,at:event.at,kind:event.kind,detail:JSON.stringify(event.detail).slice(0,300)}))};
     }
     if(type==='nethra.get') {
       if(payload.diagnosticsCursor!==undefined){

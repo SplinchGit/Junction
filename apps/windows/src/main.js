@@ -13,6 +13,7 @@ const { sendChat } = require("./provider-client");
 const { getCodexStatus, sendCodexChat } = require("./codex-client");
 const { getClaudeStatus, sendClaudeConsult } = require("./claude-client");
 const { runMemoryTraces, TRACE_SCHEMA } = require("./memory-trace");
+const { sinceLastSpoke, digestText, ownerLastSpokeAt } = require("./nethra-digest");
 const { NEXT_80B_THINKING_Q4_MODEL } = require("./nethra-models");
 const { AdvisorLimits } = require("./advisor-limits");
 const { providers, estimate, credentialProviderId } = require("./model-catalog");
@@ -69,7 +70,11 @@ function situationFor({ surface, conversationId = null, session = null }) {
     const {task:linkedTask,candidates} = conversationFocus(objectives,conversationId);
     const linked = linkedTask ? { goal: linkedTask.goal, status: linkedTask.status, model: linkedTask.model, allowCodeWork: linkedTask.allowCodeWork === true, ...progressView(linkedTask, nethraStore, { liveTaskId }) } : null;
     const pendingApprovals = objectives.filter(task => !['COMPLETED','CANCELLED','FAILED'].includes(task.status)).reduce((count, task) => count + nethraStore.approvals(task.id).filter(item => item.status === 'PENDING').length, 0);
-    return situationContext({ surface, objectives, linked, candidates, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
+    // "Since we last spoke": shown when something happened, or after a real gap so "nothing happened" is also true.
+    let digest = "";
+    const now = Date.now(), lastSpoke = ownerLastSpokeAt(localData, { now, excludeWithinMs: 120_000 });
+    if (lastSpoke !== null) { const facts = sinceLastSpoke({ store: nethraStore, since: lastSpoke, now }); if (facts.facts.length || now - lastSpoke >= 30 * 60_000) digest = digestText(facts, { now }); }
+    return situationContext({ surface, digest, objectives, linked, candidates, pendingApprovals, sources: { calendar: calendarSource?.status(), gmail: gmailSource?.status() }, presence: presence?.snapshot(), session: sanitizeSession(session), modelState: localAgent.modelState(), capabilities: localAgent.tools.definitions({ allowCodeDelegation: true }).map(tool => tool.function.name), schedulerRunning: Boolean(nethraScheduler?.timer) });
   } catch (error) { recordStartupIssue('situation context', error); return ''; }
 }
 /** Startup warming honours the owner's setting: desktop launches, every launch, or never. */
