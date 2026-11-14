@@ -25,7 +25,26 @@ The fixture was revised once, before any source change. The first run showed tha
 
 Recall took 0.08 ms on average (0.21 ms maximum) over 23 facts. A memory write took 1.2 ms. An answer took 14 seconds on average on the i7-6700K and RTX 2060 host with the model already loaded.
 
-## What M4 has to change
+## 80B before and after the memory change
+
+The owner's chat model is `junction-qwen3-next-thinking:80b-q4km`, so the comparison that counts is on that model. "Before" ran at `54a947b`. "After" ran at `7ccd15b` on 14 Nov 2026, with each fact dated to its fixture day and the automatic trace judging every fact as it was added. Scores are from reading every reply, one run each.
+
+| Ability | Before | After | Notes |
+| --- | --- | --- | --- |
+| Recalling a stated fact | 3 of 3 | 3 of 3 | |
+| Combining facts | 2 of 2 | 2 of 2 | The third question is unmeasured in both runs (forced web search, tools disabled). |
+| Time | 0 of 3 | 3 of 3 | Before: no dates stored, and one reply was empty. After: correct dates. "Four days ago" is correct for a run on 14 Nov; the fixture's expected "three" assumed 13 Nov. That reply also carried a citation tag, `[S1.p1]`, that refers to nothing. |
+| Updated fact, worded as a correction | 1 of 3 | 3 of 3 | Before: one reply asked which car was current and one was empty. |
+| Updated fact, stated plainly | 0 of 3 | 3 of 3 | Before: both values given as current. |
+| Admitting she was never told | 3 of 3 | 3 of 3 | |
+
+The trace judged 15 facts that had a possible earlier match. It retired the right earlier fact for all seven corrections and retired nothing else. Every verdict came from the local 80B model; none was marked unsure, so the Claude step was not exercised in this run. It is covered by unit tests, and the Claude call it uses was checked live separately. A judgement took 65 seconds on average (185 seconds at most, including the model load). An answer took 44 seconds on average.
+
+The two empty replies in the "before" run were the model spending its whole output allowance on reasoning. That was fixed separately in `7c43593` and did not recur in the "after" run, which started before that fix.
+
+Limits of this evidence: one run of 18 questions, through the host chat runtime and not the app window or the phone. Supersession does not sync, so the phone still treats both facts as current.
+
+## What M4 had to change
 
 Records carry no date and no successor, so the model cannot tell which of two contradicting facts is current and cannot answer when something was said. Steps 2 to 5 should move the plain-update and time rows without lowering the others. The invented date in the time row is the case step 5 addresses: when no date is stored, the context should say so.
 
