@@ -17,7 +17,7 @@ class NethraPanelTest {
     @get:Rule val compose = createComposeRule()
     private val task = mapOf<String, Any?>("id" to "task-1", "goal" to "Business plan", "status" to "ACTIVE", "revision" to 1, "model" to "qwen3:30b")
 
-    @Test fun stopAgentTargetsTheChildAndKeepsTheParentTask() {
+    @Test fun stopHelperTargetsTheChildAndKeepsTheParentTask() {
         var stopPayload: Map<String, Any?>? = null
         compose.setContent {
             MaterialTheme {
@@ -34,8 +34,8 @@ class NethraPanelTest {
                 })
             }
         }
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Stop agent").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("Stop agent").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Stop helper").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Stop helper").performScrollTo().performClick()
         compose.waitUntil(10_000) { stopPayload != null }
         assertEquals(mapOf("id" to "task-1", "childId" to "agent-1"), stopPayload)
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Stopped · Check published grant criteria").fetchSemanticsNodes().isNotEmpty() }
