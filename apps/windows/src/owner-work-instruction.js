@@ -4,9 +4,13 @@ const {handleTaskTurn}=require('./nethra-task-turn');
 const {handleTaskFollowup}=require('./nethra-conversation');
 const {createHash}=require('node:crypto');
 const {engineerOwnsCheckout}=require('./foreman');
-const {ownerBrief,coordinationContinue,dualProviderStart,workControl,draftStartMessage}=require('./nethra-coordination');
+const {ownerBrief,coordinationContinue,dualProviderStart,workControl,draftStartMessage,collaboratorNote}=require('./nethra-coordination');
+const {openQuestions}=require('./nethra-task-contract');
 
 const statusQuestion=/\b(?:where (?:did we get to|are we (?:at|up to))|what(?:['’]s| is) (?:the (?:latest|status)|blocking (?:this|us))|how(?:['’]s| is) (?:it|the (?:task|project|work)) going)\b/i;
+const taskDirection=/^(?:(?:ok(?:ay)?|so)[,\s]+)*(?:GPT brief:|answer\s*:|(?:please\s+|(?:can|could|would|will) you\s+|i (?:want|need) you to\s+)?(?:use|focus on|prioriti[sz]e|add|remove|replace|change|update|revise|replan|skip|investigate|check|research|write|review|compare|switch to|work on|ask (?:codex|claude))\b|(?:the|this) (?:goal|task|objective|priority|scope) (?:is|should|must)\b)/i;
+const linkedTaskRequest=/^for (?:this|the current) (?:task|objective)\b|\b(?:why|how|can you see why)\b[^?]*\bthis (?:task|objective)\b[^?]*\?$/i;
+const socialTurn=/^(?:hi|hello|hey|good (?:morning|evening|night)|thanks|thank you|cheers|cool|got it|i see|that makes sense|how are you)(?:[\s,.!?]|$)/i;
 
 async function handleOwnerWorkInstruction({content,conversationId,requestId,history=[],source='desktop',selectedLocalModel=null,api,store,findWork,startWork,ownerWork}){
   const text=String(content||'').trim();
@@ -75,8 +79,12 @@ async function handleOwnerWorkInstruction({content,conversationId,requestId,hist
   if(commandReply)return commandReply;
   const followup=await handleTaskFollowup({api,store,content,conversationId,history,requestId,source});
   if(followup)return followup;
-  const taskReply=handleTaskTurn({store,conversationId,content,requestId});
-  if(taskReply)return taskReply;
+  const linked=conversationId&&store.list().filter(task=>task.conversationId===conversationId&&!['COMPLETED','CANCELLED','FAILED'].includes(task.status));
+  const answering=linked?.length===1&&openQuestions(linked[0]).some(question=>question.blocking)&&!socialTurn.test(text)&&!text.endsWith('?');
+  if(taskDirection.test(text)||linkedTaskRequest.test(text)||collaboratorNote.test(text)||answering){
+    const taskReply=handleTaskTurn({store,conversationId,content,requestId});
+    if(taskReply)return taskReply;
+  }
   const result=await ownerWork({content,conversationId,requestId,source});
   return result?.response||null;
 }

@@ -272,27 +272,24 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(invitationSessionId, currentSessionId) {
+        val target = invitationSessionId ?: return@LaunchedEffect
+        if (target != currentSessionId) return@LaunchedEffect
+        if (providerConfig.providerId != "local") chatManager.switchProvider("local")
+        if (chatManager.sessionId.value != target) return@LaunchedEffect
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            chatManager.startVoiceCall()
+            onInvitationConsumed()
+        } else {
+            pendingSpeechEnable = true
+            pendingInvitationVoiceSession = target
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            onInvitationConsumed()
+        }
+    }
+
     com.splinch.junction.ui.component.AmbientBackdrop(appearance, modifier) {
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        if (invitationSessionId != null && invitationSessionId == currentSessionId) {
-            Text("Nethra invited you to discuss this task.", style = MaterialTheme.typography.bodyMedium)
-            OutlinedButton(enabled = !micEnabled, onClick = {
-                scope.launch {
-                    if (providerConfig.providerId != "local") chatManager.switchProvider("local")
-                    if (chatManager.sessionId.value != invitationSessionId) return@launch
-                    onInvitationConsumed()
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                        chatManager.startVoiceCall()
-                    } else {
-                        pendingSpeechEnable = true
-                        pendingInvitationVoiceSession = invitationSessionId
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                }
-            }) {
-                Text(if (providerConfig.providerId == "local") "Start Nethra call" else "Switch to paired PC and start call")
-            }
-        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

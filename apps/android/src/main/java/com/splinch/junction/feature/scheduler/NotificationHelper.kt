@@ -14,6 +14,8 @@ import com.splinch.junction.feature.notification.NotificationTapReceiver
 
 object NotificationHelper {
     private const val CHANNEL_ID = "junction_digest"
+    private const val VOICE_CHANNEL_ID = "junction_voice_invitations"
+    private val VOICE_VIBRATION = longArrayOf(0, 160, 90, 160)
     private const val CHANNEL_NAME = "Junction Digest"
     private const val CHANNEL_DESCRIPTION = "Scheduled summaries from Junction"
     private const val DIGEST_ID = 1001
@@ -36,6 +38,12 @@ object NotificationHelper {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+            manager.createNotificationChannel(
+                NotificationChannel(VOICE_CHANNEL_ID, "Nethra voice invitations", NotificationManager.IMPORTANCE_HIGH).apply {
+                    enableVibration(true)
+                    vibrationPattern = VOICE_VIBRATION
+                }
+            )
             manager.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_ID,
@@ -98,10 +106,12 @@ object NotificationHelper {
         ))
         if (inserted == -1L) return org.json.JSONObject().put("historySaved", true).put("duplicate", true)
         createChannels(context)
+        val invitation = args.optString("questionId").takeIf { approvalId == null && !commandId.isNullOrBlank() && args.optBoolean("voiceInvite") && it.matches(Regex("[A-Za-z0-9_-]{1,160}")) }
+        val channelId = if (invitation != null) VOICE_CHANNEL_ID else CHANNEL_ID
         val manager = androidx.core.app.NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return org.json.JSONObject().put("historySaved", true).put("alertPosted", false).put("reason", "notifications_disabled")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            manager.getNotificationChannel(CHANNEL_ID)?.importance == NotificationManager.IMPORTANCE_NONE) {
+            manager.getNotificationChannel(channelId)?.importance == NotificationManager.IMPORTANCE_NONE) {
             return org.json.JSONObject().put("historySaved", true).put("alertPosted", false).put("reason", "channel_disabled")
         }
         fun trackOpen(intent: Intent): Intent = intent.apply {
@@ -112,14 +122,14 @@ object NotificationHelper {
             }
         }
         val open = PendingIntent.getActivity(context, 0, trackOpen(taskIntent(context, taskId, approvalId)), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val invitation = args.optString("questionId").takeIf { approvalId == null && !commandId.isNullOrBlank() && args.optBoolean("voiceInvite") && it.matches(Regex("[A-Za-z0-9_-]{1,160}")) }
         val reply = approvalId == null && args.optBoolean("reply")
         val primaryAction = if (reply || invitation != null) PendingIntent.getActivity(context, 0, trackOpen(taskIntent(context, taskId, reply = true, invitationQuestionId = invitation, invitationCommandId = commandId.takeIf { invitation != null })), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else open
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_junction).setContentTitle(title).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)).setContentIntent(open)
             .addAction(R.drawable.ic_junction, if (invitation != null) "Answer" else if (reply) "Reply" else if (approvalId == null) "Open task" else "Review approval", primaryAction)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setOnlyAlertOnce(true).setAutoCancel(true)
+        if (invitation != null) builder.setVibrate(VOICE_VIBRATION).setPriority(NotificationCompat.PRIORITY_HIGH)
         if (allowOwnerActions && !commandId.isNullOrBlank() && !instanceId.isNullOrBlank()) {
             fun choice(action: String) = PendingIntent.getBroadcast(context, 0,
                 taskChoiceIntent(context, commandId, eventId, instanceId, action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

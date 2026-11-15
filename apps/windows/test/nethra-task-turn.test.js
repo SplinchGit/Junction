@@ -109,6 +109,34 @@ test('the shared owner-work entry routes linked chat to its task before generic 
   assert.equal(store.get(task.id).ownerInputs.length,1);
 });
 
+test('ordinary messages in a linked task chat do not become task instructions',async t=>{
+  const {store}=fixture(t);
+  const task=store.create({goal:'Prepare a report',conversationId:'shared-chat'});
+  const {handleOwnerWorkInstruction}=require('../src/owner-work-instruction');
+  for(const [index,content] of ['Thanks, that makes sense.', 'How are you doing tonight?', 'I was just thinking about it.'].entries()){
+    const reply=await handleOwnerWorkInstruction({store,conversationId:'shared-chat',content,
+      requestId:`casual-${index}`,api:{},ownerWork:async()=>null});
+    assert.equal(reply,null);
+  }
+  assert.deepEqual(store.get(task.id).ownerInputs,[]);
+});
+
+test('a pending task question accepts a direction while greetings stay in chat',async t=>{
+  const {store}=fixture(t);
+  const task=store.create({goal:'Prepare a report',conversationId:'voice-task'});
+  const {ownerQuestion}=require('../src/nethra-task-contract');
+  const {handleOwnerWorkInstruction}=require('../src/owner-work-instruction');
+  const asked=ownerQuestion(task,task,{question:'Which sources should I use?',reason:'OWNER_PREFERENCE',blocking:true});
+  store.update(task.id,{status:'ACTIVE'});
+  store.update(task.id,{status:'WAITING_FOR_USER',questions:asked.questions});
+  const respond=(content,requestId)=>handleOwnerWorkInstruction({store,conversationId:'voice-task',
+    content,requestId,api:{},ownerWork:async()=>null});
+  assert.equal(await respond('Hi Nethra','greeting'),null);
+  assert.equal(store.get(task.id).questions[0].status,'OPEN');
+  assert.match(await respond('The university library sources','direction'),/saved your answer/i);
+  assert.equal(store.get(task.id).questions[0].status,'ANSWERED');
+});
+
 test('an owner turn arriving during inference cancels stale tool calls and reaches the next model step',async t=>{
   const {store}=fixture(t);
   const task=store.create({goal:'Write a report',conversationId:'task-chat'});
