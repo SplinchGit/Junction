@@ -343,6 +343,9 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
+    concurrency:
+      group: junction-apk-release
+      cancel-in-progress: false
     steps:
       - name: Download APK artifact
         uses: actions/download-artifact@v4
@@ -352,13 +355,32 @@ jobs:
       - name: Create checksum
         run: sha256sum app-debug.apk > app-debug.apk.sha256
 
+      - name: Count published APK releases
+        id: release-number
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: build-${{ needs.build.outputs.build_number }}
+        shell: bash
+        run: |
+          set -o pipefail
+          number=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -sr --arg tag "$RELEASE_TAG" '
+              [ .[][] | select(.draft == false and any(.assets[]; .name | endswith(".apk"))) ]
+              | sort_by(.published_at, .id)
+              | (map(.tag_name) | index($tag)) as $existing
+              | if $existing == null then length + 1 else $existing + 1 end
+            ')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ needs.build.outputs.build_number }}
-          name: Junction build ${{ needs.build.outputs.build_number }}
+          name: Junction APK release ${{ steps.release-number.outputs.number }}
           body: |
             Automated signed APK build from `${{ github.sha }}`. This APK passed build, unit tests, and a Pixel 6 emulator install-and-launch smoke test.
+
+            APK release number ${{ steps.release-number.outputs.number }} counts published GitHub releases with APK assets. Android build ${{ needs.build.outputs.build_number }} identifies the installable version.
 
             This release passed the Android build job and unit tests. The APK uses the
             repository's stable update signing key and can install in place over Junction.
