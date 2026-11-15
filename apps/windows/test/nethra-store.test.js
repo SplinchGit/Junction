@@ -12,7 +12,7 @@ test('durable children are bounded, sequential, fenced and never schedulable',t=
   const f=fixture(t),s=f.open();s.setSettings({childDelegation:true});
   const parent=s.create({goal:'Research facts'}),lease=s.claim('worker',100);
   const child=s.startChild(parent.id,'Read the report','run-one',lease.token);
-  assert.equal(child.parentId,parent.id);assert.equal(child.model,'qwen3:30b');assert.equal(s.list().length,1);
+  assert.equal(child.parentId,parent.id);assert.equal(child.model,parent.model);assert.equal(s.list().length,1);
   assert.throws(()=>s.startChild(parent.id,'Other scope','run-one',lease.token),/sequential/i);
   assert.throws(()=>s.finishChild(child.id,{report:'x',evidence:[],requiresParentReview:true,extra:true},lease.token),/schema/i);
   s.finishChild(child.id,{report:'Found facts',evidence:[],requiresParentReview:true},lease.token);
@@ -93,7 +93,7 @@ test('switching an objective model preserves its portable working state',t=>{
   assert.deepEqual(changed.contextCheckpoint,{activeHypothesis:'Tighten opening'});
   assert.equal(changed.evidence.length,1);
   assert.throws(()=>s.configure(task.id,{model:'unknown'},changed.revision,'bad-model'),/model/i);
-  assert.equal(s.create({goal:'Legacy default'}).model,'qwen3:30b');
+  assert.equal(s.create({goal:'New objective default'}).model,'junction-qwen3-next-thinking:80b-q4km');
 });
 test('reopening preserves the exact pending review as task working context',t=>{
   const f=fixture(t),s=f.open(),task=s.create({goal:'Improve prompt context'});

@@ -41,7 +41,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
     var goal by rememberSaveable { mutableStateOf("") }
     var criteria by rememberSaveable { mutableStateOf("") }
     var persistent by rememberSaveable { mutableStateOf(true) }
-    var taskModel by rememberSaveable { mutableStateOf("qwen3:30b") }
+    var taskModel by rememberSaveable { mutableStateOf("junction-qwen3-next-thinking:80b-q4km") }
     val taskModels = listOf("qwen3:30b" to "Qwen3 30B · thinking", "junction-qwen3-next-thinking:80b-q4km" to "Qwen3-Next 80B · Thinking Q4")
     var mode by rememberSaveable { mutableStateOf("FINITE") }
     var autonomy by rememberSaveable { mutableStateOf("BALANCED") }
@@ -179,8 +179,16 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
                 }
                 val taskConversationId = result["conversationId"]?.toString() ?: error("PC did not return a chat")
                 val app = context.applicationContext as JunctionApplication
-                if (app.container.database.chatDao().getSessionById(taskConversationId) == null) app.container.pairedConversationSyncManager.syncNow()
-                check(app.container.database.chatDao().getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
+                val chats = app.container.database.chatDao()
+                val invitation = result["invitationEventId"] is String && invitationQuestionId != null
+                if (invitation) {
+                    val metadata = result["conversation"] as? Map<*, *>
+                    chats.ensureInvitedSession(taskConversationId, (metadata?.get("createdAt") as? Number)?.toLong() ?: 0,
+                        metadata?.get("title") as? String)
+                } else if (chats.getSessionById(taskConversationId) == null) {
+                    app.container.pairedConversationSyncManager.syncNow()
+                }
+                check(chats.getSessionById(taskConversationId) != null) { "Task chat is not synced yet. Try again after conversation sync completes." }
                 if (invitationQuestionId != null) onInvitationChatOpened(taskConversationId) else if (initial) onInitialChatOpened(taskConversationId) else onOpenChat(taskConversationId)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message ?: "Could not open the task chat" }
@@ -271,7 +279,7 @@ fun NethraPanel(modifier: Modifier = Modifier, initialGoal: String? = null, init
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
                     Text("Thinking", style = MaterialTheme.typography.titleMedium)
-                    Text(if (thinkingRequired) "Always on with Qwen3 30B." else "Saved on your PC for conversations and objectives.")
+                    Text(if (thinkingRequired) "Thinking is enabled for local tasks." else "Saved on your PC for conversations and objectives.")
                 }
                 Switch(checked = thinkingRequired || settings["thinking"] == true, enabled = connected && !busy && !thinkingRequired,
                     onCheckedChange = { perform("nethra.settings", mapOf("thinking" to it)) })

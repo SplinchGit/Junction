@@ -146,8 +146,9 @@ test('a signed invitation opens the exact task chat and its recognized owner ans
   assert.equal(opened.created,true);
   assert.equal(opened.conversationId,f.store.get(invitation.taskId).conversationId);
   assert.notEqual(opened.conversationId,unrelated.conversationId);
-  assert.ok(localData.conversation(opened.conversationId));
-  assert.deepEqual(await open(invitation.taskId),{conversationId:opened.conversationId,created:false,invitationEventId:invitation.eventId});
+  const chat=localData.conversation(opened.conversationId);
+  assert.deepEqual(opened.conversation,{createdAt:chat.createdAt,title:chat.title});
+  assert.deepEqual(await open(invitation.taskId),{...opened,created:false});
   assert.equal(f.queue.get(invitationCommandId).ownerAction.action,'ANSWER');
 
   f.optIn(false);

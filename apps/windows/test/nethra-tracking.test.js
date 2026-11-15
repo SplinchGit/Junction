@@ -173,7 +173,7 @@ test('a task journal shows public model updates, plan changes and tool starts du
   }};
   await new NethraScheduler({store:f.store,now:f.now,execute:(item,options)=>new NethraRunner({store:f.store,runtime,now:f.now}).execute(item,options)}).tick();
   const view=progressView(f.store.get(task.id),f.store,{now:f.now()});
-  assert.ok(view.activity.some(item=>item.event==='MODEL_STEP'&&item.model==='qwen3:30b'));
+  assert.ok(view.activity.some(item=>item.event==='MODEL_STEP'&&item.model===task.model));
   assert.ok(view.activity.some(item=>item.event==='NETHRA_UPDATE'&&/compare both ideas/i.test(item.line)));
   assert.ok(view.activity.some(item=>item.event==='nethra_plan_updated'&&/2 steps/i.test(item.line)));
   assert.ok(view.activity.some(item=>item.event==='TOOL_STARTED'&&/schedul/i.test(item.line)));

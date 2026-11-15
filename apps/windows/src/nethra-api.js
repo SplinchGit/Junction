@@ -141,12 +141,16 @@ class NethraApi {
         if(accepted.ownerAction?.action!=='ANSWER'||accepted.ownerAction.disposition!=='ACKNOWLEDGED')throw unavailable();
         invitationEventId=command.args.eventId;
       }
-      const invitation=invitationEventId?{invitationEventId}:{};
-      if(task.conversationId)return {conversationId:task.conversationId,created:false,...invitation};
+      const invitation=(id)=>{
+        if(!invitationEventId)return {};
+        const chat=this.localData.conversation(id);
+        return {invitationEventId,...(chat?{conversation:{createdAt:chat.createdAt,title:chat.title}}:{})};
+      };
+      if(task.conversationId)return {conversationId:task.conversationId,created:false,...invitation(task.conversationId)};
       const conversationId=`nethra_task_${task.id.replaceAll('-','_')}`;
       this.localData.ensureConversation(conversationId);
       const linked=s.linkConversation(task.id,conversationId);
-      return {conversationId:linked.conversationId,created:linked.conversationId===conversationId,...invitation};
+      return {conversationId:linked.conversationId,created:linked.conversationId===conversationId,...invitation(linked.conversationId)};
     }
     if(type==='nethra.agent.create'){
       if(typeof payload.id!=='string'||!DEVICE_ID.test(payload.id)||Object.keys(payload).some(key=>!['id','goal','successCriteria'].includes(key)))throw new Error('Invalid agent request');
@@ -158,7 +162,7 @@ class NethraApi {
       if(source!=='desktop'&&(payload.readRoots?.length||payload.workspace))throw new Error('Approve local read folders on Windows');
       if('continuous' in payload&&typeof payload.continuous!=='boolean')throw new Error('Invalid continuous preference');
       if(source!=='desktop'&&payload.allowCodeWork===true)throw new Error('Enable Codex development work on Windows');
-      let task=s.create({...(parentTaskId?{parentTaskId}:{}),...(projectId?{projectId}:{}),goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',model:payload.model||'qwen3:30b',continuous:payload.continuous===true,allowCodeWork:payload.allowCodeWork===true,requestId});
+      let task=s.create({...(parentTaskId?{parentTaskId}:{}),...(projectId?{projectId}:{}),goal:payload.goal,successCriteria:payload.successCriteria||payload.goal,persistent:payload.persistent!==false,conversationId:payload.conversationId||null,readRoots:source==='desktop'?(payload.readRoots||[]):[],thinking:true,autonomy:payload.autonomy||'BALANCED',priority:payload.priority??3,checkIn:payload.checkIn||'WEEKLY',sources:payload.sources||[],mode:payload.mode||'FINITE',model:payload.model||NEXT_80B_THINKING_Q4_MODEL,continuous:payload.continuous===true,allowCodeWork:payload.allowCodeWork===true,requestId});
       // Every objective gets a chat: progress, questions and outcomes go there, and the
       // owner's replies there reach the objective.
       if(!task.conversationId&&this.localData){

@@ -51,7 +51,7 @@ test('ordinary model chat sends real durable task messages once through the comm
 test('an explicit chat model selection updates a reused task while retaining its saved work',async t=>{
   const {store,objectives}=fixture(t),goal='Prepare the workshop notes';
   const first=await objectives.create({goal,conversationId:'chat',requestId:'create-default'});
-  assert.equal(first.model,'qwen3:30b');assert.equal(first.continuous,true);
+  assert.equal(first.model,'junction-qwen3-next-thinking:80b-q4km');assert.equal(first.continuous,true);
   store.update(first.id,{plan:['Read the source','Revise the notes'],completedSteps:['Read the source'],pendingSteps:['Revise the notes'],contextCheckpoint:{activeHypothesis:'Keep the source facts'}});
   await objectives.create({goal,conversationId:'chat',model:'junction-qwen3-next:80b-q3km',continuous:true,requestId:'select-80b'});
   await assert.doesNotReject(objectives.create({goal,conversationId:'chat',model:'junction-qwen3-next:80b-q3km',continuous:true,requestId:'select-80b'}));

@@ -631,7 +631,7 @@ test('objective steps stream with a thinking safety budget so one step cannot co
   const dir=require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'runner-budget-'));const store=new NethraStore(dir);
   t.after(()=>{store.close();require('node:fs').rmSync(dir,{recursive:true,force:true});});
   const seen=[];const runtime={withInference:fn=>fn(),chat:async(_m,_messages,_tools,_signal,_onText,_format,options)=>{seen.push(options);return {message:{role:'assistant',content:'',tool_calls:[{function:{name:'finish_objective',arguments:{summary:'Done with evidence.'}}}]}};}};
-  const task=store.create({goal:'Finish quickly'});const claim=store.claim('test',60_000);
+  const task=store.create({goal:'Finish quickly',model:'qwen3:30b'});const claim=store.claim('test',60_000);
   await new NethraRunner({store,runtime}).execute(claim.task,{token:claim.token,checkpoint:patch=>store.update(task.id,patch,'CHECKPOINT',claim.token)}).catch(()=>{});
   assert.ok(seen.length>0);assert.equal(typeof seen[0].onThinking,'function');assert.equal(seen[0].thinkingBudget,1100);
 });

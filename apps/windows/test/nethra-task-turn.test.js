@@ -55,7 +55,7 @@ test('linked task chat returns one state-grounded reply and never enters a secon
 test('a 10,000-character task chat message is saved whole and reaches the model unshortened',async t=>{
   const {store}=fixture(t);
   const {handleTaskTurn}=require('../src/nethra-task-turn');
-  const task=store.create({goal:'Prepare a report',conversationId:'chat-1'});
+  const task=store.create({goal:'Prepare a report',conversationId:'chat-1',model:'qwen3:30b'});
   const long='Use these figures. '+'x'.repeat(9980)+'!';
   assert.equal(long.length,10000);
   assert.match(handleTaskTurn({store,conversationId:'chat-1',content:long,requestId:'long-1'}),/saved/i);

@@ -16,7 +16,7 @@
  const persistent=el('input');persistent.type='checkbox';persistent.checked=true;const persistenceLabel=el('label',' Continue autonomously across restarts');persistenceLabel.prepend(persistent);
  const select=(label,values,chosen)=>{const wrapper=el('label',label);const field=el('select');for(const [value,title] of values){const option=el('option',title);option.value=value;field.append(option);}field.value=chosen;wrapper.append(field);return {wrapper,field};};
  const taskModels=[['qwen3:30b','Qwen3 30B · thinking'],['junction-qwen3-next-thinking:80b-q4km','Qwen3-Next 80B · Thinking Q4']];
- const newTaskModel=select('Task model ',taskModels,'qwen3:30b');
+ const newTaskModel=select('Task model ',taskModels,'junction-qwen3-next-thinking:80b-q4km');
  const mode=select('Objective type ',[['FINITE','Finish when achieved'],['ONGOING','Keep monitoring after each result']],'FINITE');
  const autonomy=select('Autonomy ',[['QUIET','Quiet monitoring'],['BALANCED','Balanced initiative'],['ACTIVE','Active exploration']],'BALANCED');
  const priority=select('Priority ',[[1,'1 · Highest'],[2,'2 · High'],[3,'3 · Normal'],[4,'4 · Low'],[5,'5 · Lowest']],'3');
@@ -25,7 +25,6 @@
  const checkbox=(text,checked=false)=>{const input=el('input');input.type='checkbox';input.checked=checked;const label=el('label',text);label.prepend(input);return {label,input};};
  const watchCalendar=checkbox(' Watch my Google Calendar (read-only)'),watchGmail=checkbox(' Watch new Gmail inbox mail (headers only)'),codeWorkNew=checkbox(' Allow Codex advice and development drafts (uses shared plan allowance)');
  const continuousNew=checkbox(' Keep working continuously until done',true);const create=el('button','Create task');create.type='submit';const moreOptions=el('details');moreOptions.className='task-more-options';moreOptions.append(el('summary','More options'),roots,persistenceLabel,policyFields,watchCalendar.label,watchGmail.label,codeWorkNew.label,el('p','Advice is limited to three Codex calls per UTC day across all tasks. Development drafts wait in Work Activity until you start them.'));form.append(goal,continuousNew.label,moreOptions,create);const createDetails=el('details');createDetails.className='task-create-details';createDetails.append(el('summary','+ New task'),form);area.append(createDetails);
- createDetails.ontoggle=async()=>{if(createDetails.open&&!goal.value.trim()){const provider=await window.junction.provider();if(provider.id==='local'&&taskModels.some(([id])=>id===provider.model))newTaskModel.field.value=provider.model;}};
  const settings=el('article');settings.className='panel';const thinking=el('input');thinking.type='checkbox';thinking.checked=true;thinking.disabled=true;const thinkingLabel=el('label',' Thinking is always on with Qwen3 30B');thinkingLabel.prepend(thinking);
  const startup=el('input');startup.type='checkbox';const startupLabel=el('label',' Start Nethra after Windows sign-in');startupLabel.prepend(startup);const modelStatus=el('p','Checking host…');settings.append(thinkingLabel,startupLabel,modelStatus);document.querySelector('.settings').append(settings);
  // Model warm-up and proactive updates. Loading never generates a reply or touches chats.

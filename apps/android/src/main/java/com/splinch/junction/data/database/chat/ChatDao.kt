@@ -23,6 +23,9 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSession(session: ChatSessionEntity)
 
+    @Query("INSERT OR IGNORE INTO chat_sessions (id, startedAt, speechModeEnabled, agentToolsEnabled, title, sharedUpdatedAt) SELECT :id, :createdAt, 0, 1, :title, 0 WHERE NOT EXISTS (SELECT 1 FROM chat_deleted_sessions WHERE id = :id)")
+    suspend fun ensureInvitedSession(id: String, createdAt: Long, title: String?)
+
     @Query("UPDATE chat_sessions SET title = :title, sharedUpdatedAt = :updatedAt WHERE id = :id")
     suspend fun updateSessionTitle(id: String, title: String, updatedAt: Long)
 

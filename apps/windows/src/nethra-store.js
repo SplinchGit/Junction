@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const {DatabaseSync} = require('node:sqlite');
-const {DEFAULT_MODEL,profileFor}=require('./nethra-models');
+const {DEFAULT_MODEL,NEXT_80B_THINKING_Q4_MODEL,profileFor}=require('./nethra-models');
 const {monitorWakeAt,dailyLimits,MAX_RUNTIME}=require('./nethra-scheduler');
 const {questionForAnswer}=require('./nethra-task-contract');
 
@@ -121,7 +121,7 @@ class NethraStore {
   clearReportPending(id) {return this.transaction(()=>{const task=this.get(id);if(!task.reportPending)return task;delete task.reportPending;return this.saveBudget(task);});}
   saveBudget(task) {this.db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task),task.id);return structuredClone(task);}
   create(input) {
-    const {goal,successCriteria='',persistent=true,conversationId=null,projectId,parentTaskId,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE',continuous=false,allowCodeWork=false,model=DEFAULT_MODEL}=input;
+    const {goal,successCriteria='',persistent=true,conversationId=null,projectId,parentTaskId,readRoots=[],thinking=this.settings().thinking,requestId,autonomy='BALANCED',priority=3,checkIn='WEEKLY',sources=[],mode='FINITE',continuous=false,allowCodeWork=false,model=NEXT_80B_THINKING_Q4_MODEL}=input;
     profileFor(model);
     if(projectId!==undefined&&(typeof projectId!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(projectId)))throw new Error('Invalid project ID');
     if(typeof continuous!=='boolean')throw new Error('Invalid continuous preference');

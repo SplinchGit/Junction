@@ -92,6 +92,7 @@ test('opening an objective chat creates one durable association and retries reus
   t.after(()=>{store.close();fs.rmSync(dir,{recursive:true,force:true});});
   const api=new NethraApi({store,localData,runtime:{}});
   const task=store.create({goal:'Track coursework'});
+  assert.equal(task.model,'junction-qwen3-next-thinking:80b-q4km');
   const first=await api.dispatch('nethra.openChat',{id:task.id},'first','android');
   const second=await api.dispatch('nethra.openChat',{id:task.id},'second','desktop');
   assert.equal(first.conversationId,second.conversationId);
